@@ -1,0 +1,308 @@
+<mxfile host="app.diagrams.net" modified="2026-04-24" agent="ModelGate" version="24.0.2" type="device">
+
+<!-- ================================================================ -->
+<!-- Page 1: 网络架构图                                                 -->
+<!-- ================================================================ -->
+<diagram id="net-arch" name="① 网络架构图">
+<mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1654" pageHeight="1169" math="0" shadow="1">
+<root>
+<mxCell id="0"/>
+<mxCell id="1" parent="0"/>
+
+<!-- 公司内网区域 -->
+<mxCell id="2" value="公司内网" style="text;html=1;strokeColor=#6366f1;fillColor=#f0f4ff;align=left;verticalAlign=top;spacingLeft=12;spacingTop=8;rounded=1;arcSize=4;fontSize=13;fontStyle=1;fontColor=#4338ca;dashed=1;dashPattern=8 4;strokeWidth=2;" vertex="1" parent="1">
+  <mxGeometry x="10" y="10" width="1020" height="880" as="geometry"/>
+</mxCell>
+
+<!-- 外网区域 -->
+<mxCell id="3" value="外部 API / 上游模型" style="text;html=1;strokeColor=#ea580c;fillColor=#fff7ed;align=left;verticalAlign=top;spacingLeft=12;spacingTop=8;rounded=1;arcSize=4;fontSize=13;fontStyle=1;fontColor=#ea580c;dashed=1;dashPattern=8 4;strokeWidth=2;" vertex="1" parent="1">
+  <mxGeometry x="1050" y="10" width="540" height="880" as="geometry"/>
+</mxCell>
+
+<!-- ===== 内部接入系统 ===== -->
+<mxCell id="10" value="内部接入系统" style="swimlane;startSize=30;fillColor=#ede9fe;strokeColor=#a78bfa;fontColor=#5b21b6;fontStyle=1;fontSize=12;rounded=1;arcSize=5;" vertex="1" parent="1">
+  <mxGeometry x="30" y="50" width="210" height="480" as="geometry"/>
+</mxCell>
+<mxCell id="11" value="&lt;b&gt;CRM 系统&lt;/b&gt;&lt;br&gt;&lt;font color='#64748b'&gt;crm-service&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#c4b5fd;fontSize=11;" vertex="1" parent="10">
+  <mxGeometry x="15" y="50" width="180" height="55" as="geometry"/>
+</mxCell>
+<mxCell id="12" value="&lt;b&gt;BI 数据平台&lt;/b&gt;&lt;br&gt;&lt;font color='#64748b'&gt;bi-platform&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#c4b5fd;fontSize=11;" vertex="1" parent="10">
+  <mxGeometry x="15" y="120" width="180" height="55" as="geometry"/>
+</mxCell>
+<mxCell id="13" value="&lt;b&gt;风控引擎&lt;/b&gt;&lt;br&gt;&lt;font color='#64748b'&gt;risk-engine&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#c4b5fd;fontSize=11;" vertex="1" parent="10">
+  <mxGeometry x="15" y="190" width="180" height="55" as="geometry"/>
+</mxCell>
+<mxCell id="14" value="其他业务系统 ···" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#c4b5fd;fontSize=11;dashed=1;fontColor=#94a3b8;" vertex="1" parent="10">
+  <mxGeometry x="15" y="260" width="180" height="50" as="geometry"/>
+</mxCell>
+<mxCell id="15" value="&lt;b&gt;凭证：API Key / AK·SK&lt;/b&gt;&lt;br&gt;&lt;font color='#3b82f6' style='font-size:10px'&gt;Authorization: Bearer {key}&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#93c5fd;fontSize=11;" vertex="1" parent="10">
+  <mxGeometry x="10" y="330" width="190" height="55" as="geometry"/>
+</mxCell>
+<mxCell id="16" value="&lt;b&gt;L1 缓存 Caffeine&lt;/b&gt;&lt;br&gt;进程内，TTL 30~60s&lt;br&gt;凭证 / 授权 / 路由" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#fcd34d;fontSize=11;" vertex="1" parent="10">
+  <mxGeometry x="10" y="405" width="190" height="60" as="geometry"/>
+</mxCell>
+
+<!-- ===== ModelGate 网关集群 ===== -->
+<mxCell id="20" value="ModelGate 网关集群" style="swimlane;startSize=30;fillColor=#eef2ff;strokeColor=#818cf8;fontColor=#4338ca;fontStyle=1;fontSize=13;rounded=1;arcSize=4;" vertex="1" parent="1">
+  <mxGeometry x="280" y="50" width="710" height="810" as="geometry"/>
+</mxCell>
+
+<!-- Nginx LB -->
+<mxCell id="21" value="&lt;b&gt;负载均衡 / Nginx&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:10px' color='#c7d2fe'&gt;轮询 / 最少连接&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#4f46e5;strokeColor=#3730a3;fontColor=#ffffff;fontSize=12;" vertex="1" parent="20">
+  <mxGeometry x="30" y="50" width="650" height="55" as="geometry"/>
+</mxCell>
+
+<!-- 实例区域 -->
+<mxCell id="22" value="Spring Cloud Gateway 实例" style="swimlane;startSize=28;fillColor=#ffffff;strokeColor=#c7d2fe;fontColor=#4338ca;fontSize=11;fontStyle=1;rounded=1;arcSize=5;" vertex="1" parent="20">
+  <mxGeometry x="30" y="125" width="650" height="160" as="geometry"/>
+</mxCell>
+<mxCell id="23" value="&lt;b&gt;实例 1&lt;/b&gt;&lt;br&gt;Filter 链&lt;br&gt;WebFlux&lt;br&gt;Reactor Netty&lt;br&gt;&lt;font color='#94a3b8' style='font-size:10px'&gt;:8080&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f0f9ff;strokeColor=#bae6fd;fontSize=11;" vertex="1" parent="22">
+  <mxGeometry x="30" y="38" width="160" height="105" as="geometry"/>
+</mxCell>
+<mxCell id="24" value="&lt;b&gt;实例 2&lt;/b&gt;&lt;br&gt;Filter 链&lt;br&gt;WebFlux&lt;br&gt;Reactor Netty&lt;br&gt;&lt;font color='#94a3b8' style='font-size:10px'&gt;:8080&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f0f9ff;strokeColor=#bae6fd;fontSize=11;" vertex="1" parent="22">
+  <mxGeometry x="245" y="38" width="160" height="105" as="geometry"/>
+</mxCell>
+<mxCell id="25" value="&lt;b&gt;实例 3&lt;/b&gt;&lt;br&gt;Filter 链&lt;br&gt;WebFlux&lt;br&gt;Reactor Netty&lt;br&gt;&lt;font color='#94a3b8' style='font-size:10px'&gt;:8080&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f0f9ff;strokeColor=#bae6fd;fontSize=11;" vertex="1" parent="22">
+  <mxGeometry x="460" y="38" width="160" height="105" as="geometry"/>
+</mxCell>
+
+<!-- 基础设施 -->
+<mxCell id="30" value="基础设施层" style="swimlane;startSize=28;fillColor=#f0fdf4;strokeColor=#86efac;fontColor=#15803d;fontSize=11;fontStyle=1;rounded=1;arcSize=5;" vertex="1" parent="20">
+  <mxGeometry x="30" y="310" width="650" height="380" as="geometry"/>
+</mxCell>
+<mxCell id="31" value="🗄️ &lt;b&gt;MySQL 8&lt;/b&gt;&lt;br&gt;模型/App/凭证/配置/审计" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#bbf7d0;fontSize=11;" vertex="1" parent="30">
+  <mxGeometry x="20" y="45" width="285" height="65" as="geometry"/>
+</mxCell>
+<mxCell id="32" value="⚡ &lt;b&gt;Redis&lt;/b&gt;&lt;br&gt;L2 缓存 / 限流计数器" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#bbf7d0;fontSize=11;" vertex="1" parent="30">
+  <mxGeometry x="345" y="45" width="285" height="65" as="geometry"/>
+</mxCell>
+<mxCell id="33" value="📨 &lt;b&gt;Kafka&lt;/b&gt;&lt;br&gt;审计日志异步写出" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#bbf7d0;fontSize=11;" vertex="1" parent="30">
+  <mxGeometry x="20" y="130" width="285" height="65" as="geometry"/>
+</mxCell>
+<mxCell id="34" value="🔍 &lt;b&gt;Consul&lt;/b&gt;&lt;br&gt;服务注册与发现" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#bbf7d0;fontSize=11;" vertex="1" parent="30">
+  <mxGeometry x="345" y="130" width="285" height="65" as="geometry"/>
+</mxCell>
+<mxCell id="35" value="⚙️ &lt;b&gt;Apollo&lt;/b&gt;&lt;br&gt;动态配置（鉴权/熔断紧急开关）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#bbf7d0;fontSize=11;" vertex="1" parent="30">
+  <mxGeometry x="20" y="215" width="285" height="65" as="geometry"/>
+</mxCell>
+<mxCell id="36" value="📊 &lt;b&gt;Prometheus / Grafana&lt;/b&gt;&lt;br&gt;指标采集与可视化" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#bbf7d0;fontSize=11;" vertex="1" parent="30">
+  <mxGeometry x="345" y="215" width="285" height="65" as="geometry"/>
+</mxCell>
+<mxCell id="37" value="🖥️ &lt;b&gt;管理后台 /admin/**&lt;/b&gt;&lt;br&gt;ModelController / AppController / CredentialController / ModelAuthController ···" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#fcd34d;fontSize=11;" vertex="1" parent="30">
+  <mxGeometry x="20" y="300" width="610" height="65" as="geometry"/>
+</mxCell>
+
+<!-- ===== 上游模型 ===== -->
+<mxCell id="50" value="🌐 &lt;b&gt;OpenAI API&lt;/b&gt;&lt;br&gt;&lt;font color='#047857'&gt;api.openai.com&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d1fae5;strokeColor=#6ee7b7;fontSize=12;" vertex="1" parent="1">
+  <mxGeometry x="1075" y="70" width="490" height="80" as="geometry"/>
+</mxCell>
+<mxCell id="51" value="☁️ &lt;b&gt;Azure OpenAI&lt;/b&gt;&lt;br&gt;&lt;font color='#1d4ed8'&gt;{resource}.openai.azure.com&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#93c5fd;fontSize=12;" vertex="1" parent="1">
+  <mxGeometry x="1075" y="175" width="490" height="80" as="geometry"/>
+</mxCell>
+<mxCell id="52" value="🤖 &lt;b&gt;Anthropic API&lt;/b&gt;&lt;br&gt;&lt;font color='#6d28d9'&gt;api.anthropic.com&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ede9fe;strokeColor=#c4b5fd;fontSize=12;" vertex="1" parent="1">
+  <mxGeometry x="1075" y="280" width="490" height="80" as="geometry"/>
+</mxCell>
+<mxCell id="53" value="🏠 &lt;b&gt;私有化部署&lt;/b&gt;&lt;br&gt;&lt;font color='#78350f'&gt;内网 GPU 服务器（OpenAI 兼容接口）&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#fcd34d;fontSize=12;" vertex="1" parent="1">
+  <mxGeometry x="1075" y="385" width="490" height="80" as="geometry"/>
+</mxCell>
+<mxCell id="54" value="🔧 &lt;b&gt;Custom 上游&lt;/b&gt;&lt;br&gt;&lt;font color='#64748b'&gt;自定义协议适配（param_mapping）&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#cbd5e1;fontSize=12;" vertex="1" parent="1">
+  <mxGeometry x="1075" y="490" width="490" height="80" as="geometry"/>
+</mxCell>
+
+<!-- 适配器说明 -->
+<mxCell id="55" value="&lt;b&gt;ProviderAdapter 层&lt;/b&gt;&lt;br&gt;OpenAIAdapter（直透）&lt;br&gt;AzureOpenAIAdapter（URL/Header适配）&lt;br&gt;AnthropicAdapter（请求体+响应体转换）&lt;br&gt;CustomAdapter（自定义映射）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8faff;strokeColor=#c7d2fe;fontSize=11;" vertex="1" parent="1">
+  <mxGeometry x="1075" y="600" width="490" height="110" as="geometry"/>
+</mxCell>
+
+<!-- ===== 箭头 ===== -->
+<!-- 接入系统 → LB -->
+<mxCell id="60" value="/v1/chat/completions" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#6366f1;strokeWidth=2;fontColor=#6366f1;fontSize=10;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" source="10" target="21" parent="1">
+  <mxGeometry relative="1" as="geometry"/>
+</mxCell>
+
+<!-- 网关 → OpenAI -->
+<mxCell id="61" value="HTTPS / SSE 流式" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#10b981;strokeWidth=2;dashed=1;dashPattern=6 3;fontColor=#10b981;fontSize=10;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" source="20" target="50" parent="1">
+  <mxGeometry relative="1" as="geometry"/>
+</mxCell>
+<mxCell id="62" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#10b981;strokeWidth=1.5;dashed=1;dashPattern=6 3;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" source="20" target="51" parent="1">
+  <mxGeometry relative="1" as="geometry"/>
+</mxCell>
+<mxCell id="63" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#10b981;strokeWidth=1.5;dashed=1;dashPattern=6 3;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" source="20" target="52" parent="1">
+  <mxGeometry relative="1" as="geometry"/>
+</mxCell>
+<mxCell id="64" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#10b981;strokeWidth=1.5;dashed=1;dashPattern=6 3;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" source="20" target="53" parent="1">
+  <mxGeometry relative="1" as="geometry"/>
+</mxCell>
+<mxCell id="65" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#94a3b8;strokeWidth=1.5;dashed=1;dashPattern=6 3;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" source="20" target="54" parent="1">
+  <mxGeometry relative="1" as="geometry"/>
+</mxCell>
+
+</root>
+</mxGraphModel>
+</diagram>
+
+<!-- ================================================================ -->
+<!-- Page 2: 应用架构图                                                 -->
+<!-- ================================================================ -->
+<diagram id="app-arch" name="② 应用架构图">
+<mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1654" pageHeight="1169" math="0" shadow="1">
+<root>
+<mxCell id="0"/>
+<mxCell id="1" parent="0"/>
+
+<!-- 请求入口 -->
+<mxCell id="100" value="&lt;b&gt;POST /v1/chat/completions&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:11px' color='#a5b4fc'&gt;Authorization: Bearer {api_key} | AKSK {ak}:{timestamp}:{signature}&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1e1b4b;strokeColor=#4338ca;fontColor=#ffffff;fontSize=13;" vertex="1" parent="1">
+  <mxGeometry x="380" y="20" width="560" height="65" as="geometry"/>
+</mxCell>
+
+<!-- Filter 链外框 -->
+<mxCell id="101" value="GlobalFilter 过滤器链（Spring Cloud Gateway · WebFlux · Reactor Netty）" style="swimlane;startSize=32;fillColor=#f8faff;strokeColor=#818cf8;fontColor=#4338ca;fontStyle=1;fontSize=12;rounded=1;arcSize=3;" vertex="1" parent="1">
+  <mxGeometry x="220" y="105" width="880" height="680" as="geometry"/>
+</mxCell>
+
+<!-- F1: AdminAuthFilter -->
+<mxCell id="110" value="&lt;font color='#991b1b'&gt;&lt;b&gt;order = -200&lt;/b&gt;&lt;/font&gt;　　&lt;b&gt;AdminAuthFilter&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:10px'&gt;保护 /admin/** 和 /actuator/**，IP 白名单 → X-Admin-Token → Basic Auth 三层验证&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef2f2;strokeColor=#fca5a5;fontSize=12;align=left;spacingLeft=12;" vertex="1" parent="101">
+  <mxGeometry x="25" y="50" width="810" height="62" as="geometry"/>
+</mxCell>
+<mxCell id="110r" value="→ 401 / 403" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontColor=#991b1b;fontStyle=1;fontSize=11;" vertex="1" parent="101">
+  <mxGeometry x="840" y="50" width="30" height="62" as="geometry"/>
+</mxCell>
+
+<!-- F2: CredentialAuthFilter -->
+<mxCell id="111" value="&lt;font color='#92400e'&gt;&lt;b&gt;order = -190&lt;/b&gt;&lt;/font&gt;　　&lt;b&gt;CredentialAuthFilter&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:10px'&gt;API Key → SHA256 → Caffeine L1 → Redis L2 → DB L3；AK/SK → HMAC重签 → 时间戳防重放(±5min)&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff7ed;strokeColor=#fed7aa;fontSize=12;align=left;spacingLeft=12;" vertex="1" parent="101">
+  <mxGeometry x="25" y="128" width="810" height="62" as="geometry"/>
+</mxCell>
+<mxCell id="111r" value="→ 401" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontColor=#92400e;fontStyle=1;fontSize=11;" vertex="1" parent="101">
+  <mxGeometry x="840" y="128" width="30" height="62" as="geometry"/>
+</mxCell>
+
+<!-- F3: AppAccessControlFilter -->
+<mxCell id="112" value="&lt;font color='#78350f'&gt;&lt;b&gt;order = -180&lt;/b&gt;&lt;/font&gt;　　&lt;b&gt;AppAccessControlFilter&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:10px'&gt;加载访问规则（Caffeine），校验客户端 IP 是否匹配 CIDR / IP 白名单；规则为空则不限制&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fffbeb;strokeColor=#fde68a;fontSize=12;align=left;spacingLeft=12;" vertex="1" parent="101">
+  <mxGeometry x="25" y="206" width="810" height="62" as="geometry"/>
+</mxCell>
+<mxCell id="112r" value="→ 403" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontColor=#78350f;fontStyle=1;fontSize=11;" vertex="1" parent="101">
+  <mxGeometry x="840" y="206" width="30" height="62" as="geometry"/>
+</mxCell>
+
+<!-- F4: ModelAuthFilter -->
+<mxCell id="113" value="&lt;font color='#14532d'&gt;&lt;b&gt;order = -170&lt;/b&gt;&lt;/font&gt;　　&lt;b&gt;ModelAuthFilter&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:10px'&gt;解析请求体 model 字段，查 mg_app_model_auth（Caffeine），校验：系统开关→授权开关→是否过期→模型状态&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f0fdf4;strokeColor=#86efac;fontSize=12;align=left;spacingLeft=12;" vertex="1" parent="101">
+  <mxGeometry x="25" y="284" width="810" height="62" as="geometry"/>
+</mxCell>
+<mxCell id="113r" value="→ 403/503" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontColor=#14532d;fontStyle=1;fontSize=11;" vertex="1" parent="101">
+  <mxGeometry x="840" y="284" width="30" height="62" as="geometry"/>
+</mxCell>
+
+<!-- F5: RateLimitFilter -->
+<mxCell id="114" value="&lt;font color='#1e3a8a'&gt;&lt;b&gt;order = -160&lt;/b&gt;&lt;/font&gt;　　&lt;b&gt;RateLimitFilter&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:10px'&gt;Redis Lua 令牌桶（每秒滑动窗口），key = app_id，QPS 取自授权配置；超限返回 429 + Retry-After&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eff6ff;strokeColor=#bfdbfe;fontSize=12;align=left;spacingLeft=12;" vertex="1" parent="101">
+  <mxGeometry x="25" y="362" width="810" height="62" as="geometry"/>
+</mxCell>
+<mxCell id="114r" value="→ 429" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontColor=#1e3a8a;fontStyle=1;fontSize=11;" vertex="1" parent="101">
+  <mxGeometry x="840" y="362" width="30" height="62" as="geometry"/>
+</mxCell>
+
+<!-- F6: TraceFilter -->
+<mxCell id="115" value="&lt;font color='#581c87'&gt;&lt;b&gt;order = -150&lt;/b&gt;&lt;/font&gt;　　&lt;b&gt;TraceFilter&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:10px'&gt;生成 traceId（UUID 前16位），写入 MDC 和响应头 X-Trace-Id、X-Mg-App、X-Mg-Model&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#faf5ff;strokeColor=#d8b4fe;fontSize=12;align=left;spacingLeft=12;" vertex="1" parent="101">
+  <mxGeometry x="25" y="440" width="810" height="62" as="geometry"/>
+</mxCell>
+
+<!-- F7: ModelRouteFilter -->
+<mxCell id="116" value="&lt;font color='#065f46'&gt;&lt;b&gt;order = -140&lt;/b&gt;&lt;/font&gt;　　&lt;b&gt;ModelRouteFilter&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:10px'&gt;加载 ModelInstance + ModelCredential（Caffeine 30s），调用 ProviderAdapter 转换请求体，设置 GATEWAY_REQUEST_URL_ATTR&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ecfdf5;strokeColor=#6ee7b7;fontSize=12;align=left;spacingLeft=12;" vertex="1" parent="101">
+  <mxGeometry x="25" y="518" width="810" height="62" as="geometry"/>
+</mxCell>
+
+<!-- F8: CircuitBreakerFilter -->
+<mxCell id="117" value="&lt;font color='#881337'&gt;&lt;b&gt;order = -50 &lt;/b&gt;&lt;/font&gt;　　&lt;b&gt;CircuitBreakerFilter（Resilience4j）&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:10px'&gt;按 model_id 独立熔断器实例，失败率 &gt; 阈值→OPEN 状态，等待 30s 后进入 HALF-OPEN 自动探活&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff1f2;strokeColor=#fda4af;fontSize=12;align=left;spacingLeft=12;" vertex="1" parent="101">
+  <mxGeometry x="25" y="596" width="810" height="62" as="geometry"/>
+</mxCell>
+<mxCell id="117r" value="→ 503" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontColor=#881337;fontStyle=1;fontSize=11;" vertex="1" parent="101">
+  <mxGeometry x="840" y="596" width="30" height="62" as="geometry"/>
+</mxCell>
+
+<!-- 箭头（Filter 链内部竖向） -->
+<mxCell id="a1" value="" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#6366f1;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" source="110" target="111" parent="101"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="a2" value="" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#6366f1;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" source="111" target="112" parent="101"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="a3" value="" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#6366f1;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" source="112" target="113" parent="101"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="a4" value="" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#6366f1;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" source="113" target="114" parent="101"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="a5" value="" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#6366f1;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" source="114" target="115" parent="101"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="a6" value="" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#6366f1;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" source="115" target="116" parent="101"><mxGeometry relative="1" as="geometry"/></mxCell>
+<mxCell id="a7" value="" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#6366f1;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" source="116" target="117" parent="101"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+<!-- 路由转发 -->
+<mxCell id="120" value="Spring Cloud Gateway 路由转发&lt;br&gt;&lt;font style='font-size:10px' color='#c7d2fe'&gt;GATEWAY_REQUEST_URL_ATTR → 上游模型地址&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#4f46e5;strokeColor=#3730a3;fontColor=#ffffff;fontSize=12;" vertex="1" parent="1">
+  <mxGeometry x="440" y="805" width="440" height="60" as="geometry"/>
+</mxCell>
+
+<!-- 请求入口 → Filter链 -->
+<mxCell id="a0" value="" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#6366f1;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" source="100" target="101" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+<!-- Filter链 → 路由转发 -->
+<mxCell id="a8" value="" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#6366f1;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" source="101" target="120" parent="1"><mxGeometry relative="1" as="geometry"/></mxCell>
+
+<!-- ===== 缓存层（左侧） ===== -->
+<mxCell id="130" value="缓存层" style="swimlane;startSize=28;fillColor=#fefce8;strokeColor=#fde68a;fontColor=#78350f;fontStyle=1;fontSize=12;rounded=1;arcSize=5;" vertex="1" parent="1">
+  <mxGeometry x="20" y="300" width="190" height="390" as="geometry"/>
+</mxCell>
+<mxCell id="131" value="&lt;b&gt;L1 Caffeine（进程内）&lt;/b&gt;&lt;br&gt;凭证 60s&lt;br&gt;授权 60s&lt;br&gt;路由 30s&lt;br&gt;访问规则 60s" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#fcd34d;fontSize=11;" vertex="1" parent="130">
+  <mxGeometry x="10" y="38" width="170" height="100" as="geometry"/>
+</mxCell>
+<mxCell id="132" value="&lt;b&gt;L2 Redis（跨实例共享）&lt;/b&gt;&lt;br&gt;凭证永久&lt;br&gt;授权永久&lt;br&gt;&lt;font color='#ef4444'&gt;Redis 故障→L1降级&lt;/font&gt;&lt;br&gt;L1 miss→直接拒绝" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eff6ff;strokeColor=#bfdbfe;fontSize=11;" vertex="1" parent="130">
+  <mxGeometry x="10" y="150" width="170" height="110" as="geometry"/>
+</mxCell>
+<mxCell id="133" value="&lt;b&gt;主动失效策略&lt;/b&gt;&lt;br&gt;写操作立即逐出缓存&lt;br&gt;（不等 TTL 自然过期）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f0fdf4;strokeColor=#86efac;fontSize=11;" vertex="1" parent="130">
+  <mxGeometry x="10" y="272" width="170" height="70" as="geometry"/>
+</mxCell>
+
+<!-- 缓存 → Filter链 -->
+<mxCell id="a9" value="读/写" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#f59e0b;strokeWidth=1.5;dashed=1;dashPattern=5 3;fontColor=#f59e0b;fontSize=10;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" source="130" target="101" parent="1">
+  <mxGeometry relative="1" as="geometry"/>
+</mxCell>
+
+<!-- ===== ProviderAdapter（右侧） ===== -->
+<mxCell id="140" value="ProviderAdapter" style="swimlane;startSize=28;fillColor=#f8faff;strokeColor=#c7d2fe;fontColor=#4338ca;fontStyle=1;fontSize=12;rounded=1;arcSize=5;" vertex="1" parent="1">
+  <mxGeometry x="1130" y="450" width="200" height="250" as="geometry"/>
+</mxCell>
+<mxCell id="141" value="OpenAIAdapter&lt;br&gt;&lt;font color='#64748b'&gt;直透，不转换&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d1fae5;strokeColor=#6ee7b7;fontSize=11;" vertex="1" parent="140">
+  <mxGeometry x="10" y="38" width="180" height="45" as="geometry"/>
+</mxCell>
+<mxCell id="142" value="AzureOpenAIAdapter&lt;br&gt;&lt;font color='#64748b'&gt;URL/Header 适配&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dbeafe;strokeColor=#93c5fd;fontSize=11;" vertex="1" parent="140">
+  <mxGeometry x="10" y="90" width="180" height="45" as="geometry"/>
+</mxCell>
+<mxCell id="143" value="AnthropicAdapter&lt;br&gt;&lt;font color='#64748b'&gt;请求体+响应体全量转换&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ede9fe;strokeColor=#c4b5fd;fontSize=11;" vertex="1" parent="140">
+  <mxGeometry x="10" y="142" width="180" height="45" as="geometry"/>
+</mxCell>
+<mxCell id="144" value="CustomAdapter&lt;br&gt;&lt;font color='#64748b'&gt;按 param_mapping 转换&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f1f5f9;strokeColor=#cbd5e1;fontSize=11;" vertex="1" parent="140">
+  <mxGeometry x="10" y="194" width="180" height="45" as="geometry"/>
+</mxCell>
+
+<!-- ModelRouteFilter → Adapter -->
+<mxCell id="a10" value="调用" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#94a3b8;strokeWidth=1.5;dashed=1;dashPattern=5 3;fontColor=#94a3b8;fontSize=10;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" source="116" target="140" parent="1">
+  <mxGeometry relative="1" as="geometry"/>
+</mxCell>
+
+<!-- ===== doFinally AuditService（下方左侧） ===== -->
+<mxCell id="150" value="doFinally（响应后异步执行）" style="swimlane;startSize=28;fillColor=#fffbeb;strokeColor=#fde68a;fontColor=#92400e;fontStyle=1;fontSize=11;rounded=1;arcSize=5;" vertex="1" parent="1">
+  <mxGeometry x="20" y="720" width="310" height="170" as="geometry"/>
+</mxCell>
+<mxCell id="151" value="📨 &lt;b&gt;AuditService → Kafka&lt;/b&gt;&lt;br&gt;traceId / appId / modelId&lt;br&gt;httpStatus / latencyMs&lt;br&gt;inputTokens / outputTokens&lt;br&gt;clientIp / requestPath" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff;strokeColor=#fde68a;fontSize=11;" vertex="1" parent="150">
+  <mxGeometry x="10" y="38" width="290" height="115" as="geometry"/>
+</mxCell>
+
+<!-- 路由转发 → AuditService -->
+<mxCell id="a11" value="doFinally" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#f59e0b;strokeWidth=1.5;dashed=1;dashPattern=5 3;fontColor=#f59e0b;fontSize=10;exitX=0;exitY=0.5;entryX=1;entryY=0.5;" edge="1" source="120" target="150" parent="1">
+  <mxGeometry relative="1" as="geometry"/>
+</mxCell>
+
+<!-- 上游模型（右侧） -->
+<mxCell id="160" value="上游模型服务（SSE / HTTP）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d1fae5;strokeColor=#6ee7b7;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+  <mxGeometry x="1130" y="805" width="230" height="60" as="geometry"/>
+</mxCell>
+
+<!-- 路由转发 → 上游 -->
+<mxCell id="a12" value="转发" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#10b981;strokeWidth=2;fontColor=#10b981;fontSize=10;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" source="120" target="160" parent="1">
+  <mxGeometry relative="1" as="geometry"/>
+</mxCell>
+
+</root>
+</mxGraphModel>
+</diagram>
+
+</mxfile>

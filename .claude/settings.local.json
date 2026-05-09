@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:claude.ai)",
+      "Bash(sort echo *)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(where python3 *)",
+      "Bash(where python *)",
+      "Bash(where py *)",
+      "Bash(grep -v \"//\\\\|^\\\\s*//\")",
+      "Bash(find D:/code/modelgate/src -name \"*.java\" -exec sed -i 's/import javax\\\\.validation\\\\./import jakarta.validation./g; s/import javax\\\\.annotation\\\\./import jakarta.annotation./g' {} \\\\;)",
+      "Bash(sed -i 's/Spring Boot | 2.7.18 | 不得升级至 3.x/Spring Boot | 3.3.5 | —/' D:/code/modelgate/spec/modelgate/02-架构设计.md)",
+      "Bash(sed -i 's/2021.0.9 对应版本/2023.0.3 对应版本/' D:/code/modelgate/spec/modelgate/02-架构设计.md)",
+      "Bash(xargs grep *)",
+      "Bash(xargs ls *)",
+      "mcp__Claude_in_Chrome__tabs_context_mcp",
+      "Read(//d/code/**)",
+      "Bash(rm D:/code/neo4j/src/main/java/com/pab/ficc/idp/neo4j/apollo/Neo4jConfigRefresher.java D:/code/neo4j/src/main/resources/bootstrap.yml)",
+      "Bash(rmdir D:/code/neo4j/src/main/java/com/pab/ficc/idp/neo4j/apollo)"
+    ]
+  }
+}

@@ -1,0 +1,31 @@
+spring:
+  application:
+    name: modelgate
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:dev}
+  cloud:
+    consul:
+      host: ${CONSUL_HOST:127.0.0.1}
+      port: ${CONSUL_PORT:8500}
+      discovery:
+        enabled: true
+        register: true
+        health-check-path: /actuator/health
+        health-check-interval: 10s
+        instance-id: ${spring.application.name}-${spring.cloud.client.ip-address}-${server.port}
+        prefer-ip-address: true
+        tags:
+          - version=1.0.0
+          - env=${spring.profiles.active}
+
+# Apollo 配置中心
+app:
+  id: modelgate
+apollo:
+  meta: ${APOLLO_META:http://127.0.0.1:8080}
+  bootstrap:
+    enabled: true
+    # 加载多个 namespace：主配置 + 网关专属配置
+    namespaces: application,modelgate
+    eagerLoad:
+      enabled: true

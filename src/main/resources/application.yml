@@ -1,0 +1,177 @@
+# ============================================================
+# application.yml — 本地 fallback 默认值
+# 生产环境所有配置通过 Apollo 下发，此处仅作本地开发兜底
+# ============================================================
+server:
+  port: 8080
+
+# ===== 数据源 =====
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:mysql://127.0.0.1:3306/modelgate?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai}
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:root}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+
+  # ===== Redis =====
+  redis:
+    host: ${REDIS_HOST:127.0.0.1}
+    port: ${REDIS_PORT:6379}
+    password: ${REDIS_PASSWORD:}
+    database: 0
+    lettuce:
+      pool:
+        max-active: 20
+        max-idle: 10
+        min-idle: 2
+
+  # ===== Kafka =====
+  kafka:
+    bootstrap-servers: ${KAFKA_SERVERS:127.0.0.1:9092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: 1
+      retries: 3
+      batch-size: 16384
+      linger-ms: 5
+      buffer-memory: 33554432
+    consumer:
+      group-id: modelgate-audit
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+
+  # ===== MyBatis Plus =====
+  # datasource 已配置，mybatis-plus 自动使用上方 datasource
+
+# ===== MyBatis Plus =====
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl
+  global-config:
+    db-config:
+      id-type: auto
+      logic-delete-field: null
+
+  # ===== Spring Cloud Gateway 路由 =====
+  cloud:
+    gateway:
+      # 上游模型服务地址 — 生产从 Apollo 注入
+      routes:
+        - id: model-route
+          uri: ${MODEL_UPSTREAM_URL:http://127.0.0.1:9090}
+          predicates:
+            - Path=/v1/**
+          filters:
+            - PreserveHostHeader
+            - name: RequestSize
+              args:
+                maxSize: 10MB
+      # 全局超时（大模型流式响应耗时长，timeout 要放大）
+      httpclient:
+        response-timeout: 300s
+        connect-timeout: 5000
+      # 允许获取真实 Body（限流 key resolver 需要）
+      default-filters:
+        - DedupeResponseHeader=Access-Control-Allow-Credentials Access-Control-Allow-Origin
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowedOriginPatterns: "*"
+            allowedMethods: "*"
+            allowedHeaders: "*"
+            allowCredentials: true
+
+# ===== Actuator =====
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  endpoint:
+    health:
+      show-details: when_authorized
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+# ===== Resilience4j 熔断器 =====
+resilience4j:
+  circuitbreaker:
+    instances:
+      modelUpstream:
+        # 滑动窗口：最近 10 次请求
+        slidingWindowType: COUNT_BASED
+        slidingWindowSize: 10
+        # 失败率 > 50% 触发熔断
+        failureRateThreshold: 50
+        # 慢调用率 > 80% 触发熔断（超过 10s 算慢调用）
+        slowCallRateThreshold: 80
+        slowCallDurationThreshold: 10s
+        # 熔断后等 30s 再半开
+        waitDurationInOpenState: 30s
+        # 半开时允许 5 次试探
+        permittedNumberOfCallsInHalfOpenState: 5
+        automaticTransitionFromOpenToHalfOpenEnabled: true
+  timelimiter:
+    instances:
+      modelUpstream:
+        timeoutDuration: 300s
+
+# ===== ModelGate 自定义配置（Apollo 热更新以下所有项） =====
+modelgate:
+  # 上游模型地址（Apollo 热更新）
+  upstream:
+    url: ${MODEL_UPSTREAM_URL:http://127.0.0.1:9090}
+
+  # 白名单缓存配置
+  whitelist:
+    # 本地缓存 TTL（秒）
+    local-cache-ttl: 60
+    # 本地缓存最大条目
+    local-cache-max-size: 10000
+    # Redis key 前缀
+    redis-key-prefix: "wl:apikey:"
+    # 定时全量同步 MySQL → Redis 间隔（秒）
+    sync-interval-seconds: 300
+
+  # Admin 接口鉴权
+  admin:
+    # Admin Token 列表（Apollo 管理，动态下发）
+    tokens:
+      - name: ops-team
+        token: ${ADMIN_TOKEN_OPS:mg-admin-change-me-in-prod}
+    # 管理接口 IP 白名单（支持 CIDR，空则不校验 IP）
+    allowed-ips:
+      - 127.0.0.1
+      - 10.0.0.0/8
+      - 172.16.0.0/12
+      - 192.168.0.0/16
+    # Basic Auth（可选，用于浏览器访问管理页面）
+    basic-auth:
+      enabled: true
+      username: ${ADMIN_USERNAME:admin}
+      password: ${ADMIN_PASSWORD:changeme}
+
+  # 审计日志 Kafka topic
+  audit:
+    topic: modelgate-audit-log
+    enabled: true
+    db-write: true
+
+  # 加密密钥（32字节base64，生产从环境变量 MODELGATE_CRYPTO_KEY 注入）
+  crypto:
+    key: ${MODELGATE_CRYPTO_KEY:}
+
+  # 默认限流（每 API Key，每秒 token 数）
+  rate-limit:
+    default-rate: 10
+    default-burst: 20

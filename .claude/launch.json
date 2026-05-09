@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "admin-preview",
+      "runtimeExecutable": "C:\\Users\\caose\\AppData\\Local\\Programs\\Python\\Python314\\python.exe",
+      "runtimeArgs": ["-m", "http.server", "7890", "--directory", "src/main/resources/static"],
+      "port": 7890
+    }
+  ]
+}

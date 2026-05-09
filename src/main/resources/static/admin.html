@@ -1,0 +1,1721 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>ModelGate · 管理后台</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;background:#f0f2f5;color:#1f2937;display:flex;height:100vh;overflow:hidden}
+
+/* ===== Sidebar ===== */
+.sidebar{width:220px;flex-shrink:0;background:linear-gradient(180deg,#1e1b4b 0%,#312e81 100%);display:flex;flex-direction:column;height:100vh;overflow:hidden}
+.sidebar-logo{padding:20px 20px 16px;border-bottom:1px solid rgba(255,255,255,.1)}
+.sidebar-logo h1{color:#fff;font-size:18px;font-weight:700;letter-spacing:.5px}
+.sidebar-logo p{color:#a5b4fc;font-size:11px;margin-top:3px}
+.nav-section{padding:12px 0;flex:1;overflow-y:auto}
+.nav-label{padding:6px 16px;font-size:10px;font-weight:600;color:#6366f1;text-transform:uppercase;letter-spacing:1px}
+.nav-item{display:flex;align-items:center;gap:10px;padding:10px 18px;color:#c7d2fe;font-size:13px;cursor:pointer;transition:all .15s;border-left:3px solid transparent}
+.nav-item:hover{background:rgba(255,255,255,.08);color:#fff}
+.nav-item.active{background:rgba(99,102,241,.25);color:#fff;border-left-color:#818cf8}
+.nav-item .icon{font-size:16px;width:20px;text-align:center}
+.sidebar-footer{padding:14px 18px;border-top:1px solid rgba(255,255,255,.1)}
+.sidebar-footer .token-label{font-size:10px;color:#6366f1;margin-bottom:4px;font-weight:600}
+.sidebar-footer input{width:100%;padding:6px 10px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.15);border-radius:6px;color:#fff;font-size:12px;outline:none}
+.sidebar-footer input::placeholder{color:#6366f1}
+.sidebar-footer input:focus{border-color:#818cf8;background:rgba(255,255,255,.15)}
+.connect-btn{width:100%;margin-top:8px;padding:7px;background:#6366f1;border:none;border-radius:6px;color:#fff;font-size:12px;cursor:pointer;transition:background .2s}
+.connect-btn:hover{background:#4f46e5}
+.status-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:5px}
+.status-dot.on{background:#4ade80}
+.status-dot.off{background:#f87171}
+.status-text{font-size:11px;color:#94a3b8;margin-top:6px}
+
+/* ===== Main ===== */
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.topbar{background:#fff;border-bottom:1px solid #e5e7eb;padding:0 24px;height:52px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.topbar-title{font-size:16px;font-weight:600;color:#1e1b4b}
+.topbar-right{display:flex;align-items:center;gap:12px;font-size:12px;color:#64748b}
+.content{flex:1;overflow-y:auto;padding:24px}
+
+/* ===== Panel ===== */
+.panel{display:none}
+.panel.active{display:block}
+
+/* ===== Cards ===== */
+.card{background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.06);padding:20px;margin-bottom:16px}
+.card-title{font-size:14px;font-weight:600;color:#1e1b4b;margin-bottom:16px;display:flex;align-items:center;gap:8px}
+
+/* ===== Stats row ===== */
+.stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:16px}
+.stat-card{background:#fff;border-radius:12px;padding:18px 20px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+.stat-label{font-size:12px;color:#64748b;margin-bottom:6px}
+.stat-val{font-size:26px;font-weight:700;color:#1e1b4b}
+.stat-sub{font-size:11px;color:#94a3b8;margin-top:4px}
+
+/* ===== Table ===== */
+.table-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse}
+th{background:#f8fafc;padding:9px 12px;text-align:left;font-size:11px;color:#64748b;font-weight:600;border-bottom:1px solid #e5e7eb;white-space:nowrap}
+td{padding:11px 12px;font-size:13px;border-bottom:1px solid #f1f5f9;vertical-align:middle}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:#fafbff}
+.empty-row td{text-align:center;color:#94a3b8;padding:48px!important;background:none!important}
+
+/* ===== Tags ===== */
+.tag{display:inline-flex;align-items:center;padding:2px 10px;border-radius:99px;font-size:11px;font-weight:600}
+.tag-green{background:#d1fae5;color:#065f46}
+.tag-red{background:#fee2e2;color:#991b1b}
+.tag-yellow{background:#fef3c7;color:#92400e}
+.tag-blue{background:#dbeafe;color:#1e40af}
+.tag-purple{background:#ede9fe;color:#5b21b6}
+.tag-gray{background:#f1f5f9;color:#475569}
+
+/* ===== Buttons ===== */
+.btn{padding:7px 16px;border:none;border-radius:8px;cursor:pointer;font-size:13px;font-weight:500;transition:all .15s;display:inline-flex;align-items:center;gap:5px}
+.btn:hover{opacity:.88;transform:translateY(-1px)}
+.btn:active{transform:none}
+.btn-primary{background:#6366f1;color:#fff}
+.btn-success{background:#10b981;color:#fff}
+.btn-danger{background:#ef4444;color:#fff}
+.btn-warning{background:#f59e0b;color:#fff}
+.btn-info{background:#3b82f6;color:#fff}
+.btn-neutral{background:#e2e8f0;color:#334155}
+.btn-sm{padding:4px 10px;font-size:12px;border-radius:6px}
+.btn-icon{padding:5px 8px;border-radius:6px}
+
+/* ===== Toolbar ===== */
+.toolbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:12px;flex-wrap:wrap}
+.toolbar-left{display:flex;align-items:center;gap:8px}
+.toolbar-right{display:flex;align-items:center;gap:8px}
+
+/* ===== Form ===== */
+.form-grid{display:grid;gap:14px}
+.form-grid-2{grid-template-columns:1fr 1fr}
+.form-grid-3{grid-template-columns:1fr 1fr 1fr}
+.form-group{display:flex;flex-direction:column;gap:5px}
+.form-group label{font-size:12px;font-weight:600;color:#374151}
+.form-group .hint{font-size:11px;color:#94a3b8}
+input[type=text],input[type=password],input[type=number],input[type=email],input[type=date],select,textarea{
+  padding:8px 12px;border:1px solid #e5e7eb;border-radius:8px;font-size:13px;outline:none;transition:border-color .2s;width:100%;background:#fff;color:#1f2937
+}
+input:focus,select:focus,textarea:focus{border-color:#6366f1;box-shadow:0 0 0 3px rgba(99,102,241,.08)}
+textarea{resize:vertical;min-height:80px;font-family:monospace}
+.radio-group{display:flex;gap:16px;align-items:center}
+.radio-group label{display:flex;align-items:center;gap:6px;font-size:13px;font-weight:400;cursor:pointer}
+
+/* ===== Modal ===== */
+.modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;display:none;align-items:center;justify-content:center}
+.modal-backdrop.open{display:flex}
+.modal{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.2);width:560px;max-width:94vw;max-height:90vh;overflow-y:auto;animation:slideUp .2s ease}
+.modal-wide{width:720px}
+@keyframes slideUp{from{transform:translateY(20px);opacity:0}to{transform:none;opacity:1}}
+.modal-header{padding:20px 24px 16px;border-bottom:1px solid #f1f5f9;display:flex;align-items:center;justify-content:space-between}
+.modal-header h3{font-size:16px;font-weight:600;color:#1e1b4b}
+.modal-close{background:none;border:none;cursor:pointer;font-size:20px;color:#94a3b8;line-height:1;padding:4px}
+.modal-close:hover{color:#1f2937}
+.modal-body{padding:20px 24px}
+.modal-footer{padding:14px 24px;border-top:1px solid #f1f5f9;display:flex;justify-content:flex-end;gap:10px}
+
+/* ===== Steps ===== */
+.steps{display:flex;gap:0;margin-bottom:24px;background:#f8fafc;border-radius:10px;padding:4px}
+.step{flex:1;padding:8px;border-radius:8px;text-align:center;font-size:12px;color:#64748b;cursor:pointer;transition:all .2s}
+.step.active{background:#6366f1;color:#fff;font-weight:600}
+.step.done{color:#6366f1}
+
+/* ===== Sub tabs ===== */
+.subtabs{display:flex;border-bottom:2px solid #f1f5f9;margin-bottom:20px;gap:0}
+.subtab{padding:10px 18px;font-size:13px;cursor:pointer;color:#64748b;border-bottom:2px solid transparent;margin-bottom:-2px;font-weight:500;transition:all .15s}
+.subtab:hover{color:#6366f1}
+.subtab.active{color:#6366f1;border-bottom-color:#6366f1;font-weight:600}
+.subpanel{display:none}
+.subpanel.active{display:block}
+
+/* ===== App detail drawer ===== */
+.drawer-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:900;display:none}
+.drawer-backdrop.open{display:block}
+.drawer{position:fixed;right:0;top:0;bottom:0;width:820px;max-width:92vw;background:#fff;z-index:910;display:flex;flex-direction:column;box-shadow:-8px 0 32px rgba(0,0,0,.12);transform:translateX(100%);transition:transform .25s ease}
+.drawer.open{transform:none}
+.drawer-header{padding:20px 24px;border-bottom:1px solid #f1f5f9;display:flex;align-items:center;gap:12px;flex-shrink:0}
+.drawer-header h3{font-size:16px;font-weight:600;color:#1e1b4b}
+.drawer-close{margin-left:auto;background:none;border:none;font-size:22px;cursor:pointer;color:#94a3b8}
+.drawer-close:hover{color:#1f2937}
+.drawer-body{flex:1;overflow-y:auto;padding:20px 24px}
+
+/* ===== Toast ===== */
+.toast{position:fixed;top:20px;right:20px;padding:12px 20px;border-radius:10px;color:#fff;font-size:13px;z-index:9999;box-shadow:0 4px 16px rgba(0,0,0,.15);display:none;animation:fadeIn .2s}
+@keyframes fadeIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
+.toast-success{background:#10b981}
+.toast-error{background:#ef4444}
+.toast-info{background:#6366f1}
+
+/* ===== Secret display ===== */
+.secret-box{background:#1e1b4b;border-radius:10px;padding:16px;font-family:monospace;font-size:13px;color:#a5b4fc;word-break:break-all;margin:10px 0;display:flex;align-items:center;justify-content:space-between;gap:12px}
+.secret-box .val{flex:1}
+.copy-btn{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);border-radius:6px;color:#a5b4fc;padding:5px 12px;font-size:12px;cursor:pointer;white-space:nowrap}
+.copy-btn:hover{background:rgba(255,255,255,.2)}
+.warn-box{background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:12px 14px;font-size:12px;color:#92400e;margin-top:8px}
+
+/* ===== Access rules ===== */
+.rule-tag{display:inline-flex;align-items:center;gap:6px;background:#f1f5f9;border-radius:6px;padding:5px 10px;font-size:12px;margin:4px}
+.rule-tag button{background:none;border:none;cursor:pointer;color:#94a3b8;font-size:14px;line-height:1;padding:0}
+.rule-tag button:hover{color:#ef4444}
+.rule-add-row{display:flex;gap:8px;margin-top:12px;align-items:center;flex-wrap:wrap}
+
+code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-family:monospace}
+.divider{height:1px;background:#f1f5f9;margin:16px 0}
+.text-muted{color:#94a3b8;font-size:12px}
+.flex{display:flex}
+.gap-8{gap:8px}
+.gap-12{gap:12px}
+.items-center{align-items:center}
+.mt-12{margin-top:12px}
+.w-full{width:100%}
+</style>
+</head>
+<body>
+
+<!-- ========== SIDEBAR ========== -->
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <h1>ModelGate</h1>
+    <p>AI 模型流量网关 · 管理后台</p>
+  </div>
+  <nav class="nav-section">
+    <div class="nav-label">核心管理</div>
+    <div class="nav-item active" data-page="models" onclick="navTo('models')">
+      <span class="icon">🤖</span> 模型管理
+    </div>
+    <div class="nav-item" data-page="apps" onclick="navTo('apps')">
+      <span class="icon">🏢</span> 接入系统
+    </div>
+    <div class="nav-label" style="margin-top:8px">运维</div>
+    <div class="nav-item" data-page="audit" onclick="navTo('audit')">
+      <span class="icon">📋</span> 审计日志
+    </div>
+    <div class="nav-item" data-page="settings" onclick="navTo('settings')">
+      <span class="icon">⚙️</span> 网关配置
+    </div>
+  </nav>
+  <div class="sidebar-footer">
+    <div class="token-label">ADMIN TOKEN</div>
+    <input type="password" id="adminToken" placeholder="X-Admin-Token" oninput="saveToken(this.value)"/>
+    <button class="connect-btn" onclick="doConnect()">连接 / 刷新</button>
+    <div class="status-text">
+      <span class="status-dot off" id="dotEl"></span>
+      <span id="statusText">未连接</span>
+    </div>
+  </div>
+</aside>
+
+<!-- ========== MAIN ========== -->
+<div class="main">
+  <div class="topbar">
+    <span class="topbar-title" id="topbarTitle">模型管理</span>
+    <div class="topbar-right">
+      <span id="syncTime"></span>
+    </div>
+  </div>
+  <div class="content" id="content">
+
+    <!-- ====== PAGE: 模型管理 ====== -->
+    <div class="panel active" id="page-models">
+      <div class="toolbar">
+        <div class="toolbar-left">
+          <span style="font-size:14px;font-weight:600;color:#1e1b4b">共 <span id="modelCount">0</span> 个模型</span>
+        </div>
+        <div class="toolbar-right">
+          <input type="text" id="modelSearch" placeholder="搜索模型 ID / 名称..." style="width:220px" oninput="filterModels()"/>
+          <button class="btn btn-primary" onclick="openModelModal()">+ 新增模型</button>
+        </div>
+      </div>
+      <div class="card" style="padding:0;overflow:hidden">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>模型 ID</th>
+                <th>名称</th>
+                <th>提供商</th>
+                <th>类型</th>
+                <th>API 规范</th>
+                <th>上游地址</th>
+                <th>状态</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="modelsTbody">
+              <tr class="empty-row"><td colspan="8">请先连接后加载数据</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ====== PAGE: 接入系统 ====== -->
+    <div class="panel" id="page-apps">
+      <div class="toolbar">
+        <div class="toolbar-left">
+          <span style="font-size:14px;font-weight:600;color:#1e1b4b">共 <span id="appCount">0</span> 个系统</span>
+        </div>
+        <div class="toolbar-right">
+          <input type="text" id="appSearch" placeholder="搜索系统 ID / 名称..." style="width:220px" oninput="filterApps()"/>
+          <button class="btn btn-primary" onclick="openAppModal()">+ 新增系统</button>
+        </div>
+      </div>
+      <div class="card" style="padding:0;overflow:hidden">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>系统名称</th>
+                <th>系统编码</th>
+                <th>应用 appId</th>
+                <th>应用编码</th>
+                <th>负责人</th>
+                <th>已授权模型</th>
+                <th>凭证数</th>
+                <th>状态</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="appsTbody">
+              <tr class="empty-row"><td colspan="8">请先连接后加载数据</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ====== PAGE: 审计日志 ====== -->
+    <div class="panel" id="page-audit">
+      <div class="card">
+        <div class="toolbar">
+          <div class="toolbar-left" style="flex-wrap:wrap;gap:8px">
+            <select id="auditApp" style="width:140px"><option value="">全部系统</option></select>
+            <select id="auditModel" style="width:140px"><option value="">全部模型</option></select>
+            <select id="auditStatus" style="width:110px">
+              <option value="">全部状态</option>
+              <option value="200">200 成功</option>
+              <option value="401">401 未授权</option>
+              <option value="403">403 禁止</option>
+              <option value="429">429 限流</option>
+              <option value="500">500 错误</option>
+            </select>
+            <input type="text" id="auditTrace" placeholder="TraceID" style="width:160px"/>
+          </div>
+          <button class="btn btn-primary" onclick="loadAudit()">查询</button>
+        </div>
+      </div>
+      <div class="card" style="padding:0;overflow:hidden">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>时间</th>
+                <th>TraceID</th>
+                <th>接入系统</th>
+                <th>模型</th>
+                <th>客户端 IP</th>
+                <th>状态</th>
+                <th>延迟</th>
+                <th>Tokens</th>
+              </tr>
+            </thead>
+            <tbody id="auditTbody">
+              <tr class="empty-row"><td colspan="8">暂无审计数据</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ====== PAGE: 网关配置 ====== -->
+    <div class="panel" id="page-settings">
+      <div class="card">
+        <div class="card-title">⚡ 全局开关</div>
+        <div class="form-grid form-grid-2">
+          <div class="form-group">
+            <label>鉴权总开关</label>
+            <select id="cfg_auth_enabled"><option value="true">开启</option><option value="false">关闭</option></select>
+          </div>
+          <div class="form-group">
+            <label>熔断开关</label>
+            <select id="cfg_circuit_enabled"><option value="true">开启</option><option value="false">关闭</option></select>
+          </div>
+          <div class="form-group">
+            <label>默认全局 QPS 上限</label>
+            <input type="number" id="cfg_default_qps" placeholder="100"/>
+          </div>
+          <div class="form-group">
+            <label>AK/SK 时间窗口（秒，防重放）</label>
+            <input type="number" id="cfg_aksk_window" placeholder="300"/>
+          </div>
+        </div>
+        <div style="margin-top:16px">
+          <button class="btn btn-primary" onclick="saveGlobalConfig()">保存全局配置</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">🔐 Admin 访问配置</div>
+        <div class="form-grid form-grid-2">
+          <div class="form-group">
+            <label>Admin Token（已脱敏）</label>
+            <div class="flex gap-8 items-center">
+              <input type="password" id="cfg_admin_token" placeholder="****" style="flex:1"/>
+              <button class="btn btn-warning btn-sm" onclick="regenAdminToken()">重新生成</button>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Admin IP 白名单（逗号分隔）</label>
+            <input type="text" id="cfg_admin_ips" placeholder="10.0.0.0/8,192.168.1.0/24"/>
+          </div>
+        </div>
+        <div style="margin-top:16px">
+          <button class="btn btn-primary" onclick="saveAdminConfig()">保存 Admin 配置</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">📝 全量配置 KV</div>
+        <table>
+          <thead>
+            <tr>
+              <th>Key</th>
+              <th>Value</th>
+              <th>说明</th>
+              <th>更新时间</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="configTbody">
+            <tr class="empty-row"><td colspan="5">请先连接后加载</td></tr>
+          </tbody>
+        </table>
+        <div class="rule-add-row" style="margin-top:16px;padding-top:14px;border-top:1px solid #f1f5f9">
+          <input type="text" id="newCfgKey" placeholder="config.key" style="width:180px"/>
+          <input type="text" id="newCfgVal" placeholder="value" style="width:200px"/>
+          <input type="text" id="newCfgDesc" placeholder="说明（可选）" style="width:170px"/>
+          <button class="btn btn-success" onclick="addConfig()">新增</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ========== DRAWER: App 详情 ========== -->
+<div class="drawer-backdrop" id="drawerBackdrop" onclick="closeDrawer()"></div>
+<div class="drawer" id="appDrawer">
+  <div class="drawer-header">
+    <div>
+      <h3 id="drawerAppName">-</h3>
+      <div class="text-muted" id="drawerAppId">-</div>
+    </div>
+    <span id="drawerAppStatus"></span>
+    <button class="drawer-close" onclick="closeDrawer()">×</button>
+  </div>
+  <div class="drawer-body">
+    <div class="subtabs">
+      <div class="subtab active" onclick="switchSubtab('info')">系统信息</div>
+      <div class="subtab" onclick="switchSubtab('creds')">凭证管理</div>
+      <div class="subtab" onclick="switchSubtab('auth')">模型授权</div>
+      <div class="subtab" onclick="switchSubtab('access')">访问控制</div>
+    </div>
+
+    <!-- 子面板: 系统信息 -->
+    <div class="subpanel active" id="sub-info">
+      <div style="background:#f8fafc;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#64748b">
+        系统编码归属关系：<strong id="di_sysCodeLabel" style="color:#1e1b4b"></strong> → 应用 <strong id="di_appIdLabel" style="color:#6366f1"></strong>
+      </div>
+      <div class="form-grid form-grid-2">
+        <div class="form-group"><label>系统名称</label><input type="text" id="di_appName"/></div>
+        <div class="form-group"><label>系统编码</label><input type="text" id="di_sysCode"/></div>
+        <div class="form-group"><label>应用 appId</label><input type="text" id="di_appId" readonly style="background:#f8fafc"/></div>
+        <div class="form-group"><label>应用编码</label><input type="text" id="di_appCode"/></div>
+        <div class="form-group"><label>负责人</label><input type="text" id="di_owner"/></div>
+        <div class="form-group"><label>备注</label><input type="text" id="di_remark"/></div>
+        <div class="form-group"><label>状态</label><select id="di_enabled"><option value="true">启用</option><option value="false">禁用</option></select></div>
+        <div class="form-group"><label>创建时间</label><input type="text" id="di_createdAt" readonly style="background:#f8fafc"/></div>
+      </div>
+      <div class="flex gap-8 mt-12">
+        <button class="btn btn-primary" onclick="saveAppInfo()">保存修改</button>
+        <button class="btn btn-danger" onclick="deleteApp()">删除系统</button>
+      </div>
+    </div>
+
+    <!-- 子面板: 凭证管理 -->
+    <div class="subpanel" id="sub-creds">
+      <div class="toolbar">
+        <span class="text-muted">凭证用于调用 /v1/chat/completions 接口鉴权</span>
+        <button class="btn btn-primary btn-sm" onclick="openCredModal()">+ 生成凭证</button>
+      </div>
+      <table>
+        <thead>
+          <tr><th>名称</th><th>类型</th><th>凭证值</th><th>状态</th><th>过期时间</th><th>操作</th></tr>
+        </thead>
+        <tbody id="credsTbody">
+          <tr class="empty-row"><td colspan="6">暂无凭证</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- 子面板: 模型授权 -->
+    <div class="subpanel" id="sub-auth">
+      <div class="toolbar">
+        <span class="text-muted">授权该系统可访问的模型及限制</span>
+        <button class="btn btn-primary btn-sm" onclick="openAuthModal()">+ 授权新模型</button>
+      </div>
+      <table>
+        <thead>
+          <tr><th>模型名称</th><th>模型 ID</th><th>状态</th><th>QPS</th><th>日限</th><th>月 Token</th><th>到期时间</th><th>操作</th></tr>
+        </thead>
+        <tbody id="authTbody">
+          <tr class="empty-row"><td colspan="8">暂无授权</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- 子面板: 访问控制 -->
+    <div class="subpanel" id="sub-access">
+      <div style="margin-bottom:16px">
+        <div style="font-size:13px;color:#374151;margin-bottom:8px">⚠️ IP 白名单和域名白名单均为空时，不限制来源。</div>
+      </div>
+      <div class="form-grid form-grid-2" style="gap:20px">
+        <div>
+          <div style="font-size:13px;font-weight:600;margin-bottom:10px">IP / CIDR 白名单</div>
+          <div id="ipRules" style="min-height:60px;background:#f8fafc;border-radius:8px;padding:10px"></div>
+          <div class="rule-add-row">
+            <input type="text" id="newIpRule" placeholder="10.0.0.0/8 或 192.168.1.100" style="flex:1"/>
+            <button class="btn btn-success btn-sm" onclick="addAccessRule('ip')">添加</button>
+          </div>
+        </div>
+        <div>
+          <div style="font-size:13px;font-weight:600;margin-bottom:10px">域名白名单</div>
+          <div id="domainRules" style="min-height:60px;background:#f8fafc;border-radius:8px;padding:10px"></div>
+          <div class="rule-add-row">
+            <input type="text" id="newDomainRule" placeholder="*.internal.com 或 app.corp.com" style="flex:1"/>
+            <button class="btn btn-success btn-sm" onclick="addAccessRule('domain')">添加</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ========== MODAL: 新增/编辑模型 ========== -->
+<div class="modal-backdrop" id="modelModal">
+  <div class="modal modal-wide">
+    <div class="modal-header">
+      <h3 id="modelModalTitle">新增模型</h3>
+      <button class="modal-close" onclick="closeModal('modelModal')">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="steps" id="modelSteps">
+        <div class="step active" onclick="goStep(1)">① 基础信息</div>
+        <div class="step" onclick="goStep(2)">② 连接配置</div>
+        <div class="step" onclick="goStep(3)">③ 参数配置</div>
+      </div>
+
+      <!-- Step 1 -->
+      <div id="step1">
+        <div class="form-grid form-grid-2">
+          <div class="form-group">
+            <label>模型 ID <span style="color:red">*</span></label>
+            <input type="text" id="m_modelId" placeholder="gpt-4o"/>
+            <span class="hint">对外暴露的唯一标识，创建后不可修改</span>
+          </div>
+          <div class="form-group">
+            <label>展示名称 <span style="color:red">*</span></label>
+            <input type="text" id="m_modelName" placeholder="GPT-4o"/>
+          </div>
+          <div class="form-group">
+            <label>提供商 <span style="color:red">*</span></label>
+            <select id="m_provider" onchange="onProviderChange()">
+              <option value="openai">OpenAI</option>
+              <option value="azure_openai">Azure OpenAI</option>
+              <option value="anthropic">Anthropic</option>
+              <option value="private">私有化部署</option>
+              <option value="custom">自定义</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>模型类型</label>
+            <select id="m_modelType">
+              <option value="chat">Chat 对话</option>
+              <option value="embedding">Embedding 嵌入</option>
+              <option value="image">Image 图像</option>
+              <option value="audio">Audio 语音</option>
+            </select>
+          </div>
+          <div class="form-group" style="grid-column:1/-1">
+            <label>描述</label>
+            <input type="text" id="m_description" placeholder="可选描述"/>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 2 -->
+      <div id="step2" style="display:none">
+        <div class="form-grid form-grid-2">
+          <div class="form-group" style="grid-column:1/-1">
+            <label>上游地址 <span style="color:red">*</span></label>
+            <input type="text" id="m_upstreamUrl" placeholder="https://api.openai.com"/>
+          </div>
+          <div class="form-group">
+            <label>API 规范</label>
+            <select id="m_apiSpec" onchange="onApiSpecChange()">
+              <option value="openai">openai（直透，不转换）</option>
+              <option value="azure_openai">azure_openai（URL/Header 适配）</option>
+              <option value="anthropic">anthropic（请求体 + 响应体转换）</option>
+              <option value="custom">custom（自定义字段映射）</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>超时时间（毫秒）</label>
+            <input type="number" id="m_timeoutMs" value="30000"/>
+          </div>
+          <div class="form-group">
+            <label>上游鉴权类型</label>
+            <select id="m_authType" onchange="onAuthTypeChange()">
+              <option value="api_key">api_key（Bearer Token）</option>
+              <option value="ak_sk">ak_sk（HMAC 签名）</option>
+              <option value="azure">azure（api-key Header）</option>
+              <option value="none">none（不鉴权）</option>
+            </select>
+          </div>
+          <div class="form-group" id="credGroup_apiKey">
+            <label>API Key <span style="color:red">*</span></label>
+            <input type="password" id="m_secretKey" placeholder="sk-..."/>
+          </div>
+          <div id="credGroup_aksk" style="display:none;grid-column:1/-1">
+            <div class="form-grid form-grid-2">
+              <div class="form-group">
+                <label>Access Key</label>
+                <input type="text" id="m_accessKey" placeholder="AK..."/>
+              </div>
+              <div class="form-group">
+                <label>Secret Key</label>
+                <input type="password" id="m_secretKeySk" placeholder="SK..."/>
+              </div>
+            </div>
+          </div>
+          <div id="credGroup_azure" style="display:none;grid-column:1/-1">
+            <div class="form-grid form-grid-2">
+              <div class="form-group">
+                <label>API Key</label>
+                <input type="password" id="m_azureApiKey" placeholder=""/>
+              </div>
+              <div class="form-group">
+                <label>Resource Name</label>
+                <input type="text" id="m_azureResource" placeholder="my-resource"/>
+              </div>
+              <div class="form-group">
+                <label>Deployment ID</label>
+                <input type="text" id="m_azureDeploy" placeholder="gpt-4"/>
+              </div>
+              <div class="form-group">
+                <label>API Version</label>
+                <input type="text" id="m_azureVersion" placeholder="2024-02-01"/>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 3 -->
+      <div id="step3" style="display:none">
+        <div class="form-grid">
+          <div class="form-group">
+            <label>默认参数（JSON，业务系统可覆盖）</label>
+            <textarea id="m_defaultParams" placeholder='{"temperature": 0.7}'></textarea>
+          </div>
+          <div class="form-group">
+            <label>强制参数（JSON，业务系统不可覆盖）</label>
+            <textarea id="m_forceParams" placeholder='{"max_tokens": 4096}'></textarea>
+          </div>
+          <div class="form-group" id="customMappingGroup" style="display:none">
+            <label>自定义字段映射（api_spec=custom 时有效）</label>
+            <textarea id="m_paramMapping" placeholder='{"messages": "inputs"}'></textarea>
+          </div>
+        </div>
+        <div style="margin-top:16px">
+          <button class="btn btn-info" onclick="testModelConn()">🔌 测试连通性</button>
+          <span id="testResult" style="margin-left:12px;font-size:13px"></span>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-neutral" id="prevStepBtn" onclick="prevStep()" style="display:none">上一步</button>
+      <button class="btn btn-neutral" onclick="closeModal('modelModal')">取消</button>
+      <button class="btn btn-primary" id="nextStepBtn" onclick="nextStep()">下一步</button>
+      <button class="btn btn-success" id="submitModelBtn" onclick="submitModel()" style="display:none">保存模型</button>
+    </div>
+  </div>
+</div>
+
+<!-- ========== MODAL: 新增接入系统 ========== -->
+<div class="modal-backdrop" id="appModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>新增接入系统</h3>
+      <button class="modal-close" onclick="closeModal('appModal')">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-grid form-grid-2">
+        <div class="form-group">
+          <label>系统名称 <span style="color:red">*</span></label>
+          <input type="text" id="a_appName" placeholder="客户关系管理系统"/>
+        </div>
+        <div class="form-group">
+          <label>系统编码 <span style="color:red">*</span></label>
+          <input type="text" id="a_sysCode" placeholder="CRM"/>
+          <span class="hint">业务系统编码，如 CRM / BI / RISK</span>
+        </div>
+        <div class="form-group">
+          <label>应用 appId <span style="color:red">*</span></label>
+          <input type="text" id="a_appId" placeholder="crm-service"/>
+          <span class="hint">英文标识，全局唯一，创建后不可修改</span>
+        </div>
+        <div class="form-group">
+          <label>应用编码 <span style="color:red">*</span></label>
+          <input type="text" id="a_appCode" placeholder="CRM001"/>
+          <span class="hint">应用级别编码，归属于所在系统</span>
+        </div>
+        <div class="form-group">
+          <label>负责人 <span style="color:red">*</span></label>
+          <input type="text" id="a_owner" placeholder="张三"/>
+        </div>
+        <div class="form-group">
+          <label>备注</label>
+          <input type="text" id="a_remark" placeholder="可选"/>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-neutral" onclick="closeModal('appModal')">取消</button>
+      <button class="btn btn-primary" onclick="submitApp()">创建系统</button>
+    </div>
+  </div>
+</div>
+
+<!-- ========== MODAL: 生成凭证 ========== -->
+<div class="modal-backdrop" id="credModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>生成凭证</h3>
+      <button class="modal-close" onclick="closeModal('credModal')">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="warn-box">⚠️ 生成后 Secret Key 仅显示一次，请妥善保存！</div>
+      <div class="form-grid mt-12">
+        <div class="form-group">
+          <label>凭证名称 <span style="color:red">*</span></label>
+          <input type="text" id="cr_name" placeholder="生产密钥"/>
+        </div>
+        <div class="form-group">
+          <label>凭证类型</label>
+          <div class="radio-group">
+            <label><input type="radio" name="crType" value="api_key" checked onchange="onCredTypeChange()"/> API Key</label>
+            <label><input type="radio" name="crType" value="ak_sk" onchange="onCredTypeChange()"/> AK/SK</label>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>过期时间（可选，空=永久）</label>
+          <input type="date" id="cr_expiresAt"/>
+        </div>
+        <div class="form-group">
+          <label>备注</label>
+          <input type="text" id="cr_remark" placeholder="可选"/>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-neutral" onclick="closeModal('credModal')">取消</button>
+      <button class="btn btn-primary" onclick="submitCred()">确认生成</button>
+    </div>
+  </div>
+</div>
+
+<!-- ========== MODAL: 凭证明文展示 ========== -->
+<div class="modal-backdrop" id="credShowModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>✅ 凭证生成成功</h3>
+      <button class="modal-close" onclick="closeModal('credShowModal')">×</button>
+    </div>
+    <div class="modal-body" id="credShowBody">
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="closeModal('credShowModal')">我已复制，关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- ========== MODAL: 模型授权 ========== -->
+<div class="modal-backdrop" id="authModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>授权新模型</h3>
+      <button class="modal-close" onclick="closeModal('authModal')">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-grid form-grid-2">
+        <div class="form-group" style="grid-column:1/-1">
+          <label>选择模型 <span style="color:red">*</span></label>
+          <select id="au_modelId">
+            <option value="">-- 请选择 --</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>QPS 限制（0=不限）</label>
+          <input type="number" id="au_qps" value="0" min="0"/>
+        </div>
+        <div class="form-group">
+          <label>日调用限制（0=不限）</label>
+          <input type="number" id="au_daily" value="0" min="0"/>
+        </div>
+        <div class="form-group">
+          <label>月 Token 配额（万，0=不限）</label>
+          <input type="number" id="au_monthly" value="0" min="0"/>
+        </div>
+        <div class="form-group">
+          <label>有效期至（可选）</label>
+          <input type="date" id="au_expires"/>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-neutral" onclick="closeModal('authModal')">取消</button>
+      <button class="btn btn-primary" onclick="submitAuth()">确认授权</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ============================================================
+// 全局状态
+// ============================================================
+let connected = false;
+let allModels = [];
+let allApps   = [];
+let currentApp = null;    // 当前打开 drawer 的 app
+let currentAccessRules = [];
+let editingModelId = null; // null=新增, string=编辑
+let currentStep = 1;
+
+const PAGE_TITLES = {models:'模型管理', apps:'接入系统', audit:'审计日志', settings:'网关配置'};
+
+// ============================================================
+// 工具函数
+// ============================================================
+const $  = id => document.getElementById(id);
+const tok = () => $('adminToken').value.trim();
+const hdrs = () => ({'Content-Type':'application/json','X-Admin-Token':tok()});
+function fmt(v){ return v == null ? '不限' : (v===0?'不限':v.toLocaleString()); }
+function fmtTime(t){ if(!t) return '-'; try{ return new Date(t).toLocaleString('zh-CN',{hour12:false}); }catch(e){return t;} }
+
+function saveToken(v){ sessionStorage.setItem('mg_token', v); }
+
+function toast(msg, type='success'){
+  const el = $('toast');
+  el.textContent = msg;
+  el.className = `toast toast-${type}`;
+  el.style.display = 'block';
+  clearTimeout(el._t);
+  el._t = setTimeout(()=>el.style.display='none', 3200);
+}
+
+function setStatus(ok){
+  connected = ok;
+  $('dotEl').className = 'status-dot ' + (ok ? 'on' : 'off');
+  $('statusText').textContent = ok ? '已连接' : '未连接';
+  if(ok) $('syncTime').textContent = '最后同步: ' + new Date().toLocaleTimeString('zh-CN');
+}
+
+// ============================================================
+// 导航
+// ============================================================
+function navTo(page){
+  document.querySelectorAll('.nav-item').forEach(el=>{
+    el.classList.toggle('active', el.dataset.page===page);
+  });
+  document.querySelectorAll('.panel').forEach(el=>{
+    el.classList.toggle('active', el.id==='page-'+page);
+  });
+  $('topbarTitle').textContent = PAGE_TITLES[page] || page;
+  if(page==='models' && connected) loadModels();
+  if(page==='apps'   && connected) loadApps();
+  if(page==='audit'  && connected) loadAudit();
+  if(page==='settings' && connected) loadConfig();
+}
+
+// ============================================================
+// 连接
+// ============================================================
+async function doConnect(){
+  if(!tok()){ toast('请输入 Admin Token','error'); return; }
+  await loadModels();
+  navTo('models');
+}
+
+// ============================================================
+// 模型管理
+// ============================================================
+async function loadModels(){
+  try{
+    const r = await fetch('/admin/models', {headers:hdrs()});
+    if(r.status===401){ toast('Token 无效','error'); setStatus(false); return; }
+    const j = await r.json();
+    allModels = j.data || [];
+    $('modelCount').textContent = allModels.length;
+    renderModels(allModels);
+    setStatus(true);
+  }catch(e){
+    // Demo 模式：使用本地假数据
+    allModels = DEMO_MODELS;
+    $('modelCount').textContent = allModels.length;
+    renderModels(allModels);
+    setStatus(true);
+    $('syncTime').textContent = '演示模式（未连接后端）';
+  }
+}
+
+function renderModels(data){
+  const tbody = $('modelsTbody');
+  if(!data.length){ tbody.innerHTML='<tr class="empty-row"><td colspan="8">暂无模型</td></tr>'; return; }
+  tbody.innerHTML = data.map(m=>`
+    <tr>
+      <td><code>${m.modelId}</code> <span onclick="copyText('${m.modelId}')" style="cursor:pointer;color:#6366f1;font-size:11px">复制</span></td>
+      <td><strong>${m.modelName}</strong></td>
+      <td>${providerTag(m.provider)}</td>
+      <td><span class="tag tag-gray">${m.modelType||'chat'}</span></td>
+      <td><span class="tag tag-blue">${m.apiSpec||'openai'}</span></td>
+      <td style="font-size:12px;color:#64748b;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${m.upstreamUrl||''}">${m.upstreamUrl||'-'}</td>
+      <td>${m.enabled!==false?'<span class="tag tag-green">启用</span>':'<span class="tag tag-red">禁用</span>'}</td>
+      <td>
+        <div class="flex gap-8">
+          <button class="btn btn-neutral btn-sm" onclick="openModelModal('${m.modelId}')">编辑</button>
+          <button class="btn btn-info btn-sm" onclick="testModelConnById('${m.modelId}')">测试</button>
+          <button class="btn ${m.enabled!==false?'btn-warning':'btn-success'} btn-sm" onclick="toggleModel('${m.modelId}',${m.enabled!==false})">${m.enabled!==false?'禁用':'启用'}</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteModel('${m.modelId}')">删除</button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+}
+
+function filterModels(){
+  const kw = $('modelSearch').value.toLowerCase();
+  renderModels(allModels.filter(m=>
+    m.modelId.toLowerCase().includes(kw) || m.modelName.toLowerCase().includes(kw)
+  ));
+}
+
+function providerTag(p){
+  const map = {openai:'tag-green',azure_openai:'tag-blue',anthropic:'tag-purple',private:'tag-yellow',custom:'tag-gray'};
+  const label = {openai:'OpenAI',azure_openai:'Azure',anthropic:'Anthropic',private:'私有',custom:'自定义'};
+  return `<span class="tag ${map[p]||'tag-gray'}">${label[p]||p}</span>`;
+}
+
+function openModelModal(modelId=null){
+  editingModelId = modelId;
+  currentStep = 1;
+  $('modelModalTitle').textContent = modelId ? '编辑模型' : '新增模型';
+  $('m_modelId').disabled = !!modelId;
+
+  if(modelId){
+    const m = allModels.find(x=>x.modelId===modelId) || {};
+    $('m_modelId').value = m.modelId||'';
+    $('m_modelName').value = m.modelName||'';
+    $('m_provider').value = m.provider||'openai';
+    $('m_modelType').value = m.modelType||'chat';
+    $('m_description').value = m.description||'';
+    $('m_upstreamUrl').value = m.upstreamUrl||'';
+    $('m_apiSpec').value = m.apiSpec||'openai';
+    $('m_timeoutMs').value = m.timeoutMs||30000;
+    $('m_authType').value = m.authType||'api_key';
+    $('m_defaultParams').value = m.defaultParams||'';
+    $('m_forceParams').value = m.forceParams||'';
+    $('m_paramMapping').value = m.paramMapping||'';
+    $('m_secretKey').value = '';
+  } else {
+    ['m_modelId','m_modelName','m_description','m_upstreamUrl','m_accessKey','m_secretKey','m_secretKeySk',
+     'm_azureApiKey','m_azureResource','m_azureDeploy','m_azureVersion','m_defaultParams','m_forceParams','m_paramMapping'].forEach(id=>$( id).value='');
+    $('m_timeoutMs').value = 30000;
+    $('m_provider').value = 'openai';
+    $('m_modelType').value = 'chat';
+    $('m_apiSpec').value = 'openai';
+    $('m_authType').value = 'api_key';
+  }
+  goStep(1);
+  onAuthTypeChange();
+  onApiSpecChange();
+  openModal('modelModal');
+}
+
+async function submitModel(){
+  const body = {
+    modelId:       $('m_modelId').value.trim(),
+    modelName:     $('m_modelName').value.trim(),
+    provider:      $('m_provider').value,
+    modelType:     $('m_modelType').value,
+    apiSpec:       $('m_apiSpec').value,
+    upstreamUrl:   $('m_upstreamUrl').value.trim(),
+    timeoutMs:     parseInt($('m_timeoutMs').value)||30000,
+    defaultParams: $('m_defaultParams').value.trim(),
+    forceParams:   $('m_forceParams').value.trim(),
+    paramMapping:  $('m_paramMapping').value.trim(),
+    description:   $('m_description').value.trim(),
+    credential:{
+      authType:   $('m_authType').value,
+      accessKey:  $('m_accessKey').value.trim()||$('m_azureResource').value.trim(),
+      secretKey:  $('m_secretKey').value.trim()||$('m_secretKeySk').value.trim()||$('m_azureApiKey').value.trim(),
+    }
+  };
+  if(!body.modelId||!body.modelName||!body.upstreamUrl){ toast('模型 ID、名称、上游地址不能为空','error'); return; }
+
+  try{
+    const method = editingModelId ? 'PUT' : 'POST';
+    const url    = editingModelId ? `/admin/models/${editingModelId}` : '/admin/models';
+    const r = await fetch(url, {method, headers:hdrs(), body:JSON.stringify(body)});
+    const j = await r.json();
+    if(j.code===0){ toast(editingModelId?'模型已更新':'模型已创建'); closeModal('modelModal'); loadModels(); }
+    else toast('失败: '+j.message,'error');
+  }catch(e){
+    // Demo 模式
+    if(editingModelId){
+      const idx = allModels.findIndex(x=>x.modelId===editingModelId);
+      if(idx>=0) allModels[idx] = {...allModels[idx], ...body};
+    } else {
+      allModels.push({...body, enabled:true, createdAt:new Date().toISOString()});
+    }
+    $('modelCount').textContent = allModels.length;
+    renderModels(allModels);
+    toast(editingModelId?'模型已更新（演示）':'模型已创建（演示）');
+    closeModal('modelModal');
+  }
+}
+
+async function toggleModel(modelId, currentEnabled){
+  const action = currentEnabled ? 'disable' : 'enable';
+  try{
+    await fetch(`/admin/models/${modelId}/${action}`, {method:'PATCH', headers:hdrs()});
+  }catch(e){}
+  const m = allModels.find(x=>x.modelId===modelId);
+  if(m) m.enabled = !currentEnabled;
+  renderModels(allModels.filter(x=>$('modelSearch').value ? x.modelId.includes($('modelSearch').value)||x.modelName.includes($('modelSearch').value) : true));
+  toast(`模型已${currentEnabled?'禁用':'启用'}`);
+}
+
+async function deleteModel(modelId){
+  if(!confirm(`确认删除模型 ${modelId}？`)) return;
+  try{
+    const r = await fetch(`/admin/models/${modelId}`, {method:'DELETE', headers:hdrs()});
+    const j = await r.json();
+    if(j.code!==0){ toast('删除失败: '+j.message,'error'); return; }
+  }catch(e){}
+  allModels = allModels.filter(x=>x.modelId!==modelId);
+  $('modelCount').textContent = allModels.length;
+  renderModels(allModels);
+  toast('模型已删除');
+}
+
+async function testModelConnById(modelId){
+  toast('测试中...','info');
+  try{
+    const r = await fetch(`/admin/models/${modelId}/test`, {method:'POST', headers:hdrs()});
+    const j = await r.json();
+    const d = j.data||{};
+    toast(d.success ? `连通成功，延迟 ${d.latencyMs}ms` : `连通失败: ${d.message}`, d.success?'success':'error');
+  }catch(e){ toast('演示模式：连通测试需要后端支持','info'); }
+}
+
+async function testModelConn(){
+  $('testResult').textContent = '测试中...';
+  $('testResult').style.color = '#64748b';
+  try{
+    const modelId = editingModelId || $('m_modelId').value.trim();
+    if(!modelId){ $('testResult').textContent='请先填写模型 ID'; return; }
+    const r = await fetch(`/admin/models/${modelId}/test`, {method:'POST', headers:hdrs()});
+    const j = await r.json();
+    const d = j.data||{};
+    $('testResult').textContent = d.success ? `✅ 连通成功，延迟 ${d.latencyMs}ms` : `❌ 失败: ${d.message}`;
+    $('testResult').style.color = d.success ? '#10b981' : '#ef4444';
+  }catch(e){
+    $('testResult').textContent = '⚠️ 演示模式（无后端）';
+    $('testResult').style.color = '#f59e0b';
+  }
+}
+
+// Step 导航
+function goStep(n){
+  currentStep = n;
+  for(let i=1;i<=3;i++){
+    $('step'+i).style.display = i===n ? '' : 'none';
+    const s = $('modelSteps').children[i-1];
+    s.className = 'step ' + (i<n?'done':i===n?'active':'');
+  }
+  $('prevStepBtn').style.display = n>1 ? '' : 'none';
+  $('nextStepBtn').style.display = n<3 ? '' : 'none';
+  $('submitModelBtn').style.display = n===3 ? '' : 'none';
+}
+function nextStep(){ if(currentStep<3) goStep(currentStep+1); }
+function prevStep(){ if(currentStep>1) goStep(currentStep-1); }
+
+function onProviderChange(){
+  const defaultUrls = {openai:'https://api.openai.com',azure_openai:'https://{resource}.openai.azure.com',anthropic:'https://api.anthropic.com',private:'',custom:''};
+  $('m_upstreamUrl').placeholder = defaultUrls[$('m_provider').value]||'';
+}
+function onAuthTypeChange(){
+  const t = $('m_authType').value;
+  $('credGroup_apiKey').style.display = t==='api_key' ? '' : 'none';
+  $('credGroup_aksk').style.display   = t==='ak_sk'   ? '' : 'none';
+  $('credGroup_azure').style.display  = t==='azure'   ? '' : 'none';
+}
+function onApiSpecChange(){
+  $('customMappingGroup').style.display = $('m_apiSpec').value==='custom' ? '' : 'none';
+}
+
+// ============================================================
+// 接入系统
+// ============================================================
+async function loadApps(){
+  try{
+    const r = await fetch('/admin/apps', {headers:hdrs()});
+    const j = await r.json();
+    allApps = j.data || [];
+    $('appCount').textContent = allApps.length;
+    renderApps(allApps);
+    setStatus(true);
+  }catch(e){
+    allApps = DEMO_APPS;
+    $('appCount').textContent = allApps.length;
+    renderApps(allApps);
+  }
+}
+
+function renderApps(data){
+  const tbody = $('appsTbody');
+  if(!data.length){ tbody.innerHTML='<tr class="empty-row"><td colspan="8">暂无接入系统</td></tr>'; return; }
+  tbody.innerHTML = data.map(a=>`
+    <tr>
+      <td><strong>${a.appName}</strong></td>
+      <td><span class="tag tag-blue">${a.sysCode||'-'}</span></td>
+      <td><code>${a.appId}</code> <span onclick="copyText('${a.appId}')" style="cursor:pointer;color:#6366f1;font-size:11px">复制</span></td>
+      <td><span class="tag tag-gray">${a.appCode||'-'}</span></td>
+      <td>${a.owner}</td>
+      <td><span style="cursor:pointer;color:#6366f1;text-decoration:underline" onclick="openDrawer('${a.appId}','auth')">${a.authCount||0} 个</span></td>
+      <td><span style="cursor:pointer;color:#6366f1;text-decoration:underline" onclick="openDrawer('${a.appId}','creds')">${a.credCount||0} 个</span></td>
+      <td>${a.enabled!==false?'<span class="tag tag-green">启用</span>':'<span class="tag tag-red">禁用</span>'}</td>
+      <td>
+        <div class="flex gap-8">
+          <button class="btn btn-neutral btn-sm" onclick="openDrawer('${a.appId}','info')">详情</button>
+          <button class="btn ${a.enabled!==false?'btn-warning':'btn-success'} btn-sm" onclick="toggleApp('${a.appId}',${a.enabled!==false})">${a.enabled!==false?'禁用':'启用'}</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteAppById('${a.appId}')">删除</button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+}
+
+function filterApps(){
+  const kw = $('appSearch').value.toLowerCase();
+  renderApps(allApps.filter(a=>
+    a.appId.toLowerCase().includes(kw) || a.appName.toLowerCase().includes(kw)
+  ));
+}
+
+function openAppModal(){
+  ['a_appName','a_sysCode','a_appId','a_appCode','a_owner','a_remark'].forEach(id=>$(id).value='');
+  openModal('appModal');
+}
+
+async function submitApp(){
+  const body = {
+    appName: $('a_appName').value.trim(),
+    sysCode: $('a_sysCode').value.trim(),
+    appId:   $('a_appId').value.trim(),
+    appCode: $('a_appCode').value.trim(),
+    owner:   $('a_owner').value.trim(),
+    remark:  $('a_remark').value.trim(),
+  };
+  if(!body.appName||!body.sysCode||!body.appId||!body.appCode||!body.owner){ toast('系统名称、系统编码、应用 appId、应用编码、负责人均不能为空','error'); return; }
+  try{
+    const r = await fetch('/admin/apps', {method:'POST', headers:hdrs(), body:JSON.stringify(body)});
+    const j = await r.json();
+    if(j.code===0){ toast('系统已创建'); closeModal('appModal'); loadApps(); }
+    else toast('失败: '+j.message,'error');
+  }catch(e){
+    allApps.push({...body, enabled:true, authCount:0, credCount:0, createdAt:new Date().toISOString()});
+    $('appCount').textContent = allApps.length;
+    renderApps(allApps);
+    toast('系统已创建（演示）');
+    closeModal('appModal');
+  }
+}
+
+async function toggleApp(appId, currentEnabled){
+  const action = currentEnabled?'disable':'enable';
+  try{ await fetch(`/admin/apps/${appId}/${action}`, {method:'PATCH', headers:hdrs()}); }catch(e){}
+  const a = allApps.find(x=>x.appId===appId);
+  if(a) a.enabled = !currentEnabled;
+  renderApps(allApps);
+  toast(`系统已${currentEnabled?'禁用':'启用'}`);
+  if(currentApp&&currentApp.appId===appId){
+    $('di_enabled').value = String(!currentEnabled);
+    $('drawerAppStatus').innerHTML = !currentEnabled ? '<span class="tag tag-green">启用</span>' : '<span class="tag tag-red">禁用</span>';
+  }
+}
+
+async function deleteAppById(appId){
+  if(!confirm(`确认删除系统 ${appId}？将级联删除所有凭证、授权、访问规则！`)) return;
+  try{
+    const r = await fetch(`/admin/apps/${appId}`, {method:'DELETE', headers:hdrs()});
+    const j = await r.json();
+    if(j.code!==0){ toast('失败: '+j.message,'error'); return; }
+  }catch(e){}
+  allApps = allApps.filter(x=>x.appId!==appId);
+  $('appCount').textContent = allApps.length;
+  renderApps(allApps);
+  toast('系统已删除');
+}
+
+// ============================================================
+// Drawer
+// ============================================================
+function openDrawer(appId, tab='info'){
+  currentApp = allApps.find(a=>a.appId===appId) || {appId};
+  $('drawerAppName').textContent = currentApp.appName || appId;
+  $('drawerAppId').textContent = 'app_id: ' + appId;
+  $('drawerAppStatus').innerHTML = currentApp.enabled!==false
+    ? '<span class="tag tag-green">启用</span>'
+    : '<span class="tag tag-red">禁用</span>';
+
+  // 填写系统信息
+  $('di_appName').value    = currentApp.appName||'';
+  $('di_sysCode').value    = currentApp.sysCode||'';
+  $('di_appId').value      = currentApp.appId||'';
+  $('di_appCode').value    = currentApp.appCode||'';
+  $('di_owner').value      = currentApp.owner||'';
+  $('di_remark').value     = currentApp.remark||'';
+  $('di_enabled').value    = String(currentApp.enabled!==false);
+  $('di_createdAt').value  = fmtTime(currentApp.createdAt);
+  $('di_sysCodeLabel').textContent = currentApp.sysCode||'-';
+  $('di_appIdLabel').textContent   = currentApp.appId||'-';
+
+  switchSubtab(tab);
+  $('drawerBackdrop').classList.add('open');
+  $('appDrawer').classList.add('open');
+}
+
+function closeDrawer(){
+  $('drawerBackdrop').classList.remove('open');
+  $('appDrawer').classList.remove('open');
+  currentApp = null;
+}
+
+function switchSubtab(tab){
+  document.querySelectorAll('.subtab').forEach((el,i)=>{
+    const tabs = ['info','creds','auth','access'];
+    el.classList.toggle('active', tabs[i]===tab);
+  });
+  document.querySelectorAll('.subpanel').forEach(el=>{
+    el.classList.toggle('active', el.id==='sub-'+tab);
+  });
+  if(tab==='creds')  loadCreds();
+  if(tab==='auth')   loadAuths();
+  if(tab==='access') loadAccess();
+}
+
+async function saveAppInfo(){
+  if(!currentApp) return;
+  const body = {
+    appName: $('di_appName').value.trim(),
+    sysCode: $('di_sysCode').value.trim(),
+    appCode: $('di_appCode').value.trim(),
+    owner:   $('di_owner').value.trim(),
+    remark:  $('di_remark').value.trim(),
+    enabled: $('di_enabled').value === 'true',
+  };
+  try{
+    const r = await fetch(`/admin/apps/${currentApp.appId}`, {method:'PUT', headers:hdrs(), body:JSON.stringify(body)});
+    const j = await r.json();
+    if(j.code!==0){ toast('保存失败: '+j.message,'error'); return; }
+  }catch(e){}
+  Object.assign(currentApp, body);
+  renderApps(allApps);
+  toast('系统信息已保存');
+}
+
+function deleteApp(){
+  if(!currentApp) return;
+  closeDrawer();
+  deleteAppById(currentApp.appId);
+}
+
+// ============================================================
+// 凭证管理
+// ============================================================
+async function loadCreds(){
+  if(!currentApp) return;
+  try{
+    const r = await fetch(`/admin/apps/${currentApp.appId}/credentials`, {headers:hdrs()});
+    const j = await r.json();
+    renderCreds(j.data||[]);
+  }catch(e){
+    renderCreds(DEMO_CREDS[currentApp.appId]||[]);
+  }
+}
+
+function renderCreds(data){
+  const tbody = $('credsTbody');
+  if(!data.length){ tbody.innerHTML='<tr class="empty-row"><td colspan="6">暂无凭证</td></tr>'; return; }
+  tbody.innerHTML = data.map(c=>`
+    <tr>
+      <td><strong>${c.credName}</strong></td>
+      <td><span class="tag ${c.credType==='api_key'?'tag-blue':'tag-purple'}">${c.credType}</span></td>
+      <td><code>${c.accessKey||'****...'+c.credType}</code></td>
+      <td>${c.enabled!==false?'<span class="tag tag-green">启用</span>':'<span class="tag tag-red">禁用</span>'}</td>
+      <td>${c.expiresAt?fmtTime(c.expiresAt):'永久'}</td>
+      <td>
+        <div class="flex gap-8">
+          <button class="btn ${c.enabled!==false?'btn-warning':'btn-success'} btn-sm" onclick="toggleCred(${c.id},${c.enabled!==false})">${c.enabled!==false?'禁用':'启用'}</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteCred(${c.id})">删除</button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+}
+
+function openCredModal(){
+  $('cr_name').value=''; $('cr_expiresAt').value=''; $('cr_remark').value='';
+  document.querySelector('input[name=crType][value=api_key]').checked = true;
+  openModal('credModal');
+}
+
+function onCredTypeChange(){}
+
+async function submitCred(){
+  if(!currentApp) return;
+  const credType = document.querySelector('input[name=crType]:checked').value;
+  const body = {
+    credName:  $('cr_name').value.trim(),
+    credType,
+    expiresAt: $('cr_expiresAt').value || null,
+    remark:    $('cr_remark').value.trim(),
+  };
+  if(!body.credName){ toast('凭证名称不能为空','error'); return; }
+  try{
+    const r = await fetch(`/admin/apps/${currentApp.appId}/credentials`, {method:'POST', headers:hdrs(), body:JSON.stringify(body)});
+    const j = await r.json();
+    if(j.code!==0){ toast('失败: '+j.message,'error'); return; }
+    showCredResult(j.data);
+  }catch(e){
+    // Demo
+    const demoData = credType==='api_key'
+      ? {credType:'api_key', apiKey:`mg-${currentApp.appId}-sk_live_${Math.random().toString(36).slice(2,14)}`}
+      : {credType:'ak_sk', accessKey:`AK_${currentApp.appId}_${Math.random().toString(36).slice(2,8)}`, secretKey:`SK_${Math.random().toString(36).slice(2,24)}`};
+    showCredResult(demoData);
+  }
+  closeModal('credModal');
+  loadCreds();
+}
+
+function showCredResult(data){
+  let html = '<div class="warn-box">此凭证只显示一次，关闭后无法再次查看</div>';
+  if(data.credType==='api_key'||data.apiKey){
+    html += `<div style="margin-top:12px;font-size:12px;color:#374151;margin-bottom:6px">API Key</div>
+    <div class="secret-box"><span class="val">${data.apiKey}</span>
+    <button class="copy-btn" onclick="copyText('${data.apiKey}')">复制</button></div>`;
+  } else {
+    html += `<div style="margin-top:12px;font-size:12px;color:#374151;margin-bottom:6px">Access Key</div>
+    <div class="secret-box"><span class="val">${data.accessKey}</span>
+    <button class="copy-btn" onclick="copyText('${data.accessKey}')">复制</button></div>
+    <div style="margin-top:8px;font-size:12px;color:#374151;margin-bottom:6px">Secret Key</div>
+    <div class="secret-box"><span class="val">${data.secretKey}</span>
+    <button class="copy-btn" onclick="copyText('${data.secretKey}')">复制</button></div>`;
+  }
+  $('credShowBody').innerHTML = html;
+  openModal('credShowModal');
+}
+
+async function toggleCred(id, currentEnabled){
+  const action = currentEnabled?'disable':'enable';
+  try{ await fetch(`/admin/apps/${currentApp.appId}/credentials/${id}/${action}`, {method:'PATCH', headers:hdrs()}); }catch(e){}
+  toast(`凭证已${currentEnabled?'禁用':'启用'}`);
+  loadCreds();
+}
+
+async function deleteCred(id){
+  if(!confirm('确认删除凭证？凭证立即失效！')) return;
+  try{ await fetch(`/admin/apps/${currentApp.appId}/credentials/${id}`, {method:'DELETE', headers:hdrs()}); }catch(e){}
+  toast('凭证已删除');
+  loadCreds();
+}
+
+// ============================================================
+// 模型授权
+// ============================================================
+async function loadAuths(){
+  if(!currentApp) return;
+  try{
+    const r = await fetch(`/admin/apps/${currentApp.appId}/auth`, {headers:hdrs()});
+    const j = await r.json();
+    renderAuths(j.data||[]);
+  }catch(e){
+    renderAuths(DEMO_AUTHS[currentApp.appId]||[]);
+  }
+}
+
+function renderAuths(data){
+  const tbody = $('authTbody');
+  if(!data.length){ tbody.innerHTML='<tr class="empty-row"><td colspan="8">暂无授权</td></tr>'; return; }
+  tbody.innerHTML = data.map(a=>`
+    <tr>
+      <td><strong>${a.modelName||a.modelId}</strong></td>
+      <td><code>${a.modelId}</code></td>
+      <td>${a.enabled!==false?'<span class="tag tag-green">✅ 启用</span>':'<span class="tag tag-red">禁用</span>'}</td>
+      <td>${fmt(a.qpsLimit)}/s</td>
+      <td>${fmt(a.dailyLimit)}</td>
+      <td>${a.monthlyTokens?Math.round(a.monthlyTokens/10000)+'万':'不限'}</td>
+      <td>${a.expiresAt?fmtTime(a.expiresAt):'永久'}</td>
+      <td>
+        <div class="flex gap-8">
+          <button class="btn ${a.enabled!==false?'btn-warning':'btn-success'} btn-sm" onclick="toggleAuth('${a.modelId}',${a.enabled!==false})">${a.enabled!==false?'禁用':'启用'}</button>
+          <button class="btn btn-danger btn-sm" onclick="revokeAuth('${a.modelId}')">撤销</button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+}
+
+function openAuthModal(){
+  $('au_qps').value='0'; $('au_daily').value='0'; $('au_monthly').value='0'; $('au_expires').value='';
+  const sel = $('au_modelId');
+  sel.innerHTML = '<option value="">-- 请选择模型 --</option>';
+  allModels.filter(m=>m.enabled!==false).forEach(m=>{
+    sel.innerHTML += `<option value="${m.modelId}">${m.modelName} (${m.modelId})</option>`;
+  });
+  openModal('authModal');
+}
+
+async function submitAuth(){
+  if(!currentApp) return;
+  const body = {
+    modelIds:      [$('au_modelId').value],
+    qpsLimit:      parseInt($('au_qps').value)||0,
+    dailyLimit:    parseInt($('au_daily').value)||0,
+    monthlyTokens: (parseInt($('au_monthly').value)||0)*10000,
+    expiresAt:     $('au_expires').value||null,
+  };
+  if(!body.modelIds[0]){ toast('请选择模型','error'); return; }
+  try{
+    const r = await fetch(`/admin/apps/${currentApp.appId}/auth`, {method:'POST', headers:hdrs(), body:JSON.stringify(body)});
+    const j = await r.json();
+    if(j.code!==0){ toast('失败: '+j.message,'error'); return; }
+  }catch(e){}
+  toast('授权已添加');
+  closeModal('authModal');
+  loadAuths();
+}
+
+async function toggleAuth(modelId, currentEnabled){
+  const action = currentEnabled?'disable':'enable';
+  try{ await fetch(`/admin/apps/${currentApp.appId}/auth/${modelId}/${action}`, {method:'PATCH', headers:hdrs()}); }catch(e){}
+  toast(`授权已${currentEnabled?'禁用':'启用'}`);
+  loadAuths();
+}
+
+async function revokeAuth(modelId){
+  if(!confirm(`确认撤销 ${modelId} 的授权？`)) return;
+  try{ await fetch(`/admin/apps/${currentApp.appId}/auth/${modelId}`, {method:'DELETE', headers:hdrs()}); }catch(e){}
+  toast('授权已撤销');
+  loadAuths();
+}
+
+// ============================================================
+// 访问控制
+// ============================================================
+async function loadAccess(){
+  if(!currentApp) return;
+  try{
+    const r = await fetch(`/admin/apps/${currentApp.appId}/access`, {headers:hdrs()});
+    const j = await r.json();
+    currentAccessRules = j.data||[];
+  }catch(e){
+    currentAccessRules = DEMO_ACCESS[currentApp.appId]||[];
+  }
+  renderAccess();
+}
+
+function renderAccess(){
+  const ipTypes   = ['ip','cidr'];
+  const domTypes  = ['domain','domain_wildcard'];
+  const ipRules   = currentAccessRules.filter(r=>ipTypes.includes(r.ruleType));
+  const domRules  = currentAccessRules.filter(r=>domTypes.includes(r.ruleType));
+
+  $('ipRules').innerHTML = ipRules.length
+    ? ipRules.map(r=>`<span class="rule-tag"><span>${r.ruleValue}</span><button onclick="deleteAccessRule(${r.id})">×</button></span>`).join('')
+    : '<span style="font-size:12px;color:#94a3b8">空（不限制 IP）</span>';
+
+  $('domainRules').innerHTML = domRules.length
+    ? domRules.map(r=>`<span class="rule-tag"><span>${r.ruleValue}</span><button onclick="deleteAccessRule(${r.id})">×</button></span>`).join('')
+    : '<span style="font-size:12px;color:#94a3b8">空（不限制域名）</span>';
+}
+
+async function addAccessRule(kind){
+  if(!currentApp) return;
+  const inputId = kind==='ip' ? 'newIpRule' : 'newDomainRule';
+  const val = $(inputId).value.trim();
+  if(!val){ toast('请输入规则值','error'); return; }
+  const ruleType = kind==='ip'
+    ? (val.includes('/')? 'cidr' : 'ip')
+    : (val.startsWith('*.')? 'domain_wildcard' : 'domain');
+  const body = {ruleType, ruleValue:val};
+  try{
+    const r = await fetch(`/admin/apps/${currentApp.appId}/access`, {method:'POST', headers:hdrs(), body:JSON.stringify(body)});
+    const j = await r.json();
+    if(j.code!==0){ toast('失败: '+j.message,'error'); return; }
+    $(inputId).value='';
+    loadAccess();
+    toast('规则已添加');
+  }catch(e){
+    currentAccessRules.push({id:Date.now(), ruleType, ruleValue:val});
+    $(inputId).value='';
+    renderAccess();
+    toast('规则已添加（演示）');
+  }
+}
+
+async function deleteAccessRule(id){
+  if(!currentApp) return;
+  try{ await fetch(`/admin/apps/${currentApp.appId}/access/${id}`, {method:'DELETE', headers:hdrs()}); }catch(e){}
+  currentAccessRules = currentAccessRules.filter(r=>r.id!==id);
+  renderAccess();
+  toast('规则已删除');
+}
+
+// ============================================================
+// 审计日志
+// ============================================================
+async function loadAudit(){
+  try{
+    const params = new URLSearchParams();
+    if($('auditApp').value)    params.set('appId', $('auditApp').value);
+    if($('auditModel').value)  params.set('modelId', $('auditModel').value);
+    if($('auditStatus').value) params.set('status', $('auditStatus').value);
+    if($('auditTrace').value)  params.set('traceId', $('auditTrace').value);
+    const r = await fetch('/admin/audit?'+params, {headers:hdrs()});
+    const j = await r.json();
+    renderAudit(j.data||[]);
+  }catch(e){
+    renderAudit(DEMO_AUDIT);
+  }
+}
+
+function renderAudit(data){
+  const tbody = $('auditTbody');
+  if(!data.length){ tbody.innerHTML='<tr class="empty-row"><td colspan="8">暂无审计数据</td></tr>'; return; }
+  tbody.innerHTML = data.map(a=>`
+    <tr>
+      <td style="font-size:12px;white-space:nowrap">${fmtTime(a.createdAt)}</td>
+      <td><code style="font-size:11px">${(a.traceId||'').slice(0,12)}...</code></td>
+      <td>${a.appId||'-'}</td>
+      <td>${a.modelId||'-'}</td>
+      <td style="font-size:12px">${a.clientIp||'-'}</td>
+      <td>${statusTag(a.httpStatus)}</td>
+      <td>${a.latencyMs!=null?a.latencyMs+'ms':'-'}</td>
+      <td>${(a.inputTokens||0)+(a.outputTokens||0)||'-'}</td>
+    </tr>
+  `).join('');
+}
+
+function statusTag(s){
+  if(s>=200&&s<300) return `<span class="tag tag-green">${s}</span>`;
+  if(s===429) return `<span class="tag tag-yellow">${s}</span>`;
+  if(s>=400&&s<500) return `<span class="tag tag-red">${s}</span>`;
+  if(s>=500) return `<span class="tag tag-red">${s}</span>`;
+  return `<span class="tag tag-gray">${s||'-'}</span>`;
+}
+
+// ============================================================
+// 网关配置
+// ============================================================
+async function loadConfig(){
+  try{
+    const r = await fetch('/admin/config', {headers:hdrs()});
+    const j = await r.json();
+    renderConfig(j.data||[]);
+    // 填充快捷项
+    const map = {};
+    (j.data||[]).forEach(c=>map[c.configKey]=c.configValue);
+    if(map['auth.enabled'])           $('cfg_auth_enabled').value = map['auth.enabled'];
+    if(map['circuit.breaker.enabled'])$('cfg_circuit_enabled').value = map['circuit.breaker.enabled'];
+    if(map['rate.limit.default'])     $('cfg_default_qps').value = map['rate.limit.default'];
+    if(map['aksk.window.seconds'])    $('cfg_aksk_window').value = map['aksk.window.seconds'];
+  }catch(e){
+    renderConfig(DEMO_CONFIG);
+  }
+}
+
+function renderConfig(data){
+  const tbody = $('configTbody');
+  if(!data.length){ tbody.innerHTML='<tr class="empty-row"><td colspan="5">暂无配置</td></tr>'; return; }
+  tbody.innerHTML = data.map(c=>`
+    <tr>
+      <td><code>${c.configKey}</code></td>
+      <td><input type="text" value="${escHtml(c.configValue)}" id="cfgv_${c.configKey.replace(/\./g,'_')}" style="width:100%;min-width:200px"/></td>
+      <td style="font-size:12px;color:#64748b">${c.description||'-'}</td>
+      <td style="font-size:12px;color:#94a3b8">${fmtTime(c.updatedAt)}</td>
+      <td>
+        <div class="flex gap-8">
+          <button class="btn btn-success btn-sm" onclick="saveConfigKv('${c.configKey}','${escHtml(c.description||'')}')">保存</button>
+          <button class="btn btn-danger btn-sm" onclick="delConfig('${c.configKey}')">删除</button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+}
+
+async function saveGlobalConfig(){
+  const cfgs = [
+    {key:'auth.enabled',          val:$('cfg_auth_enabled').value,  desc:'鉴权总开关'},
+    {key:'circuit.breaker.enabled',val:$('cfg_circuit_enabled').value,desc:'熔断开关'},
+    {key:'rate.limit.default',    val:$('cfg_default_qps').value,   desc:'全局默认 QPS'},
+    {key:'aksk.window.seconds',   val:$('cfg_aksk_window').value,   desc:'AK/SK 时间窗口'},
+  ];
+  let ok=0;
+  for(const c of cfgs){
+    try{ await fetch(`/admin/config/${c.key}`, {method:'PUT', headers:hdrs(), body:JSON.stringify({value:c.val,description:c.desc})}); ok++; }
+    catch(e){ ok++; }
+  }
+  toast(`全局配置已保存`);
+  loadConfig();
+}
+
+async function saveAdminConfig(){ toast('Admin 配置已保存（演示）'); }
+async function regenAdminToken(){ toast('Token 已重新生成（演示）','info'); }
+
+async function saveConfigKv(key, desc){
+  const elId = 'cfgv_'+key.replace(/\./g,'_');
+  const value = $(elId) ? $(elId).value.trim() : '';
+  try{
+    const r = await fetch(`/admin/config/${key}`, {method:'PUT', headers:hdrs(), body:JSON.stringify({value,description:desc})});
+    const j = await r.json();
+    if(j.code===0){ toast(`[${key}] 已保存`); loadConfig(); }
+    else toast('失败: '+j.message,'error');
+  }catch(e){ toast(`[${key}] 已保存（演示）`); }
+}
+
+async function delConfig(key){
+  if(!confirm(`确认删除配置 [${key}]？`)) return;
+  try{ await fetch(`/admin/config/${key}`, {method:'DELETE', headers:hdrs()}); }catch(e){}
+  toast('已删除');
+  loadConfig();
+}
+
+async function addConfig(){
+  const key = $('newCfgKey').value.trim();
+  const val = $('newCfgVal').value.trim();
+  const desc= $('newCfgDesc').value.trim();
+  if(!key||!val){ toast('key 和 value 不能为空','error'); return; }
+  try{ await fetch(`/admin/config/${key}`, {method:'PUT', headers:hdrs(), body:JSON.stringify({value:val,description:desc})}); }catch(e){}
+  $('newCfgKey').value=$('newCfgVal').value=$('newCfgDesc').value='';
+  toast('配置已新增');
+  loadConfig();
+}
+
+// ============================================================
+// Modal helpers
+// ============================================================
+function openModal(id){ $(id).classList.add('open'); }
+function closeModal(id){ $(id).classList.remove('open'); }
+
+// ============================================================
+// Utils
+// ============================================================
+function copyText(t){
+  navigator.clipboard.writeText(t).then(()=>toast('已复制到剪贴板')).catch(()=>{
+    const ta = document.createElement('textarea');
+    ta.value=t; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
+    toast('已复制到剪贴板');
+  });
+}
+
+function escHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+// Close modal on backdrop click
+document.querySelectorAll('.modal-backdrop').forEach(el=>{
+  el.addEventListener('click', e=>{ if(e.target===el) el.classList.remove('open'); });
+});
+
+// ============================================================
+// Demo Data
+// ============================================================
+const DEMO_MODELS = [
+  {modelId:'gpt-4o',modelName:'GPT-4o',provider:'openai',modelType:'chat',apiSpec:'openai',upstreamUrl:'https://api.openai.com',timeoutMs:30000,enabled:true},
+  {modelId:'claude-3-5-sonnet',modelName:'Claude 3.5 Sonnet',provider:'anthropic',modelType:'chat',apiSpec:'anthropic',upstreamUrl:'https://api.anthropic.com',timeoutMs:60000,enabled:true},
+  {modelId:'gpt-4o-mini',modelName:'GPT-4o Mini',provider:'openai',modelType:'chat',apiSpec:'openai',upstreamUrl:'https://api.openai.com',timeoutMs:30000,enabled:true},
+  {modelId:'qwen-private',modelName:'通义千问（私有化）',provider:'private',modelType:'chat',apiSpec:'openai',upstreamUrl:'http://qwen.internal:8080',timeoutMs:60000,enabled:false},
+];
+
+const DEMO_APPS = [
+  {appId:'crm-service', sysCode:'CRM',  appCode:'CRM001',  appName:'客户关系管理系统', owner:'张三', enabled:true,  authCount:2,credCount:2,createdAt:'2026-01-15T10:00:00'},
+  {appId:'bi-platform', sysCode:'BI',   appCode:'BI001',   appName:'BI 数据平台',      owner:'李四', enabled:true,  authCount:1,credCount:1,createdAt:'2026-02-01T09:00:00'},
+  {appId:'risk-engine', sysCode:'RISK', appCode:'RISK001', appName:'风控引擎',          owner:'王五', enabled:true,  authCount:3,credCount:2,createdAt:'2026-03-10T14:00:00'},
+];
+
+const DEMO_CREDS = {
+  'crm-service': [
+    {id:1,credName:'生产密钥',credType:'api_key',accessKey:'****...xyz4',enabled:true,expiresAt:null},
+    {id:2,credName:'测试密钥',credType:'ak_sk',  accessKey:'AK_crm_abc***',enabled:true,expiresAt:'2027-01-01T00:00:00'},
+  ],
+  'bi-platform': [{id:3,credName:'BI 密钥',credType:'api_key',accessKey:'****...bi89',enabled:true,expiresAt:null}],
+};
+
+const DEMO_AUTHS = {
+  'crm-service': [
+    {modelId:'gpt-4o',modelName:'GPT-4o',enabled:true,qpsLimit:10,dailyLimit:10000,monthlyTokens:5000000,expiresAt:null},
+    {modelId:'claude-3-5-sonnet',modelName:'Claude 3.5 Sonnet',enabled:true,qpsLimit:5,dailyLimit:0,monthlyTokens:0,expiresAt:'2026-12-31T23:59:59'},
+  ],
+};
+
+const DEMO_ACCESS = {
+  'crm-service': [
+    {id:1,ruleType:'cidr',ruleValue:'10.0.0.0/8'},
+    {id:2,ruleType:'ip',ruleValue:'192.168.1.100'},
+    {id:3,ruleType:'domain_wildcard',ruleValue:'*.internal.com'},
+  ],
+};
+
+const DEMO_AUDIT = [
+  {traceId:'abc123def456',appId:'crm-service',modelId:'gpt-4o',clientIp:'10.0.1.5',httpStatus:200,latencyMs:342,inputTokens:100,outputTokens:1104,createdAt:'2026-04-23T10:01:00'},
+  {traceId:'def456ghi789',appId:'bi-platform',modelId:'gpt-4o',clientIp:'10.0.2.8',httpStatus:429,latencyMs:12,inputTokens:0,outputTokens:0,createdAt:'2026-04-23T10:01:05'},
+  {traceId:'ghi789jkl012',appId:'risk-engine',modelId:'claude-3-5-sonnet',clientIp:'192.168.1.9',httpStatus:403,latencyMs:5,inputTokens:0,outputTokens:0,createdAt:'2026-04-23T10:01:10'},
+];
+
+const DEMO_CONFIG = [
+  {configKey:'auth.enabled',configValue:'true',description:'鉴权总开关',updatedAt:'2026-04-23T10:00:00'},
+  {configKey:'circuit.breaker.enabled',configValue:'true',description:'熔断开关',updatedAt:'2026-04-23T10:00:00'},
+  {configKey:'rate.limit.default',configValue:'100',description:'全局默认 QPS',updatedAt:'2026-04-23T10:00:00'},
+  {configKey:'aksk.window.seconds',configValue:'300',description:'AK/SK 防重放时间窗口',updatedAt:'2026-04-23T10:00:00'},
+];
+
+// ============================================================
+// 初始化
+// ============================================================
+window.onload = () => {
+  const saved = sessionStorage.getItem('mg_token');
+  if(saved){ $('adminToken').value = saved; }
+  // 直接加载演示数据
+  loadModels();
+  loadApps();
+};
+</script>
+</body>
+</html>
