@@ -5,32 +5,11 @@
 server:
   port: 8080
 
-# ===== 数据源 =====
+# ===== 数据源（Venus/Druid，配置由 Apollo tdsql_datasource_config 命名空间下发）=====
+datasource:
+  namespace: tdsql_datasource_config
+
 spring:
-  datasource:
-    url: ${DB_URL:jdbc:mysql://127.0.0.1:3306/modelgate?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai}
-    username: ${DB_USERNAME:root}
-    password: ${DB_PASSWORD:root}
-    driver-class-name: com.mysql.cj.jdbc.Driver
-    hikari:
-      maximum-pool-size: 10
-      minimum-idle: 2
-      connection-timeout: 30000
-      idle-timeout: 600000
-      max-lifetime: 1800000
-
-  # ===== Redis =====
-  redis:
-    host: ${REDIS_HOST:127.0.0.1}
-    port: ${REDIS_PORT:6379}
-    password: ${REDIS_PASSWORD:}
-    database: 0
-    lettuce:
-      pool:
-        max-active: 20
-        max-idle: 10
-        min-idle: 2
-
   # ===== Kafka =====
   kafka:
     bootstrap-servers: ${KAFKA_SERVERS:127.0.0.1:9092}
@@ -104,74 +83,93 @@ management:
       application: ${spring.application.name}
 
 # ===== Resilience4j 熔断器 =====
+# 熔断器保护上游 AI 服务：当失败率或慢调用率超过阈值时快速拒绝请求，
+# 避免大量请求堆积打爆上游，待上游恢复后自动重新接入。
+# 状态流转：CLOSED（正常）→ OPEN（熔断）→ HALF_OPEN（探测）→ CLOSED（恢复）
 resilience4j:
   circuitbreaker:
     instances:
       modelUpstream:
-        # 滑动窗口：最近 10 次请求
+        # 滑动窗口类型：COUNT_BASED=按请求次数统计（取最近 N 次），TIME_BASED=按时间窗口统计
         slidingWindowType: COUNT_BASED
+        # 统计最近 10 次请求的成败情况，窗口满 10 次后才开始计算失败率
         slidingWindowSize: 10
-        # 失败率 > 50% 触发熔断
+        # 失败率阈值：10 次里失败 ≥ 5 次（50%）即触发熔断，进入 OPEN 状态
         failureRateThreshold: 50
-        # 慢调用率 > 80% 触发熔断（超过 10s 算慢调用）
+        # 慢调用率阈值：10 次里慢调用 ≥ 8 次（80%）也触发熔断（即使没有报错）
         slowCallRateThreshold: 80
+        # 慢调用判定时长：单次请求响应超过 10s 算"慢调用"
         slowCallDurationThreshold: 10s
-        # 熔断后等 30s 再半开
+        # 熔断冷却时间：OPEN 状态持续 30s 后切换到 HALF_OPEN 进行探测
         waitDurationInOpenState: 30s
-        # 半开时允许 5 次试探
+        # 半开探测请求数：HALF_OPEN 时放行 5 个请求，全部成功则恢复 CLOSED，任一失败则重新 OPEN
         permittedNumberOfCallsInHalfOpenState: 5
+        # true=冷却时间到期后自动切换到 HALF_OPEN；false=需等到下一个请求才触发切换
         automaticTransitionFromOpenToHalfOpenEnabled: true
   timelimiter:
     instances:
       modelUpstream:
+        # 单次请求超时上限：大模型流式响应耗时长，设 300s 给完整输出留足时间，同时防止请求永远挂死
         timeoutDuration: 300s
 
 # ===== ModelGate 自定义配置（Apollo 热更新以下所有项） =====
 modelgate:
-  # 上游模型地址（Apollo 热更新）
+  # Gateway 静态路由占位地址，实际转发目标由 ModelRouteFilter 按 model_instance.upstream_url 动态覆盖
+  # 真实路由：请求 → ModelRouteFilter 读 body 的 model 字段 → 查 DB/缓存得到 ModelInstance.upstreamUrl → 覆盖转发地址
+  # 此处地址仅供 Gateway 启动时初始化静态路由使用，生产流量不会打到这里
   upstream:
     url: ${MODEL_UPSTREAM_URL:http://127.0.0.1:9090}
 
-  # 白名单缓存配置
+  # API Key 白名单两级缓存配置
+  # 缓存链路：请求 → Caffeine L1（本进程内，TTL 60s）→ Redis L2 → MySQL
+  # 定时任务每 sync-interval-seconds 秒将 MySQL 最新白名单全量同步到 Redis，保证多实例数据一致
   whitelist:
-    # 本地缓存 TTL（秒）
+    # Caffeine 本地缓存过期时间（秒）：60s 内命中直接返回，无需访问 Redis
     local-cache-ttl: 60
-    # 本地缓存最大条目
+    # Caffeine 本地缓存最大条目数：超出后按 LRU 淘汰
     local-cache-max-size: 10000
-    # Redis key 前缀
+    # Redis key 前缀，完整 key 格式：wl:apikey:{apiKey}
     redis-key-prefix: "wl:apikey:"
-    # 定时全量同步 MySQL → Redis 间隔（秒）
+    # MySQL → Redis 全量同步间隔（秒）：保证新增/删除的白名单在 5 分钟内同步到所有实例
     sync-interval-seconds: 300
 
-  # Admin 接口鉴权
+  # /admin/** 管理接口双重鉴权：Token 校验 + IP 白名单
+  # 生产环境 token 和密码必须通过 Apollo 或环境变量替换，禁止使用默认值
   admin:
-    # Admin Token 列表（Apollo 管理，动态下发）
+    # Admin Token 列表，请求 Header 携带 X-Admin-Token，匹配任一 token 即通过
     tokens:
       - name: ops-team
         token: ${ADMIN_TOKEN_OPS:mg-admin-change-me-in-prod}
-    # 管理接口 IP 白名单（支持 CIDR，空则不校验 IP）
+    # 来源 IP 白名单，支持精确 IP 和 CIDR 段；列表为空则跳过 IP 校验
     allowed-ips:
-      - 127.0.0.1
-      - 10.0.0.0/8
-      - 172.16.0.0/12
-      - 192.168.0.0/16
-    # Basic Auth（可选，用于浏览器访问管理页面）
+      - 127.0.0.1        # 本机
+      - 10.0.0.0/8       # 内网 A 类
+      - 172.16.0.0/12    # 内网 B 类
+      - 192.168.0.0/16   # 内网 C 类
+    # Basic Auth：可选，用于浏览器直接访问管理页面时弹出认证框
     basic-auth:
       enabled: true
       username: ${ADMIN_USERNAME:admin}
       password: ${ADMIN_PASSWORD:changeme}
 
-  # 审计日志 Kafka topic
+  # 审计日志：每次 API 调用写一条记录，enabled/db-write 可独立开关用于故障时降级
+  # enabled=false：完全关闭审计（Kafka + DB 均不写）
+  # db-write=false：只发 Kafka，跳过 DB 写入（DB 故障时降级用）
   audit:
-    topic: modelgate-audit-log
-    enabled: true
-    db-write: true
+    topic: modelgate-audit-log     # Kafka topic 名称
+    enabled: true                  # 是否开启审计日志
+    db-write: true                 # 是否同时写入 MySQL audit_log 表
+    buffer-size: 200000            # 内存队列最大条数，满时丢弃并打 WARN
+    flush-interval-ms: 2000        # 批量写入间隔（毫秒），每次最多写 5000 条
+    retention-days: 90             # 日志保留天数，超期由 AuditCleanupService 删除
+    cleanup-cron: "0 0 2 * * ?"   # 清理任务 cron，默认每天凌晨 2 点
 
-  # 加密密钥（32字节base64，生产从环境变量 MODELGATE_CRYPTO_KEY 注入）
+  # 模型凭证加密密钥：用于加密存储在 MySQL 中的 AK/SK 等敏感凭证
+  # 必须为 32 字节 base64 编码字符串；生产环境通过环境变量注入，本地开发需手动设置，为空时加密功能不可用
   crypto:
     key: ${MODELGATE_CRYPTO_KEY:}
 
-  # 默认限流（每 API Key，每秒 token 数）
+  # 默认限流配置（每个 API Key 的兜底限流值，单独配置的 API Key 可覆盖此默认值）
   rate-limit:
-    default-rate: 10
-    default-burst: 20
+    default-rate: 10   # 每秒最大请求数（滑动窗口计数器，基于 Redis Lua 脚本原子执行）
+    default-burst: 20  # 突发容量上限（预留给令牌桶算法，当前滑动窗口模式暂未使用）
