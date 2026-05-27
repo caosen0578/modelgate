@@ -1,19 +1,19 @@
 package com.pab.ficc.ibp.modelgate.server.controller;
 
 import com.pab.ficc.ibp.modelgate.server.common.Result;
+import com.pab.ficc.ibp.modelgate.server.domain.dto.CreateCredentialRequest;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.AppCredential;
+import com.pab.ficc.ibp.modelgate.server.domain.vo.AppCredentialVO;
+import com.pab.ficc.ibp.modelgate.server.domain.vo.CredentialCreatedVO;
 import com.pab.ficc.ibp.modelgate.server.service.CredentialService;
-import javax.validation.Valid;
-import javax.validation.constraints.NotBlank;
-import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
-import java.time.LocalDateTime;
+import javax.validation.Valid;
 import java.util.List;
-import java.util.Map;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/admin/credentials")
@@ -23,36 +23,32 @@ public class CredentialController {
     private final CredentialService credentialService;
 
     @GetMapping("/list")
-    public Mono<Result<List<AppCredential>>> list(@RequestParam String appId) {
-        return Mono.fromCallable(() -> credentialService.listByAppId(appId))
+    public Mono<Result<List<AppCredentialVO>>> list(@RequestParam String appId) {
+        return Mono.fromCallable(() -> credentialService.listByAppId(appId)
+                        .stream().map(AppCredentialVO::of).collect(Collectors.toList()))
                 .subscribeOn(Schedulers.boundedElastic())
                 .map(Result::ok);
     }
 
     @PostMapping("/create")
-    public Mono<Result<Map<String, Object>>> create(@RequestBody @Valid CreateCredentialRequest req) {
+    public Mono<Result<CredentialCreatedVO>> create(@RequestBody @Valid CreateCredentialRequest req) {
         return Mono.fromCallable(() -> {
             AppCredential cred = req.toEntity();
             CredentialService.CreatedCredential created = credentialService.create(req.getAppId(), cred);
             AppCredential saved = created.credential();
             String plain = created.plainSecret();
 
+            CredentialCreatedVO.CredentialCreatedVOBuilder builder = CredentialCreatedVO.builder()
+                    .id(saved.getId())
+                    .credType(saved.getCredType())
+                    .expiresAt(saved.getExpiresAt());
+
             if ("ak_sk".equals(saved.getCredType())) {
-                return Map.<String, Object>of(
-                        "id", saved.getId(),
-                        "credType", "ak_sk",
-                        "accessKey", saved.getAccessKey(),
-                        "secretKey", plain,
-                        "expiresAt", saved.getExpiresAt() != null ? saved.getExpiresAt().toString() : null
-                );
+                builder.accessKey(saved.getAccessKey()).secretKey(plain);
             } else {
-                return Map.<String, Object>of(
-                        "id", saved.getId(),
-                        "credType", "api_key",
-                        "apiKey", plain,
-                        "expiresAt", saved.getExpiresAt() != null ? saved.getExpiresAt().toString() : null
-                );
+                builder.apiKey(plain);
             }
+            return builder.build();
         }).subscribeOn(Schedulers.boundedElastic()).map(Result::ok);
     }
 
@@ -75,25 +71,5 @@ public class CredentialController {
         return Mono.fromRunnable(() -> credentialService.delete(appId, id))
                 .subscribeOn(Schedulers.boundedElastic())
                 .then(Mono.just(Result.<Void>ok()));
-    }
-
-    // ===== DTO =====
-
-    @Data
-    public static class CreateCredentialRequest {
-        @NotBlank private String appId;
-        @NotBlank private String credName;
-        @NotBlank private String credType;
-        private LocalDateTime expiresAt;
-        private String remark;
-
-        AppCredential toEntity() {
-            var c = new AppCredential();
-            c.setCredName(credName);
-            c.setCredType(credType);
-            c.setExpiresAt(expiresAt);
-            c.setRemark(remark);
-            return c;
-        }
     }
 }

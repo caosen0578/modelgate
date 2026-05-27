@@ -1,17 +1,18 @@
 package com.pab.ficc.ibp.modelgate.server.controller;
 
 import com.pab.ficc.ibp.modelgate.server.common.Result;
-import com.pab.ficc.ibp.modelgate.server.domain.entity.AppInfo;
+import com.pab.ficc.ibp.modelgate.server.domain.dto.CreateAppRequest;
+import com.pab.ficc.ibp.modelgate.server.domain.dto.UpdateAppRequest;
+import com.pab.ficc.ibp.modelgate.server.domain.vo.AppVO;
 import com.pab.ficc.ibp.modelgate.server.service.AppService;
-import javax.validation.Valid;
-import javax.validation.constraints.NotBlank;
-import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
+import javax.validation.Valid;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/admin/apps")
@@ -21,29 +22,30 @@ public class AppController {
     private final AppService appService;
 
     @GetMapping
-    public Mono<Result<List<AppInfo>>> findAll() {
-        return Mono.fromCallable(appService::findAll)
+    public Mono<Result<List<AppVO>>> findAll() {
+        return Mono.fromCallable(() -> appService.findAll()
+                        .stream().map(AppVO::of).collect(Collectors.toList()))
                 .subscribeOn(Schedulers.boundedElastic())
                 .map(Result::ok);
     }
 
     @GetMapping("/detail")
-    public Mono<Result<AppInfo>> findOne(@RequestParam String appId) {
-        return Mono.fromCallable(() -> appService.findByAppId(appId))
+    public Mono<Result<AppVO>> findOne(@RequestParam String appId) {
+        return Mono.fromCallable(() -> AppVO.of(appService.findByAppId(appId)))
                 .subscribeOn(Schedulers.boundedElastic())
                 .map(Result::ok);
     }
 
     @PostMapping
-    public Mono<Result<AppInfo>> create(@RequestBody @Valid CreateAppRequest req) {
-        return Mono.fromCallable(() -> appService.create(req.toEntity()))
+    public Mono<Result<AppVO>> create(@RequestBody @Valid CreateAppRequest req) {
+        return Mono.fromCallable(() -> AppVO.of(appService.create(req.toEntity())))
                 .subscribeOn(Schedulers.boundedElastic())
                 .map(Result::ok);
     }
 
     @PutMapping("/update")
-    public Mono<Result<AppInfo>> update(@RequestBody @Valid UpdateAppRequest req) {
-        return Mono.fromCallable(() -> appService.update(req.getAppId(), req.toEntity()))
+    public Mono<Result<AppVO>> update(@RequestBody @Valid UpdateAppRequest req) {
+        return Mono.fromCallable(() -> AppVO.of(appService.update(req.getAppId(), req.toEntity())))
                 .subscribeOn(Schedulers.boundedElastic())
                 .map(Result::ok);
     }
@@ -67,51 +69,5 @@ public class AppController {
         return Mono.fromRunnable(() -> appService.delete(appId))
                 .subscribeOn(Schedulers.boundedElastic())
                 .then(Mono.just(Result.<Void>ok()));
-    }
-
-    // ===== DTOs =====
-
-    @Data
-    public static class CreateAppRequest {
-        @NotBlank private String appId;
-        @NotBlank private String appName;
-        @NotBlank private String sysCode;
-        @NotBlank private String appCode;
-        @NotBlank private String owner;
-        private String remark;
-
-        AppInfo toEntity() {
-            var a = new AppInfo();
-            a.setAppId(appId);
-            a.setAppName(appName);
-            a.setSysCode(sysCode);
-            a.setAppCode(appCode);
-            a.setOwner(owner);
-            a.setRemark(remark);
-            a.setEnabled(true);
-            return a;
-        }
-    }
-
-    @Data
-    public static class UpdateAppRequest {
-        @NotBlank private String appId;
-        @NotBlank private String appName;
-        @NotBlank private String sysCode;
-        @NotBlank private String appCode;
-        @NotBlank private String owner;
-        private String remark;
-        private Boolean enabled;
-
-        AppInfo toEntity() {
-            var a = new AppInfo();
-            a.setAppName(appName);
-            a.setSysCode(sysCode);
-            a.setAppCode(appCode);
-            a.setOwner(owner);
-            a.setRemark(remark);
-            if (enabled != null) a.setEnabled(enabled);
-            return a;
-        }
     }
 }

@@ -3,6 +3,7 @@ package com.pab.ficc.ibp.modelgate.server.controller;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.pab.ficc.ibp.modelgate.server.common.Result;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.AuditLog;
+import com.pab.ficc.ibp.modelgate.server.domain.vo.AuditLogVO;
 import com.pab.ficc.ibp.modelgate.server.mapper.AuditLogMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -13,6 +14,7 @@ import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * 审计日志查询接口
@@ -26,23 +28,24 @@ public class AuditLogController {
     private final AuditLogMapper auditLogMapper;
 
     @GetMapping
-    public Mono<Result<List<AuditLog>>> query(
+    public Mono<Result<List<AuditLogVO>>> query(
             @RequestParam(required = false) String appId,
             @RequestParam(required = false) String modelId,
             @RequestParam(required = false) Integer status,
             @RequestParam(required = false) String traceId) {
 
-        return Mono.fromCallable(() -> doQuery(appId, modelId, status, traceId))
+        return Mono.fromCallable(() -> doQuery(appId, modelId, status, traceId)
+                        .stream().map(AuditLogVO::of).collect(Collectors.toList()))
                 .subscribeOn(Schedulers.boundedElastic())
                 .map(Result::ok);
     }
 
     private List<AuditLog> doQuery(String appId, String modelId, Integer status, String traceId) {
         LambdaQueryWrapper<AuditLog> wrapper = new LambdaQueryWrapper<AuditLog>()
-                .eq(appId   != null && !appId.isBlank(),   AuditLog::getAppId,     appId)
-                .eq(modelId != null && !modelId.isBlank(), AuditLog::getModelId,   modelId)
+                .eq(appId   != null && !appId.isBlank(),   AuditLog::getAppId,      appId)
+                .eq(modelId != null && !modelId.isBlank(), AuditLog::getModelId,    modelId)
                 .eq(status  != null,                       AuditLog::getHttpStatus, status)
-                .eq(traceId != null && !traceId.isBlank(), AuditLog::getTraceId,   traceId)
+                .eq(traceId != null && !traceId.isBlank(), AuditLog::getTraceId,    traceId)
                 .orderByDesc(AuditLog::getCreatedAt)
                 .last("LIMIT 200");
 

@@ -1,17 +1,17 @@
 package com.pab.ficc.ibp.modelgate.server.controller;
 
 import com.pab.ficc.ibp.modelgate.server.common.Result;
-import com.pab.ficc.ibp.modelgate.server.domain.entity.AccessRule;
+import com.pab.ficc.ibp.modelgate.server.domain.dto.AddRuleRequest;
+import com.pab.ficc.ibp.modelgate.server.domain.vo.AccessRuleVO;
 import com.pab.ficc.ibp.modelgate.server.service.AccessRuleService;
-import javax.validation.Valid;
-import javax.validation.constraints.NotBlank;
-import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
+import javax.validation.Valid;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/admin/access")
@@ -21,15 +21,17 @@ public class AccessRuleController {
     private final AccessRuleService accessRuleService;
 
     @GetMapping("/list")
-    public Mono<Result<List<AccessRule>>> list(@RequestParam String appId) {
-        return Mono.fromCallable(() -> accessRuleService.listByAppId(appId))
+    public Mono<Result<List<AccessRuleVO>>> list(@RequestParam String appId) {
+        return Mono.fromCallable(() -> accessRuleService.listByAppId(appId)
+                        .stream().map(AccessRuleVO::of).collect(Collectors.toList()))
                 .subscribeOn(Schedulers.boundedElastic())
                 .map(Result::ok);
     }
 
     @PostMapping("/add")
-    public Mono<Result<AccessRule>> add(@RequestBody @Valid AddRuleRequest req) {
-        return Mono.fromCallable(() -> accessRuleService.add(req.getAppId(), req.toEntity()))
+    public Mono<Result<AccessRuleVO>> add(@RequestBody @Valid AddRuleRequest req) {
+        return Mono.fromCallable(() -> AccessRuleVO.of(
+                        accessRuleService.add(req.getAppId(), req.toEntity())))
                 .subscribeOn(Schedulers.boundedElastic())
                 .map(Result::ok);
     }
@@ -39,23 +41,5 @@ public class AccessRuleController {
         return Mono.fromRunnable(() -> accessRuleService.delete(appId, id))
                 .subscribeOn(Schedulers.boundedElastic())
                 .then(Mono.just(Result.<Void>ok()));
-    }
-
-    // ===== DTO =====
-
-    @Data
-    public static class AddRuleRequest {
-        @NotBlank private String appId;
-        @NotBlank private String ruleType;
-        @NotBlank private String ruleValue;
-        private String remark;
-
-        AccessRule toEntity() {
-            var r = new AccessRule();
-            r.setRuleType(ruleType);
-            r.setRuleValue(ruleValue);
-            r.setRemark(remark);
-            return r;
-        }
     }
 }
