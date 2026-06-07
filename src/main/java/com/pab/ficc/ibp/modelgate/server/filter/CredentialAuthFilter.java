@@ -54,6 +54,7 @@ public class CredentialAuthFilter implements GlobalFilter, Ordered {
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
         String path = exchange.getRequest().getURI().getPath();
+        // /admin/** 由 AdminAuthFilter 单独处理，/actuator/** 由 Spring Security 或 actuator 自身保护
         if (path.startsWith("/admin/") || path.startsWith("/actuator/")) {
             return chain.filter(exchange);
         }
@@ -63,6 +64,7 @@ public class CredentialAuthFilter implements GlobalFilter, Ordered {
             return reject(exchange, HttpStatus.UNAUTHORIZED, ErrorCode.MISSING_CREDENTIAL);
         }
 
+        // DB 查询必须切换到 boundedElastic 线程池，避免在 Netty 事件循环线程中执行阻塞 IO
         return Mono.fromCallable(() -> authenticate(authorization))
                 .subscribeOn(Schedulers.boundedElastic())
                 .flatMap(result -> {
@@ -72,6 +74,7 @@ public class CredentialAuthFilter implements GlobalFilter, Ordered {
                     }
                     AppCredential cred = result.get();
 
+                    // 凭证状态检查（enabled=false 或已过期）
                     if (Boolean.FALSE.equals(cred.getEnabled())) {
                         return reject(exchange, HttpStatus.UNAUTHORIZED, ErrorCode.INVALID_API_KEY);
                     }
@@ -79,6 +82,7 @@ public class CredentialAuthFilter implements GlobalFilter, Ordered {
                         return reject(exchange, HttpStatus.UNAUTHORIZED, ErrorCode.CREDENTIAL_EXPIRED);
                     }
 
+                    // 检查所属 App 是否启用（App 禁用 → 该 App 所有凭证立即失效）
                     Optional<AppInfo> app;
                     try {
                         app = Optional.of(appService.findByAppId(cred.getAppId()));
@@ -89,6 +93,7 @@ public class CredentialAuthFilter implements GlobalFilter, Ordered {
                         return reject(exchange, HttpStatus.FORBIDDEN, ErrorCode.APP_DISABLED);
                     }
 
+                    // 将 appId 和凭证类型注入请求头，供后续过滤器（ModelAuthFilter、QuotaFilter、TraceFilter）读取
                     var mutated = exchange.getRequest().mutate()
                             .header("X-Mg-App", cred.getAppId())
                             .header("X-Mg-Cred-Type", cred.getCredType())
@@ -99,11 +104,14 @@ public class CredentialAuthFilter implements GlobalFilter, Ordered {
 
     private Optional<AppCredential> authenticate(String authorization) {
         if (authorization.startsWith("Bearer ")) {
+            // API Key 模式：对明文做 SHA-256，用哈希查凭证（DB 中不存明文）
             String apiKey = authorization.substring(7).trim();
             String hash = cryptoService.sha256Hex(apiKey);
             return credentialService.findBySecretHash(hash);
         }
         if (authorization.startsWith("AKSK ")) {
+            // AK/SK 模式：格式 "AKSK {accessKey}:{timestamp毫秒}:{hmac_signature}"
+            // 当前实现仅校验时间戳防重放，签名验证留给调用方；后续可在此补充 HMAC 比对
             String payload = authorization.substring(5).trim();
             String[] parts = payload.split(":", 3);
             if (parts.length != 3) return Optional.empty();
@@ -112,6 +120,7 @@ public class CredentialAuthFilter implements GlobalFilter, Ordered {
             try {
                 long ts = Long.parseLong(timestampStr);
                 long now = System.currentTimeMillis();
+                // 时间戳偏差超过 ±5 分钟，拒绝（防止请求被截获后延迟重放）
                 if (Math.abs(now - ts) > MAX_TIMESTAMP_SKEW_MS) {
                     log.info("[CredentialAuth] Timestamp out of range: ts={}, now={}", ts, now);
                     return Optional.empty();

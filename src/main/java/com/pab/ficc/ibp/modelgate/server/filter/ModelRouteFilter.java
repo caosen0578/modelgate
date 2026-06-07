@@ -63,15 +63,18 @@ public class ModelRouteFilter implements GlobalFilter, Ordered {
         if (path.startsWith("/admin/") || path.startsWith("/actuator/")) {
             return chain.filter(exchange);
         }
+        // 只处理 /v1/** 的业务流量（chat/completions、embeddings 等）
         if (!path.startsWith("/v1/")) {
             return chain.filter(exchange);
         }
 
+        // DataBufferUtils.join 将流式 DataBuffer 聚合为单个 buffer，读取完整请求体
+        // 注意：读取后原始 body 流已消费，必须通过 ServerHttpRequestDecorator 重新注入给下游
         return DataBufferUtils.join(exchange.getRequest().getBody())
                 .flatMap(dataBuffer -> {
                     byte[] bodyBytes = new byte[dataBuffer.readableByteCount()];
                     dataBuffer.read(bodyBytes);
-                    DataBufferUtils.release(dataBuffer);
+                    DataBufferUtils.release(dataBuffer); // 必须手动释放，防止内存泄漏
                     return processRequest(exchange, chain, bodyBytes);
                 })
                 .switchIfEmpty(Mono.defer(() -> reject(exchange, HttpStatus.BAD_REQUEST, ErrorCode.MODEL_FIELD_MISSING)));
@@ -84,14 +87,17 @@ public class ModelRouteFilter implements GlobalFilter, Ordered {
             if (modelNode == null || modelNode.isNull()) return null;
             String modelId = modelNode.asText();
 
+            // 将 modelId 写入 exchange attribute，供 ModelAuthFilter、QuotaFilter、TraceFilter 读取
             exchange.getAttributes().put("mg.modelId", modelId);
 
             Optional<ModelInstance> modelOpt = modelService.getModelCached(modelId);
             if (modelOpt.isEmpty()) return null;
             ModelInstance model = modelOpt.get();
 
+            // 从 DB 读取上游鉴权凭证并解密 SK（走 Caffeine 缓存，不重复解密）
             ModelCredential credential = modelService.getCredentialDecrypted(modelId);
 
+            // 按 apiSpec 选择适配器（Strategy 模式）：openai/azure_openai/anthropic/custom
             ProviderAdapter adapter = adapters.stream()
                     .filter(a -> a.supports(model.getApiSpec()))
                     .findFirst()
@@ -99,6 +105,7 @@ public class ModelRouteFilter implements GlobalFilter, Ordered {
 
             if (adapter == null) return null;
 
+            // 适配器负责：请求体参数转换、上游鉴权 Header 构造、上游 URL 构建
             byte[] transformedBody = adapter.transformRequestBody(bodyBytes, model, credential);
             HttpHeaders transformedHeaders = adapter.buildUpstreamHeaders(model, credential);
             URI upstreamUri = adapter.buildUpstreamUri(model, exchange.getRequest().getURI());
@@ -111,16 +118,19 @@ public class ModelRouteFilter implements GlobalFilter, Ordered {
                 return reject(exchange, HttpStatus.NOT_FOUND, ErrorCode.MODEL_NOT_FOUND);
             }
 
+            // 覆盖 Gateway 的路由目标地址，使请求转发到模型对应的上游 URL
             exchange.getAttributes().put(ServerWebExchangeUtils.GATEWAY_REQUEST_URL_ATTR, info.upstreamUri());
 
+            // 用 ServerHttpRequestDecorator 将新的 body 和 headers 重新注入请求链
+            // 必须通过 decorator 而非直接修改，因为 ServerHttpRequest 是不可变对象
             DataBuffer newBuffer = exchange.getResponse().bufferFactory().wrap(info.body());
             ServerHttpRequest mutatedRequest = new ServerHttpRequestDecorator(exchange.getRequest()) {
                 @Override
                 public HttpHeaders getHeaders() {
                     HttpHeaders merged = new HttpHeaders();
                     merged.putAll(super.getHeaders());
-                    merged.putAll(info.headers());
-                    merged.setContentLength(info.body().length);
+                    merged.putAll(info.headers());        // 上游鉴权 Header 合并
+                    merged.setContentLength(info.body().length); // 更新 Content-Length，避免上游解析失败
                     return merged;
                 }
 

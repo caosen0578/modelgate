@@ -23,9 +23,27 @@ import reactor.core.publisher.Mono;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Circuit breaker filter (order=-50).
- * Per-model circuit breaker using Resilience4j.
- * Trips on upstream 5xx or connection errors.
+ * 上游熔断过滤器（order=-50，位于过滤器链最末端，紧靠上游转发）。
+ *
+ * <p><b>熔断器设计：</b>使用 Resilience4j，名称 {@code modelUpstream}，
+ * 配置在 {@code application.yml} 的 {@code resilience4j.circuitbreaker.instances.modelUpstream}。
+ * 当前实现为单一全局熔断器（不按 modelId 隔离），简化了管理复杂度；
+ * 若需按模型独立熔断，可改为 {@code registry.circuitBreaker("model:" + modelId)}。
+ *
+ * <p><b>触发条件：</b>
+ * <ul>
+ *   <li>上游返回 HTTP 5xx（服务错误）</li>
+ *   <li>连接超时或网络异常（由 {@code doOnError} 捕获）</li>
+ *   <li>慢调用（响应时间超过 {@code slowCallDurationThreshold}，由 Resilience4j 内部检测）</li>
+ * </ul>
+ *
+ * <p><b>状态流转：</b>CLOSED（正常）→ OPEN（熔断拒绝，fast-fail）→ HALF_OPEN（探测）→ CLOSED（恢复）
+ *
+ * <p><b>开关：</b>支持两级开关：
+ * <ul>
+ *   <li>DB 配置（{@link GatewayConfigService#isCircuitBreakerEnabled}）：运营人员通过管理页面动态调整</li>
+ *   <li>Apollo 配置（{@link DynamicConfigHolder#isCircuitBreakerEnabled}）：配置中心热推送</li>
+ * </ul>
  */
 @Slf4j
 @Component
@@ -67,6 +85,7 @@ public class CircuitBreakerFilter implements GlobalFilter, Ordered {
             return chain.filter(exchange);
         }
 
+        // tryAcquirePermission()：OPEN 状态时返回 false（快速失败），CLOSED/HALF_OPEN 时返回 true
         if (!circuitBreaker.tryAcquirePermission()) {
             metrics.recordCircuitBreakerOpen();
             log.warn("[CircuitBreaker] Circuit OPEN, fast-fail: path={}", path);
@@ -79,15 +98,18 @@ public class CircuitBreakerFilter implements GlobalFilter, Ordered {
                     int status = exchange.getResponse().getStatusCode() != null
                             ? exchange.getResponse().getStatusCode().value() : 200;
                     if (status >= 500) {
+                        // 上游 5xx 视为调用失败，通知熔断器累计错误率
                         circuitBreaker.onError(System.nanoTime() - startNano,
                                 TimeUnit.NANOSECONDS,
                                 new RuntimeException("Upstream HTTP " + status));
                         metrics.recordUpstreamError("http_" + status);
                     } else {
+                        // 上游 2xx/4xx 视为成功调用（4xx 是业务拒绝，非上游故障）
                         circuitBreaker.onSuccess(System.nanoTime() - startNano, TimeUnit.NANOSECONDS);
                     }
                 })
                 .doOnError(ex -> {
+                    // 网络异常、连接超时等，通知熔断器累计错误率
                     circuitBreaker.onError(System.nanoTime() - startNano, TimeUnit.NANOSECONDS, ex);
                     metrics.recordUpstreamError("exception");
                 });

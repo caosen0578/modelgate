@@ -20,9 +20,23 @@ import reactor.core.publisher.Mono;
 import java.nio.charset.StandardCharsets;
 
 /**
- * Caches the request body so downstream filters can read it without consuming the stream.
- * Sets exchange attribute "mg.modelId" from the JSON "model" field.
- * Only applies to POST /v1/** with JSON content type.
+ * 请求体缓存过滤器（order=-155）。
+ *
+ * <p><b>存在原因：</b>WebFlux 的请求体是 Reactive Stream（只能读一次），
+ * 而过滤器链中有多个环节需要读取 body（解析 model 字段、参数转换等）。
+ * 本过滤器在链路最前端读取并缓存 body 字节数组，
+ * 同时通过 {@link ServerHttpRequestDecorator} 将字节数组重新封装回请求流，
+ * 使后续过滤器仍可正常读取，解决"只读一次"的问题。
+ *
+ * <p><b>处理结果：</b>
+ * <ul>
+ *   <li>{@code exchange.getAttributes().put("mg.bodyBytes", bytes)}：原始字节数组，供后续使用。</li>
+ *   <li>{@code exchange.getAttributes().put("mg.modelId", ...)}：从 JSON 的 {@code model}
+ *       字段提取，供 ModelAuthFilter、QuotaFilter、TraceFilter 读取，无需再次解析。</li>
+ * </ul>
+ *
+ * <p><b>作用范围：</b>仅对 POST /v1/** 且 Content-Type 为 JSON 的请求生效，
+ * GET 请求和 /admin/** 接口直接放行。
  */
 @Slf4j
 @Component
