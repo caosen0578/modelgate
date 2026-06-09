@@ -54,10 +54,35 @@ mybatis-plus:
             - name: RequestSize
               args:
                 maxSize: 10MB
-      # 全局超时（大模型流式响应耗时长，timeout 要放大）
+            # 上游暂时不可用（502/503）时重试 1 次，LLM 场景不对超时重试（避免重复计费/重复推理）
+            - name: Retry
+              args:
+                retries: 1
+                statuses: BAD_GATEWAY,SERVICE_UNAVAILABLE
+                methods: POST
+                backoff:
+                  firstBackoff: 1s
+                  maxBackoff: 3s
+      # ---------------------------------------------------------------
+      # 超时策略（与用户侧 SLB 600s 对齐，行业标准：Gateway < SLB < F5）
+      # response-timeout：570s，比 SLB 少 30s，确保 Gateway 先超时并向客户端
+      #   返回可读的 504 错误，而不是被 SLB 直接 502 截断
+      # connect-timeout：5s，上游建连超时，过长会阻塞请求队列
+      # tcp-keepalive：SSE 流式场景必须开启，防止 F5/SLB 因 idle timeout
+      #   切断思维链推理阶段（首 token 前）的"无数据"长连接
+      #   （F5 idle timeout 待运维确认，见 TODO：排查 F5 idle timeout）
+      # ---------------------------------------------------------------
       httpclient:
-        response-timeout: 300s
+        response-timeout: 570s
         connect-timeout: 5000
+        tcp-keepalive: true
+        pool:
+          type: FIXED
+          # 按 400 用户峰值约 150 并发预留 2x 余量；扩容到 800 用户时改为 800
+          max-connections: 500
+          # 等待连接池分配超时：30s 内等不到连接直接报错，避免请求无限堆积
+          acquire-timeout: 30000
+          max-idle-time: 120s
       # 允许获取真实 Body（限流 key resolver 需要）
       default-filters:
         - DedupeResponseHeader=Access-Control-Allow-Credentials Access-Control-Allow-Origin
@@ -90,27 +115,29 @@ resilience4j:
   circuitbreaker:
     instances:
       modelUpstream:
-        # 滑动窗口类型：COUNT_BASED=按请求次数统计（取最近 N 次），TIME_BASED=按时间窗口统计
+        # 滑动窗口类型：COUNT_BASED=按请求次数统计（取最近 N 次）
         slidingWindowType: COUNT_BASED
-        # 统计最近 10 次请求的成败情况，窗口满 10 次后才开始计算失败率
-        slidingWindowSize: 10
-        # 失败率阈值：10 次里失败 ≥ 5 次（50%）即触发熔断，进入 OPEN 状态
+        # 统计最近 20 次请求，窗口满后才计算失败率（避免冷启动时少量失败误触发）
+        slidingWindowSize: 20
+        # 失败率阈值：20 次里失败 ≥ 50% 触发熔断
         failureRateThreshold: 50
-        # 慢调用率阈值：10 次里慢调用 ≥ 8 次（80%）也触发熔断（即使没有报错）
-        slowCallRateThreshold: 80
-        # 慢调用判定时长：单次请求响应超过 10s 算"慢调用"
-        slowCallDurationThreshold: 10s
-        # 熔断冷却时间：OPEN 状态持续 30s 后切换到 HALF_OPEN 进行探测
-        waitDurationInOpenState: 30s
-        # 半开探测请求数：HALF_OPEN 时放行 5 个请求，全部成功则恢复 CLOSED，任一失败则重新 OPEN
+        # 慢调用率阈值：90% 以上慢调用才熔断
+        # GLM-5 / DSv4 代码生成正常响应就需要 30~180s，必须放宽，否则会误熔断正常请求
+        slowCallRateThreshold: 90
+        # 慢调用判定时长：超过 180s 才算慢调用
+        # 行业标准：设为 P95 响应时间的 1.5~2 倍，DSv4 思维链 P95 约 120s
+        slowCallDurationThreshold: 180s
+        # 熔断冷却时间：OPEN 状态持续 60s 后进入 HALF_OPEN 探测（LLM 恢复通常需要时间）
+        waitDurationInOpenState: 60s
+        # 半开探测请求数：放行 5 个探测请求，全部成功才恢复 CLOSED
         permittedNumberOfCallsInHalfOpenState: 5
-        # true=冷却时间到期后自动切换到 HALF_OPEN；false=需等到下一个请求才触发切换
+        # 冷却到期后自动切换到 HALF_OPEN，无需等下一个请求触发
         automaticTransitionFromOpenToHalfOpenEnabled: true
   timelimiter:
     instances:
       modelUpstream:
-        # 单次请求超时上限：大模型流式响应耗时长，设 300s 给完整输出留足时间，同时防止请求永远挂死
-        timeoutDuration: 300s
+        # 与 httpclient.response-timeout 对齐，570s 兜底防请求永久挂死
+        timeoutDuration: 570s
 
 # ===== ModelGate 自定义配置（Apollo 热更新以下所有项） =====
 modelgate:
@@ -169,7 +196,8 @@ modelgate:
   crypto:
     key: ${MODELGATE_CRYPTO_KEY:}
 
-  # 默认限流配置（每个 API Key 的兜底限流值，单独配置的 API Key 可覆盖此默认值）
+  # 默认限流配置（每个 appId 的兜底 QPS，单独授权的 appId+modelId 可在 mg_app_model_auth 表覆盖此值）
+  # codebuddy 场景：用户操作间隔长（编码思考约 3~5 分钟），单用户连续触发 QPS 不高
   rate-limit:
-    default-rate: 10   # 每秒最大请求数（滑动窗口计数器，基于 Redis Lua 脚本原子执行）
-    default-burst: 20  # 突发容量上限（预留给令牌桶算法，当前滑动窗口模式暂未使用）
+    default-rate: 5    # 每秒最大请求数（滑动窗口，Redis Lua 原子执行）
+    default-burst: 10  # 突发容量：短时连续触发（如粘贴大段代码）最多放行 10 个
