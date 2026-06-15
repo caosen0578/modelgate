@@ -6,6 +6,9 @@ import com.pab.ficc.ibp.modelgate.server.domain.entity.AppCredential;
 import com.pab.ficc.ibp.modelgate.server.domain.vo.AppCredentialVO;
 import com.pab.ficc.ibp.modelgate.server.domain.vo.CredentialCreatedVO;
 import com.pab.ficc.ibp.modelgate.server.service.CredentialService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Mono;
@@ -15,6 +18,7 @@ import javax.validation.Valid;
 import java.util.List;
 import java.util.stream.Collectors;
 
+@Tag(name = "凭证管理", description = "为接入系统生成和管理 API Key / AK-SK 访问凭证")
 @RestController
 @RequestMapping("/admin/credentials")
 @RequiredArgsConstructor
@@ -22,14 +26,17 @@ public class CredentialController {
 
     private final CredentialService credentialService;
 
+    @Operation(summary = "查询系统凭证列表")
     @GetMapping("/list")
-    public Mono<Result<List<AppCredentialVO>>> list(@RequestParam String appId) {
+    public Mono<Result<List<AppCredentialVO>>> list(
+            @Parameter(description = "系统 ID") @RequestParam String appId) {
         return Mono.fromCallable(() -> credentialService.listByAppId(appId)
                         .stream().map(AppCredentialVO::of).collect(Collectors.toList()))
                 .subscribeOn(Schedulers.boundedElastic())
                 .map(Result::ok);
     }
 
+    @Operation(summary = "生成凭证（API Key 或 AK-SK，Secret 仅此时明文返回一次）")
     @PostMapping("/create")
     public Mono<Result<CredentialCreatedVO>> create(@RequestBody @Valid CreateCredentialRequest req) {
         return Mono.fromCallable(() -> {
@@ -52,22 +59,31 @@ public class CredentialController {
         }).subscribeOn(Schedulers.boundedElastic()).map(Result::ok);
     }
 
+    @Operation(summary = "启用凭证")
     @PatchMapping("/enable")
-    public Mono<Result<Void>> enable(@RequestParam String appId, @RequestParam Long id) {
+    public Mono<Result<Void>> enable(
+            @Parameter(description = "系统 ID") @RequestParam String appId,
+            @Parameter(description = "凭证 ID") @RequestParam Long id) {
         return Mono.fromRunnable(() -> credentialService.enable(appId, id))
                 .subscribeOn(Schedulers.boundedElastic())
                 .then(Mono.just(Result.<Void>ok()));
     }
 
+    @Operation(summary = "禁用凭证")
     @PatchMapping("/disable")
-    public Mono<Result<Void>> disable(@RequestParam String appId, @RequestParam Long id) {
+    public Mono<Result<Void>> disable(
+            @Parameter(description = "系统 ID") @RequestParam String appId,
+            @Parameter(description = "凭证 ID") @RequestParam Long id) {
         return Mono.fromRunnable(() -> credentialService.disable(appId, id))
                 .subscribeOn(Schedulers.boundedElastic())
                 .then(Mono.just(Result.<Void>ok()));
     }
 
+    @Operation(summary = "删除凭证（立即失效）")
     @DeleteMapping("/delete")
-    public Mono<Result<Void>> delete(@RequestParam String appId, @RequestParam Long id) {
+    public Mono<Result<Void>> delete(
+            @Parameter(description = "系统 ID") @RequestParam String appId,
+            @Parameter(description = "凭证 ID") @RequestParam Long id) {
         return Mono.fromRunnable(() -> credentialService.delete(appId, id))
                 .subscribeOn(Schedulers.boundedElastic())
                 .then(Mono.just(Result.<Void>ok()));

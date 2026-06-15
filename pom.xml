@@ -140,6 +140,13 @@
             <optional>true</optional>
         </dependency>
 
+        <!-- ===== Swagger / OpenAPI（springdoc WebFlux，兼容 Spring Boot 2.7 + WebFlux） ===== -->
+        <dependency>
+            <groupId>org.springdoc</groupId>
+            <artifactId>springdoc-openapi-webflux-ui</artifactId>
+            <version>1.6.15</version>
+        </dependency>
+
         <!-- ===== 测试 ===== -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

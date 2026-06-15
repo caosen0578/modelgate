@@ -94,6 +94,17 @@ mybatis-plus:
             allowedHeaders: "*"
             allowCredentials: true
 
+# ===== Swagger / springdoc =====
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    tags-sorter: alpha
+    operations-sorter: alpha
+  # /v1/** 是业务网关转发路径，不扫描进文档
+  paths-to-exclude: /v1/**
+
 # ===== Actuator =====
 management:
   endpoints:

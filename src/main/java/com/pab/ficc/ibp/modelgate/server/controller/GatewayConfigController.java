@@ -8,6 +8,9 @@ import com.pab.ficc.ibp.modelgate.server.domain.dto.UpsertConfigRequest;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.GatewayConfig;
 import com.pab.ficc.ibp.modelgate.server.domain.vo.GatewayConfigVO;
 import com.pab.ficc.ibp.modelgate.server.service.GatewayConfigService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.server.reactive.ServerHttpRequest;
@@ -29,6 +32,7 @@ import java.util.stream.Collectors;
  * GET    /admin/config/upstream/url — 快捷查询上游地址
  * PUT    /admin/config/upstream/url — 快捷修改上游地址
  */
+@Tag(name = "网关配置", description = "动态管理网关全局配置，变更实时生效")
 @Slf4j
 @RestController
 @RequestMapping("/admin/config")
@@ -37,6 +41,7 @@ public class GatewayConfigController {
 
     private final GatewayConfigService configService;
 
+    @Operation(summary = "查询所有网关配置项")
     @GetMapping
     public Mono<Result<List<GatewayConfigVO>>> findAll() {
         return Mono.fromCallable(() -> configService.findAll()
@@ -45,8 +50,10 @@ public class GatewayConfigController {
                 .map(Result::ok);
     }
 
+    @Operation(summary = "查询单个配置项")
     @GetMapping("/detail")
-    public Mono<Result<GatewayConfigVO>> findOne(@RequestParam String key) {
+    public Mono<Result<GatewayConfigVO>> findOne(
+            @Parameter(description = "配置 key") @RequestParam String key) {
         return Mono.fromCallable(() -> configService.findAll().stream()
                         .filter(c -> c.getConfigKey().equals(key))
                         .findFirst()
@@ -56,6 +63,7 @@ public class GatewayConfigController {
                 .map(Result::ok);
     }
 
+    @Operation(summary = "新增或更新配置项")
     @PutMapping("/save")
     public Mono<Result<GatewayConfigVO>> upsert(@RequestBody @Valid UpsertConfigRequest req,
                                                  ServerHttpRequest httpRequest) {
@@ -72,18 +80,22 @@ public class GatewayConfigController {
                 .map(Result::ok);
     }
 
+    @Operation(summary = "删除配置项")
     @DeleteMapping("/delete")
-    public Mono<Result<Void>> delete(@RequestParam String key) {
+    public Mono<Result<Void>> delete(
+            @Parameter(description = "配置 key") @RequestParam String key) {
         return Mono.fromRunnable(() -> configService.delete(key))
                 .subscribeOn(Schedulers.boundedElastic())
                 .then(Mono.just(Result.<Void>ok()));
     }
 
+    @Operation(summary = "查询当前上游模型服务地址")
     @GetMapping("/upstream/url")
     public Mono<Result<String>> getUpstreamUrl() {
         return Mono.just(Result.ok(configService.getUpstreamUrl()));
     }
 
+    @Operation(summary = "修改上游模型服务地址（30s 内热生效）")
     @PutMapping("/upstream/url")
     public Mono<Result<GatewayConfigVO>> updateUpstreamUrl(@RequestBody @Valid UpstreamUrlRequest req,
                                                             ServerHttpRequest httpRequest) {

@@ -2,6 +2,9 @@ package com.pab.ficc.ibp.modelgate.server.controller;
 
 import com.pab.ficc.ibp.modelgate.server.common.Result;
 import com.pab.ficc.ibp.modelgate.server.mapper.AuditLogMapper;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -17,6 +20,7 @@ import java.time.LocalTime;
 import java.util.HashMap;
 import java.util.Map;
 
+@Tag(name = "用量统计", description = "查询 API 调用量、Token 消耗、平均延迟、成功率汇总数据")
 @RestController
 @RequestMapping("/admin/stats")
 @RequiredArgsConstructor
@@ -24,12 +28,15 @@ public class UsageStatsController {
 
     private final AuditLogMapper auditLogMapper;
 
+    @Operation(summary = "用量统计汇总（总请求数 / Token 消耗 / 平均延迟 / 成功率）")
     @GetMapping("/usage")
     public Mono<Result<Map<String, Object>>> usage(
-            @RequestParam(required = false) String appId,
-            @RequestParam(required = false) String modelId,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate start,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate end) {
+            @Parameter(description = "系统 ID，不传则汇总全部") @RequestParam(required = false) String appId,
+            @Parameter(description = "模型 ID，不传则汇总全部") @RequestParam(required = false) String modelId,
+            @Parameter(description = "开始日期（yyyy-MM-dd），默认近 30 天") @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate start,
+            @Parameter(description = "结束日期（yyyy-MM-dd），默认今天") @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate end) {
 
         LocalDateTime startDt = start != null ? start.atStartOfDay() : LocalDate.now().minusDays(30).atStartOfDay();
         LocalDateTime endDt = end != null ? end.atTime(LocalTime.MAX) : LocalDate.now().atTime(LocalTime.MAX);

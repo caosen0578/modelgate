@@ -5,6 +5,9 @@ import com.pab.ficc.ibp.modelgate.server.domain.dto.CreateAppRequest;
 import com.pab.ficc.ibp.modelgate.server.domain.dto.UpdateAppRequest;
 import com.pab.ficc.ibp.modelgate.server.domain.vo.AppVO;
 import com.pab.ficc.ibp.modelgate.server.service.AppService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Mono;
@@ -14,6 +17,7 @@ import javax.validation.Valid;
 import java.util.List;
 import java.util.stream.Collectors;
 
+@Tag(name = "接入系统管理", description = "管理需要接入 ModelGate 的内部业务系统")
 @RestController
 @RequestMapping("/admin/apps")
 @RequiredArgsConstructor
@@ -21,6 +25,7 @@ public class AppController {
 
     private final AppService appService;
 
+    @Operation(summary = "查询所有接入系统")
     @GetMapping
     public Mono<Result<List<AppVO>>> findAll() {
         return Mono.fromCallable(() -> appService.findAll()
@@ -29,13 +34,15 @@ public class AppController {
                 .map(Result::ok);
     }
 
+    @Operation(summary = "查询单个接入系统详情")
     @GetMapping("/detail")
-    public Mono<Result<AppVO>> findOne(@RequestParam String appId) {
+    public Mono<Result<AppVO>> findOne(@Parameter(description = "系统 ID") @RequestParam String appId) {
         return Mono.fromCallable(() -> AppVO.of(appService.findByAppId(appId)))
                 .subscribeOn(Schedulers.boundedElastic())
                 .map(Result::ok);
     }
 
+    @Operation(summary = "注册接入系统")
     @PostMapping
     public Mono<Result<AppVO>> create(@RequestBody @Valid CreateAppRequest req) {
         return Mono.fromCallable(() -> AppVO.of(appService.create(req.toEntity())))
@@ -43,6 +50,7 @@ public class AppController {
                 .map(Result::ok);
     }
 
+    @Operation(summary = "更新接入系统信息")
     @PutMapping("/update")
     public Mono<Result<AppVO>> update(@RequestBody @Valid UpdateAppRequest req) {
         return Mono.fromCallable(() -> AppVO.of(appService.update(req.getAppId(), req.toEntity())))
@@ -50,22 +58,25 @@ public class AppController {
                 .map(Result::ok);
     }
 
+    @Operation(summary = "启用接入系统")
     @PatchMapping("/enable")
-    public Mono<Result<Void>> enable(@RequestParam String appId) {
+    public Mono<Result<Void>> enable(@Parameter(description = "系统 ID") @RequestParam String appId) {
         return Mono.fromRunnable(() -> appService.enable(appId))
                 .subscribeOn(Schedulers.boundedElastic())
                 .then(Mono.just(Result.<Void>ok()));
     }
 
+    @Operation(summary = "禁用接入系统（该系统所有凭证立即失效）")
     @PatchMapping("/disable")
-    public Mono<Result<Void>> disable(@RequestParam String appId) {
+    public Mono<Result<Void>> disable(@Parameter(description = "系统 ID") @RequestParam String appId) {
         return Mono.fromRunnable(() -> appService.disable(appId))
                 .subscribeOn(Schedulers.boundedElastic())
                 .then(Mono.just(Result.<Void>ok()));
     }
 
+    @Operation(summary = "删除接入系统（级联删除凭证、授权、访问规则）")
     @DeleteMapping("/delete")
-    public Mono<Result<Void>> delete(@RequestParam String appId) {
+    public Mono<Result<Void>> delete(@Parameter(description = "系统 ID") @RequestParam String appId) {
         return Mono.fromRunnable(() -> appService.delete(appId))
                 .subscribeOn(Schedulers.boundedElastic())
                 .then(Mono.just(Result.<Void>ok()));

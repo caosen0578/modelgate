@@ -54,8 +54,10 @@ public class CredentialAuthFilter implements GlobalFilter, Ordered {
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
         String path = exchange.getRequest().getURI().getPath();
-        // /admin/** 由 AdminAuthFilter 单独处理，/actuator/** 由 Spring Security 或 actuator 自身保护
-        if (path.startsWith("/admin/") || path.startsWith("/actuator/")) {
+        // /admin/** 由 AdminAuthFilter 单独处理；/actuator/**、/swagger-ui/**、/v3/api-docs/** 直接放行
+        if (path.startsWith("/admin/") || path.startsWith("/actuator/")
+                || path.startsWith("/swagger-ui") || path.startsWith("/v3/api-docs")
+                || path.startsWith("/webjars/")) {
             return chain.filter(exchange);
         }
 

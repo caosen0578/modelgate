@@ -77,7 +77,9 @@ public class CircuitBreakerFilter implements GlobalFilter, Ordered {
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
         String path = exchange.getRequest().getURI().getPath();
-        if (path.startsWith("/admin/") || path.startsWith("/actuator/")) {
+        if (path.startsWith("/admin/") || path.startsWith("/actuator/")
+                || path.startsWith("/swagger-ui") || path.startsWith("/v3/api-docs")
+                || path.startsWith("/webjars/")) {
             return chain.filter(exchange);
         }
 
