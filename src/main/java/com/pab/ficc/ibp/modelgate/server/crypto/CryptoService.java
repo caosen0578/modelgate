@@ -445,18 +445,28 @@ CryptoService {
             base64Key = System.getenv("MODELGATE_CRYPTO_KEY");
         }
         if (base64Key == null || base64Key.isBlank()) {
-            log.warn("[CryptoService] No crypto key configured — using insecure fallback (dev only)");
-            base64Key = "bW9kZWxnYXRlLWRldi1rZXktMzItYnl0ZXMhIQ=="; // dev fallback, 32 bytes
+            // 未配置密钥：正常启动，但 encrypt/decrypt 调用时会抛异常（即注释所说的"不可用"）
+            log.warn("[CryptoService] MODELGATE_CRYPTO_KEY 未配置，上游凭证加密功能不可用，生产环境请务必设置");
+            this.secretKey = null;
+            return;
         }
-        byte[] keyBytes = Base64.getDecoder().decode(base64Key);
+        byte[] keyBytes;
+        try {
+            keyBytes = Base64.getDecoder().decode(base64Key);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalStateException("MODELGATE_CRYPTO_KEY 不是合法的 Base64 字符串", e);
+        }
         if (keyBytes.length != 32) {
-            throw new IllegalStateException("MODELGATE_CRYPTO_KEY must be a 32-byte base64-encoded string");
+            throw new IllegalStateException(
+                    "MODELGATE_CRYPTO_KEY 解码后必须恰好为 32 字节，当前为 " + keyBytes.length + " 字节。" +
+                    "生成命令：openssl rand -base64 32");
         }
         this.secretKey = new SecretKeySpec(keyBytes, "AES");
     }
 
     public String encrypt(String plaintext) {
         if (plaintext == null || plaintext.isBlank()) return null;
+        if (secretKey == null) throw new IllegalStateException("MODELGATE_CRYPTO_KEY 未配置，无法加密凭证");
         try {
             byte[] iv = new byte[GCM_IV_LENGTH];
             new SecureRandom().nextBytes(iv);
@@ -474,6 +484,7 @@ CryptoService {
 
     public String decrypt(String base64Ciphertext) {
         if (base64Ciphertext == null || base64Ciphertext.isBlank()) return null;
+        if (secretKey == null) throw new IllegalStateException("MODELGATE_CRYPTO_KEY 未配置，无法解密凭证");
         try {
             byte[] decoded = Base64.getDecoder().decode(base64Ciphertext);
             ByteBuffer buf = ByteBuffer.wrap(decoded);
