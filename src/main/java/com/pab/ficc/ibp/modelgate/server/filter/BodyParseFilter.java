@@ -20,7 +20,7 @@ import reactor.core.publisher.Mono;
 import java.nio.charset.StandardCharsets;
 
 /**
- * 请求体缓存过滤器（order=-155）。
+ * 请求体缓存过滤器（order=-175）。
  *
  * <p><b>存在原因：</b>WebFlux 的请求体是 Reactive Stream（只能读一次），
  * 而过滤器链中有多个环节需要读取 body（解析 model 字段、参数转换等）。
@@ -43,7 +43,7 @@ import java.nio.charset.StandardCharsets;
 @RequiredArgsConstructor
 public class BodyParseFilter implements GlobalFilter, Ordered {
 
-    private static final int ORDER = -155;
+    private static final int ORDER = -175;
 
     private final ObjectMapper objectMapper;
 

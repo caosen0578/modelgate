@@ -62,10 +62,10 @@ public class ModelAuthFilter implements GlobalFilter, Ordered {
             return chain.filter(exchange);
         }
 
-        // Read the cached body bytes set by ModelRouteFilter (if already parsed) or use path as fallback
+        // BodyParseFilter (order=-175) runs before us, so mg.modelId is already extracted.
+        // Null here means non-JSON or non-POST request (e.g. GET /v1/models) — no model auth needed.
         String modelId = exchange.getAttribute("mg.modelId");
         if (modelId == null) {
-            // Body not yet parsed — skip model auth for non-chat paths
             return chain.filter(exchange);
         }
 
