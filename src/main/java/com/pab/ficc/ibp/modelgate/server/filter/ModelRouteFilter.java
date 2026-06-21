@@ -68,33 +68,45 @@ public class ModelRouteFilter implements GlobalFilter, Ordered {
             return chain.filter(exchange);
         }
 
-        // DataBufferUtils.join 将流式 DataBuffer 聚合为单个 buffer，读取完整请求体
-        // 注意：读取后原始 body 流已消费，必须通过 ServerHttpRequestDecorator 重新注入给下游
+        // BodyParseFilter (-175) 已将请求体读入 mg.bodyBytes；直接复用，避免二次读取（流已消费）
+        byte[] cached = exchange.getAttribute("mg.bodyBytes");
+        if (cached != null) {
+            return processRequest(exchange, chain, cached);
+        }
+        // 降级路径：mg.bodyBytes 未设置时（理论上不应出现），重新读取 body
         return DataBufferUtils.join(exchange.getRequest().getBody())
                 .flatMap(dataBuffer -> {
                     byte[] bodyBytes = new byte[dataBuffer.readableByteCount()];
                     dataBuffer.read(bodyBytes);
-                    DataBufferUtils.release(dataBuffer); // 必须手动释放，防止内存泄漏
+                    DataBufferUtils.release(dataBuffer);
                     return processRequest(exchange, chain, bodyBytes);
                 })
                 .switchIfEmpty(Mono.defer(() -> reject(exchange, HttpStatus.BAD_REQUEST, ErrorCode.MODEL_FIELD_MISSING)));
     }
 
     private Mono<Void> processRequest(ServerWebExchange exchange, GatewayFilterChain chain, byte[] bodyBytes) {
+        // 提取 model 字段（纯 CPU 操作，不涉及 IO，可在当前线程执行）
+        JsonNode root;
+        try {
+            root = objectMapper.readTree(bodyBytes);
+        } catch (Exception e) {
+            return reject(exchange, HttpStatus.BAD_REQUEST, ErrorCode.MODEL_FIELD_MISSING);
+        }
+        JsonNode modelNode = root.get("model");
+        if (modelNode == null || modelNode.isNull() || modelNode.asText().isBlank()) {
+            // 请求体中缺少 model 字段，明确返回 400（而非让下面的 null 流转到 404）
+            return reject(exchange, HttpStatus.BAD_REQUEST, ErrorCode.MODEL_FIELD_MISSING);
+        }
+        final String modelId = modelNode.asText();
+        // BodyParseFilter (-175) 已提取并写入，此处保持幂等（兼容直接调用场景）
+        exchange.getAttributes().put("mg.modelId", modelId);
+
         return Mono.fromCallable(() -> {
-            JsonNode root = objectMapper.readTree(bodyBytes);
-            JsonNode modelNode = root.get("model");
-            if (modelNode == null || modelNode.isNull()) return null;
-            String modelId = modelNode.asText();
-
-            // 将 modelId 写入 exchange attribute，供 ModelAuthFilter、QuotaFilter、TraceFilter 读取
-            exchange.getAttributes().put("mg.modelId", modelId);
-
             Optional<ModelInstance> modelOpt = modelService.getModelCached(modelId);
             if (modelOpt.isEmpty()) return null;
             ModelInstance model = modelOpt.get();
 
-            // 从 DB 读取上游鉴权凭证并解密 SK（走 Caffeine 缓存，不重复解密）
+            // 从缓存读取上游鉴权凭证并解密 SK
             ModelCredential credential = modelService.getCredentialDecrypted(modelId);
 
             // 按 apiSpec 选择适配器（Strategy 模式）：openai/azure_openai/anthropic/custom

@@ -109,11 +109,17 @@ public class AppAccessControlFilter implements GlobalFilter, Ordered {
 
     /**
      * 提取客户端真实 IP。
-     * K8s Ingress / Nginx 代理会在 X-Forwarded-For 中追加真实来源 IP，取第一个值。
+     *
+     * <p>取 X-Forwarded-For 的<b>最后一个</b>值：攻击者可以伪造靠前的值（如 10.0.0.1, 1.2.3.4），
+     * 但可信代理（Nginx/K8s Ingress）只会在末尾追加真实来源 IP，因此最后一个值不可伪造。
+     * 若无 XFF，退回 X-Real-IP（由代理注入），最后回退到 TCP 连接的 remoteAddress。
      */
     private String getClientIp(ServerHttpRequest request) {
         String xff = request.getHeaders().getFirst("X-Forwarded-For");
-        if (xff != null && !xff.isBlank()) return xff.split(",")[0].trim();
+        if (xff != null && !xff.isBlank()) {
+            String[] parts = xff.split(",");
+            return parts[parts.length - 1].trim();
+        }
         String xri = request.getHeaders().getFirst("X-Real-IP");
         if (xri != null && !xri.isBlank()) return xri;
         if (request.getRemoteAddress() == null) return null;

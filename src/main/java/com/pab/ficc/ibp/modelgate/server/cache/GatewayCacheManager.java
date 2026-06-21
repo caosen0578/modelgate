@@ -5,6 +5,7 @@ import com.github.benmanes.caffeine.cache.Caffeine;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.AppCredential;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.AppModelAuth;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.AccessRule;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.ModelCredential;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.ModelInstance;
 import com.pab.framework.redis.CacheProvider;
 import lombok.RequiredArgsConstructor;
@@ -78,6 +79,16 @@ public class GatewayCacheManager {
             .maximumSize(1_000)
             .build();
 
+    /**
+     * 上游凭证缓存（含已解密 SK）：key = modelId，TTL 30s。
+     * 与模型配置缓存保持相同 TTL，确保凭证更新后最多 30s 内对所有实例生效。
+     * 写操作（upsertCredential）后主动 evict，变更即时生效。
+     */
+    private final Cache<String, Optional<ModelCredential>> modelCredentialCache = Caffeine.newBuilder()
+            .expireAfterWrite(30, TimeUnit.SECONDS)
+            .maximumSize(1_000)
+            .build();
+
     // ===== 凭证缓存（L1 → DB） =====
 
     /**
@@ -91,7 +102,10 @@ public class GatewayCacheManager {
         Optional<AppCredential> cached = credentialCache.getIfPresent(secretHash);
         if (cached != null) return cached;
         Optional<AppCredential> result = dbLoader.get();
-        credentialCache.put(secretHash, result);
+        // 只缓存命中结果；不缓存空结果，防止攻击者用大量无效 key 填满 10k 上限逐出合法凭证
+        if (result.isPresent()) {
+            credentialCache.put(secretHash, result);
+        }
         return result;
     }
 
@@ -157,6 +171,20 @@ public class GatewayCacheManager {
 
     public void evictAllModelCache() {
         modelCache.invalidateAll();
+    }
+
+    // ===== 上游凭证缓存（已解密，仅 L1，不存 Redis，TTL=30s） =====
+
+    public Optional<ModelCredential> getModelCredential(String modelId, Supplier<Optional<ModelCredential>> dbLoader) {
+        Optional<ModelCredential> cached = modelCredentialCache.getIfPresent(modelId);
+        if (cached != null) return cached;
+        Optional<ModelCredential> result = dbLoader.get();
+        modelCredentialCache.put(modelId, result);
+        return result;
+    }
+
+    public void evictModelCredentialCache(String modelId) {
+        modelCredentialCache.invalidate(modelId);
     }
 
     // ===== Redis 工具方法 =====

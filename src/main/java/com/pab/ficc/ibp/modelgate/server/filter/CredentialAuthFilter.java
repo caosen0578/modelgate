@@ -22,7 +22,12 @@ import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.LocalDateTime;
+import java.util.Base64;
 import java.util.Optional;
 
 /**
@@ -30,8 +35,9 @@ import java.util.Optional;
  *
  * Supports two modes:
  *   - api_key: Authorization: Bearer {api_key}  → SHA-256 → cache lookup
- *   - ak_sk:   Authorization: AKSK {access_key}:{timestamp}:{hmac_sha256_signature}
- *              Validates timestamp ±5min to prevent replay attacks
+ *   - ak_sk:   Authorization: AKSK {access_key}:{timestamp_ms}:{hmac_sha256_base64}
+ *              Validates timestamp ±5min (replay prevention) AND verifies
+ *              HMAC-SHA256(SK, accessKey + ":" + timestamp) to prove SK possession.
  */
 @Slf4j
 @Component
@@ -112,27 +118,70 @@ public class CredentialAuthFilter implements GlobalFilter, Ordered {
             return credentialService.findBySecretHash(hash);
         }
         if (authorization.startsWith("AKSK ")) {
-            // AK/SK 模式：格式 "AKSK {accessKey}:{timestamp毫秒}:{hmac_signature}"
-            // 当前实现仅校验时间戳防重放，签名验证留给调用方；后续可在此补充 HMAC 比对
+            // AK/SK 模式：格式 "AKSK {accessKey}:{timestamp毫秒}:{HMAC-SHA256(SK, accessKey+":"+timestamp) Base64}"
             String payload = authorization.substring(5).trim();
             String[] parts = payload.split(":", 3);
             if (parts.length != 3) return Optional.empty();
-            String accessKey = parts[0];
+            String accessKey    = parts[0];
             String timestampStr = parts[1];
+            String signature    = parts[2];
+
+            // 1. 时间戳防重放：偏差超过 ±5 分钟直接拒绝
+            long ts;
             try {
-                long ts = Long.parseLong(timestampStr);
-                long now = System.currentTimeMillis();
-                // 时间戳偏差超过 ±5 分钟，拒绝（防止请求被截获后延迟重放）
-                if (Math.abs(now - ts) > MAX_TIMESTAMP_SKEW_MS) {
-                    log.info("[CredentialAuth] Timestamp out of range: ts={}, now={}", ts, now);
-                    return Optional.empty();
-                }
+                ts = Long.parseLong(timestampStr);
             } catch (NumberFormatException e) {
                 return Optional.empty();
             }
-            return credentialService.findByAccessKey(accessKey);
+            if (Math.abs(System.currentTimeMillis() - ts) > MAX_TIMESTAMP_SKEW_MS) {
+                log.info("[CredentialAuth] Timestamp out of range: ts={}", ts);
+                return Optional.empty();
+            }
+
+            // 2. 查询凭证
+            Optional<AppCredential> credOpt = credentialService.findByAccessKey(accessKey);
+            if (credOpt.isEmpty()) return Optional.empty();
+            AppCredential cred = credOpt.get();
+
+            // 3. 验证 HMAC-SHA256 签名：证明调用方持有 SK 而不仅仅知道 AK
+            if (!verifyAkSkHmac(cred, accessKey, timestampStr, signature)) {
+                log.info("[CredentialAuth] HMAC verification failed for AK={}", accessKey);
+                return Optional.empty();
+            }
+            return credOpt;
         }
         return Optional.empty();
+    }
+
+    /**
+     * 验证 AKSK 签名。
+     *
+     * <p>签名算法：{@code HMAC-SHA256(plainSK, accessKey + ":" + timestamp)}，结果 Base64 编码。
+     * 调用方需要用相同的 accessKey、timestamp 和 SK 计算签名并放入请求头。
+     * 使用 {@link MessageDigest#isEqual} 恒时比较，防止时序攻击。
+     */
+    private boolean verifyAkSkHmac(AppCredential cred, String accessKey,
+                                    String timestamp, String signature) {
+        if (cred.getSecretEncrypted() == null) {
+            log.warn("[CredentialAuth] AK={} has no encrypted SK, cannot verify HMAC", accessKey);
+            return false;
+        }
+        try {
+            String plainSk = cryptoService.decrypt(cred.getSecretEncrypted());
+            Mac mac = Mac.getInstance("HmacSHA256");
+            mac.init(new SecretKeySpec(plainSk.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+            byte[] expected = mac.doFinal((accessKey + ":" + timestamp).getBytes(StandardCharsets.UTF_8));
+            byte[] actual;
+            try {
+                actual = Base64.getDecoder().decode(signature);
+            } catch (IllegalArgumentException e) {
+                return false; // signature is not valid Base64
+            }
+            return MessageDigest.isEqual(expected, actual);
+        } catch (Exception e) {
+            log.warn("[CredentialAuth] HMAC verification error AK={}: {}", accessKey, e.getMessage());
+            return false;
+        }
     }
 
     private Mono<Void> reject(ServerWebExchange exchange, HttpStatus status, ErrorCode errorCode) {

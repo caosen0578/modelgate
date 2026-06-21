@@ -88,12 +88,12 @@ public class AuditService {
         AuditLog entry = buildEntry(traceId, appId, modelId, credType, clientIp,
                 requestPath, httpStatus, latencyMs, inputTokens, outputTokens, errorMsg);
 
-        if (dbWriteEnabled) {
-            // offer 是非阻塞的：队列满时立即返回 false，不会让请求线程等待
-            boolean offered = queue.offer(entry);
-            if (!offered) {
-                log.warn("[AuditService] Queue full, dropping audit log traceId={}", traceId);
-            }
+        // 无论 dbWriteEnabled 是否开启，都必须入队：
+        // flush() 依赖队列内容来累计月度 Token 计数；若 dbWriteEnabled=false 时跳过入队，
+        // Redis 月度计数器永远不更新，导致月度配额彻底失效。
+        boolean offered = queue.offer(entry);
+        if (!offered) {
+            log.warn("[AuditService] Queue full, dropping audit log traceId={}", traceId);
         }
 
         // Kafka 实时发送，与 DB 写入完全独立，互不影响
@@ -109,17 +109,21 @@ public class AuditService {
      */
     @Scheduled(fixedDelayString = "${modelgate.audit.flush-interval-ms:2000}")
     public void flush() {
-        if (!dbWriteEnabled || queue == null || queue.isEmpty()) return;
+        if (queue == null || queue.isEmpty()) return;
         List<AuditLog> batch = new ArrayList<>(5000);
         queue.drainTo(batch, 5000);
         if (batch.isEmpty()) return;
 
-        try {
-            auditLogMapper.batchInsert(batch);
-        } catch (Exception e) {
-            log.warn("[AuditService] Batch insert failed size={}: {}", batch.size(), e.getMessage());
+        // DB 写入：dbWriteEnabled=false 时跳过（降级），但月度 Token 累计必须始终执行
+        if (dbWriteEnabled) {
+            try {
+                auditLogMapper.batchInsert(batch);
+            } catch (Exception e) {
+                log.warn("[AuditService] Batch insert failed size={}: {}", batch.size(), e.getMessage());
+            }
         }
 
+        // 月度 Token 计数无论 DB 是否可用都要更新，否则 QuotaFilter 的月度配额会失效
         accumulateMonthlyTokens(batch);
     }
 

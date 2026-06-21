@@ -112,12 +112,14 @@ public class ModelService {
     }
 
     public ModelCredential getCredentialDecrypted(String modelId) {
-        ModelCredential cred = credentialMapper.selectOne(
-                new LambdaQueryWrapper<ModelCredential>().eq(ModelCredential::getModelId, modelId));
-        if (cred != null && cred.getSecretKey() != null) {
-            cred.setSecretKey(cryptoService.decrypt(cred.getSecretKey()));
-        }
-        return cred;
+        return cacheManager.getModelCredential(modelId, () -> {
+            ModelCredential cred = credentialMapper.selectOne(
+                    new LambdaQueryWrapper<ModelCredential>().eq(ModelCredential::getModelId, modelId));
+            if (cred != null && cred.getSecretKey() != null) {
+                cred.setSecretKey(cryptoService.decrypt(cred.getSecretKey()));
+            }
+            return Optional.ofNullable(cred);
+        }).orElse(null);
     }
 
     public void upsertCredential(String modelId, ModelCredential credential) {
@@ -137,5 +139,6 @@ public class ModelService {
             credentialMapper.insert(credential);
         }
         cacheManager.evictModelCache(modelId);
+        cacheManager.evictModelCredentialCache(modelId);
     }
 }
