@@ -79,12 +79,6 @@
             <version>${mysql.version}</version>
         </dependency>
 
-        <!-- ===== Kafka（审计日志异步写出） ===== -->
-        <dependency>
-            <groupId>org.springframework.kafka</groupId>
-            <artifactId>spring-kafka</artifactId>
-        </dependency>
-
         <!-- ===== 本地缓存 Caffeine ===== -->
         <dependency>
             <groupId>com.github.ben-manes.caffeine</groupId>
@@ -156,11 +150,6 @@
         <dependency>
             <groupId>io.projectreactor</groupId>
             <artifactId>reactor-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.kafka</groupId>
-            <artifactId>spring-kafka-test</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>

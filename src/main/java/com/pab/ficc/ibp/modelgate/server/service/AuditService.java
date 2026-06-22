@@ -1,13 +1,10 @@
 package com.pab.ficc.ibp.modelgate.server.service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.AuditLog;
 import com.pab.ficc.ibp.modelgate.server.mapper.AuditLogMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -22,25 +19,20 @@ import java.util.concurrent.LinkedBlockingQueue;
 /**
  * 审计日志服务。
  *
- * <p><b>双写设计：</b>每条审计记录同时写入两个目的地：
- * <ol>
- *   <li><b>Kafka（实时）</b>：每次请求完成后即时发送，供下游实时消费（监控告警、流式分析等）。</li>
- *   <li><b>MySQL（批量）</b>：先放入内存 {@link LinkedBlockingQueue}，
- *       由定时任务每 2 秒批量写入，单批最多 5000 条。
- *       相比每请求一次 INSERT，在 30 QPS 下减少约 99.7% 的写操作次数。</li>
- * </ol>
+ * <p>每条审计记录先放入内存 {@link LinkedBlockingQueue}，
+ * 由定时任务每 2 秒批量写入 MySQL，单批最多 5000 条。
+ * 相比每请求一次 INSERT，在 30 QPS 下减少约 99.7% 的写操作次数。
  *
  * <p><b>降级策略：</b>
  * <ul>
  *   <li>队列满时（默认容量 200,000）：丢弃新条目并打 WARN 日志，不阻塞主链路（fail-open）。</li>
- *   <li>Kafka 发送失败：仅打 WARN，不影响请求处理。</li>
  *   <li>批量 INSERT 失败：仅打 WARN，本批数据丢失，下一批继续（不重试，避免积压）。</li>
  * </ul>
  *
  * <p><b>开关：</b>
  * <ul>
- *   <li>{@code modelgate.audit.enabled=false}：完全关闭审计（Kafka + DB 均不写）。</li>
- *   <li>{@code modelgate.audit.db-write=false}：只发 Kafka，跳过 DB 写入（DB 故障降级）。</li>
+ *   <li>{@code modelgate.audit.enabled=false}：完全关闭审计。</li>
+ *   <li>{@code modelgate.audit.db-write=false}：跳过 DB 写入（DB 故障降级，月度 Token 累计仍正常）。</li>
  * </ul>
  */
 @Slf4j
@@ -48,13 +40,8 @@ import java.util.concurrent.LinkedBlockingQueue;
 @RequiredArgsConstructor
 public class AuditService {
 
-    private final KafkaTemplate<String, String> kafkaTemplate;
-    private final ObjectMapper objectMapper;
     private final AuditLogMapper auditLogMapper;
     private final RateLimitService rateLimitService;
-
-    @Value("${modelgate.audit.topic:modelgate-audit-log}")
-    private String auditTopic;
 
     @Value("${modelgate.audit.enabled:true}")
     private boolean auditEnabled;
@@ -95,9 +82,6 @@ public class AuditService {
         if (!offered) {
             log.warn("[AuditService] Queue full, dropping audit log traceId={}", traceId);
         }
-
-        // Kafka 实时发送，与 DB 写入完全独立，互不影响
-        sendToKafka(entry);
     }
 
     /**
@@ -169,30 +153,4 @@ public class AuditService {
         return entry;
     }
 
-    private void sendToKafka(AuditLog entry) {
-        try {
-            Map<String, Object> record = new HashMap<>();
-            record.put("traceId", entry.getTraceId());
-            record.put("appId", entry.getAppId());
-            record.put("modelId", entry.getModelId());
-            record.put("credType", entry.getCredType());
-            record.put("clientIp", entry.getClientIp());
-            record.put("requestPath", entry.getRequestPath());
-            record.put("httpStatus", entry.getHttpStatus());
-            record.put("latencyMs", entry.getLatencyMs());
-            record.put("inputTokens", entry.getInputTokens());
-            record.put("outputTokens", entry.getOutputTokens());
-            record.put("errorMsg", entry.getErrorMsg());
-            record.put("timestamp", entry.getCreatedAt().toString());
-
-            String json = objectMapper.writeValueAsString(record);
-            kafkaTemplate.send(auditTopic, entry.getAppId(), json)
-                    .addCallback(
-                            result -> { /* 成功无需处理 */ },
-                            ex -> log.warn("[AuditService] Kafka send failed: {}", ex.getMessage())
-                    );
-        } catch (JsonProcessingException e) {
-            log.warn("[AuditService] Serialize audit record failed", e);
-        }
-    }
 }

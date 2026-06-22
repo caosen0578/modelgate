@@ -10,23 +10,6 @@ datasource:
   namespace: tdsql_datasource_config
 
 spring:
-  # ===== Kafka =====
-  kafka:
-    bootstrap-servers: ${KAFKA_SERVERS:127.0.0.1:9092}
-    producer:
-      key-serializer: org.apache.kafka.common.serialization.StringSerializer
-      value-serializer: org.apache.kafka.common.serialization.StringSerializer
-      acks: 1
-      retries: 3
-      batch-size: 16384
-      linger-ms: 5
-      buffer-memory: 33554432
-    consumer:
-      group-id: modelgate-audit
-      auto-offset-reset: earliest
-      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
-      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
-
   # ===== Spring Cloud Gateway 路由 =====
   # 超时策略：response-timeout 570s < SLB 600s，Gateway 先超时返回 504；SSE 场景开启 tcp-keepalive
   # F5 idle timeout 待运维确认，见 TODO：排查 F5 idle timeout
@@ -177,12 +160,11 @@ modelgate:
       password: ${ADMIN_PASSWORD:changeme}
 
   # 审计日志：每次 API 调用写一条记录，enabled/db-write 可独立开关用于故障时降级
-  # enabled=false：完全关闭审计（Kafka + DB 均不写）
-  # db-write=false：只发 Kafka，跳过 DB 写入（DB 故障时降级用）
+  # enabled=false：完全关闭审计
+  # db-write=false：跳过 DB 写入（DB 故障时降级，月度 Token 累计仍正常）
   audit:
-    topic: modelgate-audit-log     # Kafka topic 名称
     enabled: true                  # 是否开启审计日志
-    db-write: true                 # 是否同时写入 MySQL audit_log 表
+    db-write: true                 # 是否写入 MySQL audit_log 表
     buffer-size: 200000            # 内存队列最大条数，满时丢弃并打 WARN
     flush-interval-ms: 2000        # 批量写入间隔（毫秒），每次最多写 5000 条
     retention-days: 90             # 日志保留天数，超期由 AuditCleanupService 删除
