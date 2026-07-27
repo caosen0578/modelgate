@@ -4,10 +4,10 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.pab.ficc.ibp.modelgate.server.common.BusinessException;
 import com.pab.ficc.ibp.modelgate.server.common.ErrorCode;
-import com.pab.ficc.ibp.modelgate.server.domain.entity.AccessRule;
-import com.pab.ficc.ibp.modelgate.server.domain.entity.AppCredential;
-import com.pab.ficc.ibp.modelgate.server.domain.entity.AppInfo;
-import com.pab.ficc.ibp.modelgate.server.domain.entity.AppModelAuth;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.AccessRuleEntity;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.AppCredentialEntity;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.AppInfoEntity;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.AppModelAuthEntity;
 import com.pab.ficc.ibp.modelgate.server.mapper.AccessRuleMapper;
 import com.pab.ficc.ibp.modelgate.server.mapper.AppCredentialMapper;
 import com.pab.ficc.ibp.modelgate.server.mapper.AppMapper;
@@ -28,56 +28,56 @@ public class AppService {
     private final AppModelAuthMapper authMapper;
     private final AccessRuleMapper accessRuleMapper;
 
-    public List<AppInfo> findAll() {
+    public List<AppInfoEntity> findAll() {
         return appMapper.selectList(null);
     }
 
-    public AppInfo findByAppId(String appId) {
+    public AppInfoEntity findByAppId(String appId) {
         return Optional.ofNullable(appMapper.selectOne(
-                new LambdaQueryWrapper<AppInfo>().eq(AppInfo::getAppId, appId)))
+                new LambdaQueryWrapper<AppInfoEntity>().eq(AppInfoEntity::getAppId, appId)))
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "appId: " + appId));
     }
 
-    public AppInfo create(AppInfo app) {
-        boolean exists = appMapper.exists(new LambdaQueryWrapper<AppInfo>().eq(AppInfo::getAppId, app.getAppId()));
+    public AppInfoEntity create(AppInfoEntity app) {
+        boolean exists = appMapper.exists(new LambdaQueryWrapper<AppInfoEntity>().eq(AppInfoEntity::getAppId, app.getAppId()));
         if (exists) {
             throw new BusinessException(ErrorCode.RESOURCE_ALREADY_EXISTS, "appId: " + app.getAppId());
         }
-        app.setCreatedAt(LocalDateTime.now());
-        app.setUpdatedAt(LocalDateTime.now());
+        app.setCreateTime(LocalDateTime.now());
+        app.setUpdateTime(LocalDateTime.now());
         app.setEnabled(true);
         appMapper.insert(app);
         return app;
     }
 
-    public AppInfo update(String appId, AppInfo updates) {
+    public AppInfoEntity update(String appId, AppInfoEntity updates) {
         findByAppId(appId);
-        updates.setUpdatedAt(LocalDateTime.now());
-        appMapper.update(updates, new LambdaQueryWrapper<AppInfo>().eq(AppInfo::getAppId, appId));
+        updates.setUpdateTime(LocalDateTime.now());
+        appMapper.update(updates, new LambdaQueryWrapper<AppInfoEntity>().eq(AppInfoEntity::getAppId, appId));
         return findByAppId(appId);
     }
 
     public void enable(String appId) {
         findByAppId(appId);
-        appMapper.update(null, new LambdaUpdateWrapper<AppInfo>()
-                .set(AppInfo::getEnabled, true)
-                .set(AppInfo::getUpdatedAt, LocalDateTime.now())
-                .eq(AppInfo::getAppId, appId));
+        appMapper.update(null, new LambdaUpdateWrapper<AppInfoEntity>()
+                .set(AppInfoEntity::getEnabled, true)
+                .set(AppInfoEntity::getUpdateTime, LocalDateTime.now())
+                .eq(AppInfoEntity::getAppId, appId));
     }
 
     public void disable(String appId) {
         findByAppId(appId);
-        appMapper.update(null, new LambdaUpdateWrapper<AppInfo>()
-                .set(AppInfo::getEnabled, false)
-                .set(AppInfo::getUpdatedAt, LocalDateTime.now())
-                .eq(AppInfo::getAppId, appId));
+        appMapper.update(null, new LambdaUpdateWrapper<AppInfoEntity>()
+                .set(AppInfoEntity::getEnabled, false)
+                .set(AppInfoEntity::getUpdateTime, LocalDateTime.now())
+                .eq(AppInfoEntity::getAppId, appId));
     }
 
     public void delete(String appId) {
         findByAppId(appId);
-        accessRuleMapper.delete(new LambdaQueryWrapper<AccessRule>().eq(AccessRule::getAppId, appId));
-        authMapper.delete(new LambdaQueryWrapper<AppModelAuth>().eq(AppModelAuth::getAppId, appId));
-        credentialMapper.delete(new LambdaQueryWrapper<AppCredential>().eq(AppCredential::getAppId, appId));
-        appMapper.delete(new LambdaQueryWrapper<AppInfo>().eq(AppInfo::getAppId, appId));
+        accessRuleMapper.delete(new LambdaQueryWrapper<AccessRuleEntity>().eq(AccessRuleEntity::getAppId, appId));
+        authMapper.delete(new LambdaQueryWrapper<AppModelAuthEntity>().eq(AppModelAuthEntity::getAppId, appId));
+        credentialMapper.delete(new LambdaQueryWrapper<AppCredentialEntity>().eq(AppCredentialEntity::getAppId, appId));
+        appMapper.delete(new LambdaQueryWrapper<AppInfoEntity>().eq(AppInfoEntity::getAppId, appId));
     }
 }

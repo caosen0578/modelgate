@@ -5,8 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pab.ficc.ibp.modelgate.server.common.ErrorCode;
 import com.pab.ficc.ibp.modelgate.server.common.Result;
 import com.pab.ficc.ibp.modelgate.server.crypto.CryptoService;
-import com.pab.ficc.ibp.modelgate.server.domain.entity.AppCredential;
-import com.pab.ficc.ibp.modelgate.server.domain.entity.AppInfo;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.AppCredentialEntity;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.AppInfoEntity;
 import com.pab.ficc.ibp.modelgate.server.service.AppService;
 import com.pab.ficc.ibp.modelgate.server.service.CredentialService;
 import lombok.RequiredArgsConstructor;
@@ -80,7 +80,7 @@ public class CredentialAuthFilter implements GlobalFilter, Ordered {
                         log.info("[CredentialAuth] Invalid credential, path={}", path);
                         return reject(exchange, HttpStatus.UNAUTHORIZED, ErrorCode.INVALID_API_KEY);
                     }
-                    AppCredential cred = result.get();
+                    AppCredentialEntity cred = result.get();
 
                     // 凭证状态检查（enabled=false 或已过期）
                     if (Boolean.FALSE.equals(cred.getEnabled())) {
@@ -91,7 +91,7 @@ public class CredentialAuthFilter implements GlobalFilter, Ordered {
                     }
 
                     // 检查所属 App 是否启用（App 禁用 → 该 App 所有凭证立即失效）
-                    Optional<AppInfo> app;
+                    Optional<AppInfoEntity> app;
                     try {
                         app = Optional.of(appService.findByAppId(cred.getAppId()));
                     } catch (Exception e) {
@@ -110,7 +110,7 @@ public class CredentialAuthFilter implements GlobalFilter, Ordered {
                 });
     }
 
-    private Optional<AppCredential> authenticate(String authorization) {
+    private Optional<AppCredentialEntity> authenticate(String authorization) {
         if (authorization.startsWith("Bearer ")) {
             // API Key 模式：对明文做 SHA-256，用哈希查凭证（DB 中不存明文）
             String apiKey = authorization.substring(7).trim();
@@ -139,9 +139,9 @@ public class CredentialAuthFilter implements GlobalFilter, Ordered {
             }
 
             // 2. 查询凭证
-            Optional<AppCredential> credOpt = credentialService.findByAccessKey(accessKey);
+            Optional<AppCredentialEntity> credOpt = credentialService.findByAccessKey(accessKey);
             if (credOpt.isEmpty()) return Optional.empty();
-            AppCredential cred = credOpt.get();
+            AppCredentialEntity cred = credOpt.get();
 
             // 3. 验证 HMAC-SHA256 签名：证明调用方持有 SK 而不仅仅知道 AK
             if (!verifyAkSkHmac(cred, accessKey, timestampStr, signature)) {
@@ -160,7 +160,7 @@ public class CredentialAuthFilter implements GlobalFilter, Ordered {
      * 调用方需要用相同的 accessKey、timestamp 和 SK 计算签名并放入请求头。
      * 使用 {@link MessageDigest#isEqual} 恒时比较，防止时序攻击。
      */
-    private boolean verifyAkSkHmac(AppCredential cred, String accessKey,
+    private boolean verifyAkSkHmac(AppCredentialEntity cred, String accessKey,
                                     String timestamp, String signature) {
         if (cred.getSecretEncrypted() == null) {
             log.warn("[CredentialAuth] AK={} has no encrypted SK, cannot verify HMAC", accessKey);

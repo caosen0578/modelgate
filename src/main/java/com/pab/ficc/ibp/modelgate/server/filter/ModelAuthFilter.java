@@ -5,8 +5,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pab.ficc.ibp.modelgate.server.common.ErrorCode;
 import com.pab.ficc.ibp.modelgate.server.common.Result;
-import com.pab.ficc.ibp.modelgate.server.domain.entity.AppModelAuth;
-import com.pab.ficc.ibp.modelgate.server.domain.entity.ModelInstance;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.AppModelAuthEntity;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.ModelInstanceEntity;
 import com.pab.ficc.ibp.modelgate.server.service.ModelAuthService;
 import com.pab.ficc.ibp.modelgate.server.service.ModelService;
 import lombok.RequiredArgsConstructor;
@@ -80,18 +80,18 @@ public class ModelAuthFilter implements GlobalFilter, Ordered {
     }
 
     private ErrorCode checkAuth(String appId, String modelId) {
-        Optional<ModelInstance> modelOpt = modelService.getModelCached(modelId);
+        Optional<ModelInstanceEntity> modelOpt = modelService.getModelCached(modelId);
         if (modelOpt.isEmpty()) return ErrorCode.MODEL_NOT_FOUND;
         if (Boolean.FALSE.equals(modelOpt.get().getEnabled())) return ErrorCode.MODEL_DISABLED;
 
-        List<AppModelAuth> auths = modelAuthService.listByAppIdCached(appId);
-        Optional<AppModelAuth> authOpt = auths.stream()
+        List<AppModelAuthEntity> auths = modelAuthService.listByAppIdCached(appId);
+        Optional<AppModelAuthEntity> authOpt = auths.stream()
                 .filter(a -> a.getModelId().equals(modelId))
                 .findFirst();
 
         if (authOpt.isEmpty()) return ErrorCode.MODEL_NOT_AUTHORIZED;
 
-        AppModelAuth auth = authOpt.get();
+        AppModelAuthEntity auth = authOpt.get();
         if (Boolean.FALSE.equals(auth.getEnabled())) return ErrorCode.MODEL_NOT_AUTHORIZED;
         if (auth.getExpiresAt() != null && auth.getExpiresAt().isBefore(LocalDateTime.now())) {
             return ErrorCode.AUTH_EXPIRED;

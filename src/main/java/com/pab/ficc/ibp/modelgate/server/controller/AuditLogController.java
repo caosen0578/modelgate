@@ -1,8 +1,9 @@
 package com.pab.ficc.ibp.modelgate.server.controller;
+import com.pab.ficc.ibp.modelgate.server.common.UrlConstant;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.pab.ficc.ibp.modelgate.server.common.Result;
-import com.pab.ficc.ibp.modelgate.server.domain.entity.AuditLog;
+import com.pab.ficc.cus.web.result.Result;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.AuditLogEntity;
 import com.pab.ficc.ibp.modelgate.server.domain.vo.AuditLogVO;
 import com.pab.ficc.ibp.modelgate.server.mapper.AuditLogMapper;
 import io.swagger.v3.oas.annotations.Operation;
@@ -25,7 +26,7 @@ import java.util.stream.Collectors;
  */
 @Tag(name = "审计日志", description = "查询 API 调用明细，支持按系统、模型、状态码、traceId 筛选")
 @RestController
-@RequestMapping("/admin/audit")
+@RequestMapping(UrlConstant.ADMIN_AUDIT)
 @RequiredArgsConstructor
 public class AuditLogController {
 
@@ -42,16 +43,16 @@ public class AuditLogController {
         return Mono.fromCallable(() -> doQuery(appId, modelId, status, traceId)
                         .stream().map(AuditLogVO::of).collect(Collectors.toList()))
                 .subscribeOn(Schedulers.boundedElastic())
-                .map(Result::ok);
+                .map(Result::success);
     }
 
-    private List<AuditLog> doQuery(String appId, String modelId, Integer status, String traceId) {
-        LambdaQueryWrapper<AuditLog> wrapper = new LambdaQueryWrapper<AuditLog>()
-                .eq(appId   != null && !appId.isBlank(),   AuditLog::getAppId,      appId)
-                .eq(modelId != null && !modelId.isBlank(), AuditLog::getModelId,    modelId)
-                .eq(status  != null,                       AuditLog::getHttpStatus, status)
-                .eq(traceId != null && !traceId.isBlank(), AuditLog::getTraceId,    traceId)
-                .orderByDesc(AuditLog::getCreatedAt)
+    private List<AuditLogEntity> doQuery(String appId, String modelId, Integer status, String traceId) {
+        LambdaQueryWrapper<AuditLogEntity> wrapper = new LambdaQueryWrapper<AuditLogEntity>()
+                .eq(appId   != null && !appId.isBlank(),   AuditLogEntity::getAppId,      appId)
+                .eq(modelId != null && !modelId.isBlank(), AuditLogEntity::getModelId,    modelId)
+                .eq(status  != null,                       AuditLogEntity::getHttpStatus, status)
+                .eq(traceId != null && !traceId.isBlank(), AuditLogEntity::getTraceId,    traceId)
+                .orderByDesc(AuditLogEntity::getCreatedAt)
                 .last("LIMIT 200");
 
         return auditLogMapper.selectList(wrapper);

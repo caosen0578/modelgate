@@ -3,7 +3,7 @@ package com.pab.ficc.ibp.modelgate.server.mapper;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.baomidou.mybatisplus.core.toolkit.Constants;
 import com.baomidou.mybatisplus.extension.toolkit.SqlHelper;
-import com.pab.ficc.ibp.modelgate.server.domain.entity.AuditLog;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.AuditLogEntity;
 import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
@@ -15,13 +15,13 @@ import java.util.List;
 import java.util.Map;
 
 @Mapper
-public interface AuditLogMapper extends BaseMapper<AuditLog> {
+public interface AuditLogMapper extends BaseMapper<AuditLogEntity> {
 
-    default boolean batchInsert(List<AuditLog> list) {
+    default boolean batchInsert(List<AuditLogEntity> list) {
         if (list == null || list.isEmpty()) return true;
         String statement = SqlHelper.getSqlStatement(AuditLogMapper.class,
                 com.baomidou.mybatisplus.core.enums.SqlMethod.INSERT_ONE);
-        return SqlHelper.executeBatch(AuditLog.class, LogFactory.getLog(AuditLogMapper.class),
+        return SqlHelper.executeBatch(AuditLogEntity.class, LogFactory.getLog(AuditLogMapper.class),
                 list, 1000, (sqlSession, entity) -> sqlSession.insert(statement, entity));
     }
 

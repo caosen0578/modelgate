@@ -2,11 +2,11 @@ package com.pab.ficc.ibp.modelgate.server.cache;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
-import com.pab.ficc.ibp.modelgate.server.domain.entity.AppCredential;
-import com.pab.ficc.ibp.modelgate.server.domain.entity.AppModelAuth;
-import com.pab.ficc.ibp.modelgate.server.domain.entity.AccessRule;
-import com.pab.ficc.ibp.modelgate.server.domain.entity.ModelCredential;
-import com.pab.ficc.ibp.modelgate.server.domain.entity.ModelInstance;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.AppCredentialEntity;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.AppModelAuthEntity;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.AccessRuleEntity;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.ModelCredentialEntity;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.ModelInstanceEntity;
 import com.pab.framework.redis.CacheProvider;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -32,8 +32,8 @@ import java.util.function.Supplier;
  *       写操作后必须主动失效，否则禁用凭证要等 60s 才生效。</li>
  *   <li><b>模型授权（ModelAuth）</b>：L1 60s TTL + Redis 失效通知。
  *       按 appId 聚合，一个 App 的所有模型授权同批加载，减少 DB 查询次数。</li>
- *   <li><b>访问规则（AccessRule）</b>：L1 60s TTL，不存 Redis（数据量小，变更少）。</li>
- *   <li><b>模型配置（ModelInstance）</b>：L1 30s TTL，不存 Redis。
+ *   <li><b>访问规则（AccessRuleEntity）</b>：L1 60s TTL，不存 Redis（数据量小，变更少）。</li>
+ *   <li><b>模型配置（ModelInstanceEntity）</b>：L1 30s TTL，不存 Redis。
  *       30s 内上游地址修改自动生效，对路由实时性要求高但 Redis 收益低。</li>
  * </ul>
  *
@@ -56,25 +56,25 @@ public class GatewayCacheManager {
     // ===== L1 Caffeine 本地缓存 =====
 
     /** 凭证缓存：key = SHA-256(api_key)，最多缓存 10,000 条（约覆盖 1 万个凭证） */
-    private final Cache<String, Optional<AppCredential>> credentialCache = Caffeine.newBuilder()
+    private final Cache<String, Optional<AppCredentialEntity>> credentialCache = Caffeine.newBuilder()
             .expireAfterWrite(60, TimeUnit.SECONDS)
             .maximumSize(10_000)
             .build();
 
     /** 模型授权缓存：key = appId，value = 该 App 的所有模型授权列表 */
-    private final Cache<String, List<AppModelAuth>> modelAuthCache = Caffeine.newBuilder()
+    private final Cache<String, List<AppModelAuthEntity>> modelAuthCache = Caffeine.newBuilder()
             .expireAfterWrite(60, TimeUnit.SECONDS)
             .maximumSize(5_000)
             .build();
 
     /** 访问规则缓存：key = appId，value = 该 App 的所有访问规则列表 */
-    private final Cache<String, List<AccessRule>> accessRuleCache = Caffeine.newBuilder()
+    private final Cache<String, List<AccessRuleEntity>> accessRuleCache = Caffeine.newBuilder()
             .expireAfterWrite(60, TimeUnit.SECONDS)
             .maximumSize(5_000)
             .build();
 
     /** 模型配置缓存：key = modelId，TTL 30s（上游地址修改后 30s 内生效） */
-    private final Cache<String, Optional<ModelInstance>> modelCache = Caffeine.newBuilder()
+    private final Cache<String, Optional<ModelInstanceEntity>> modelCache = Caffeine.newBuilder()
             .expireAfterWrite(30, TimeUnit.SECONDS)
             .maximumSize(1_000)
             .build();
@@ -84,7 +84,7 @@ public class GatewayCacheManager {
      * 与模型配置缓存保持相同 TTL，确保凭证更新后最多 30s 内对所有实例生效。
      * 写操作（upsertCredential）后主动 evict，变更即时生效。
      */
-    private final Cache<String, Optional<ModelCredential>> modelCredentialCache = Caffeine.newBuilder()
+    private final Cache<String, Optional<ModelCredentialEntity>> modelCredentialCache = Caffeine.newBuilder()
             .expireAfterWrite(30, TimeUnit.SECONDS)
             .maximumSize(1_000)
             .build();
@@ -98,10 +98,10 @@ public class GatewayCacheManager {
      * 凭证的 Redis 层（{@link #setRedisCredential}）目前仅作备份，
      * 主读路径为 Caffeine → DB。
      */
-    public Optional<AppCredential> getCredential(String secretHash, Supplier<Optional<AppCredential>> dbLoader) {
-        Optional<AppCredential> cached = credentialCache.getIfPresent(secretHash);
+    public Optional<AppCredentialEntity> getCredential(String secretHash, Supplier<Optional<AppCredentialEntity>> dbLoader) {
+        Optional<AppCredentialEntity> cached = credentialCache.getIfPresent(secretHash);
         if (cached != null) return cached;
-        Optional<AppCredential> result = dbLoader.get();
+        Optional<AppCredentialEntity> result = dbLoader.get();
         // 只缓存命中结果；不缓存空结果，防止攻击者用大量无效 key 填满 10k 上限逐出合法凭证
         if (result.isPresent()) {
             credentialCache.put(secretHash, result);
@@ -127,10 +127,10 @@ public class GatewayCacheManager {
     // ===== 模型授权缓存（L1 → DB） =====
 
     /** 按 appId 查该 App 的所有模型授权，L1 命中直接返回，miss 则查 DB 并回填。 */
-    public List<AppModelAuth> getModelAuths(String appId, Supplier<List<AppModelAuth>> dbLoader) {
-        List<AppModelAuth> cached = modelAuthCache.getIfPresent(appId);
+    public List<AppModelAuthEntity> getModelAuths(String appId, Supplier<List<AppModelAuthEntity>> dbLoader) {
+        List<AppModelAuthEntity> cached = modelAuthCache.getIfPresent(appId);
         if (cached != null) return cached;
-        List<AppModelAuth> result = dbLoader.get();
+        List<AppModelAuthEntity> result = dbLoader.get();
         modelAuthCache.put(appId, result);
         return result;
     }
@@ -143,10 +143,10 @@ public class GatewayCacheManager {
 
     // ===== 访问规则缓存（仅 L1，不存 Redis） =====
 
-    public List<AccessRule> getAccessRules(String appId, Supplier<List<AccessRule>> dbLoader) {
-        List<AccessRule> cached = accessRuleCache.getIfPresent(appId);
+    public List<AccessRuleEntity> getAccessRules(String appId, Supplier<List<AccessRuleEntity>> dbLoader) {
+        List<AccessRuleEntity> cached = accessRuleCache.getIfPresent(appId);
         if (cached != null) return cached;
-        List<AccessRule> result = dbLoader.get();
+        List<AccessRuleEntity> result = dbLoader.get();
         accessRuleCache.put(appId, result);
         return result;
     }
@@ -157,10 +157,10 @@ public class GatewayCacheManager {
 
     // ===== 模型配置缓存（仅 L1，不存 Redis） =====
 
-    public Optional<ModelInstance> getModel(String modelId, Supplier<Optional<ModelInstance>> dbLoader) {
-        Optional<ModelInstance> cached = modelCache.getIfPresent(modelId);
+    public Optional<ModelInstanceEntity> getModel(String modelId, Supplier<Optional<ModelInstanceEntity>> dbLoader) {
+        Optional<ModelInstanceEntity> cached = modelCache.getIfPresent(modelId);
         if (cached != null) return cached;
-        Optional<ModelInstance> result = dbLoader.get();
+        Optional<ModelInstanceEntity> result = dbLoader.get();
         modelCache.put(modelId, result);
         return result;
     }
@@ -175,10 +175,10 @@ public class GatewayCacheManager {
 
     // ===== 上游凭证缓存（已解密，仅 L1，不存 Redis，TTL=30s） =====
 
-    public Optional<ModelCredential> getModelCredential(String modelId, Supplier<Optional<ModelCredential>> dbLoader) {
-        Optional<ModelCredential> cached = modelCredentialCache.getIfPresent(modelId);
+    public Optional<ModelCredentialEntity> getModelCredential(String modelId, Supplier<Optional<ModelCredentialEntity>> dbLoader) {
+        Optional<ModelCredentialEntity> cached = modelCredentialCache.getIfPresent(modelId);
         if (cached != null) return cached;
-        Optional<ModelCredential> result = dbLoader.get();
+        Optional<ModelCredentialEntity> result = dbLoader.get();
         modelCredentialCache.put(modelId, result);
         return result;
     }

@@ -54,10 +54,18 @@
             <version>${apollo.version}</version>
         </dependency>
 
-        <!-- ===== Redis（内网 CacheProvider，集群配置由 Apollo 下发） ===== -->
+        <!-- ===== Redis =====
+             内网 com.pab.framework:redis 无法外网解析，已用精简源码桩 CacheProvider.java（仅
+             get/setex/del/eval）替代，本地无需 jedis。合入内网时删桩并恢复：
         <dependency>
             <groupId>com.pab.framework</groupId>
             <artifactId>redis</artifactId>
+        </dependency>
+        -->
+        <!-- 本地数据源连接池（local Profile 的 localDataSource 用） -->
+        <dependency>
+            <groupId>com.zaxxer</groupId>
+            <artifactId>HikariCP</artifactId>
         </dependency>
 
         <!-- ===== MyBatis Plus（持久化，Lambda API，无 XML，Spring Boot 2.x） ===== -->
@@ -72,6 +80,12 @@
                     <artifactId>HikariCP</artifactId>
                 </exclusion>
             </exclusions>
+        </dependency>
+        <!-- MyBatis-Plus 3.5.9 起分页等 jsqlparser 依赖的内置拦截器拆到此模块 -->
+        <dependency>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus-jsqlparser</artifactId>
+            <version>${mybatis-plus.version}</version>
         </dependency>
         <dependency>
             <groupId>mysql</groupId>
@@ -120,6 +134,13 @@
             <artifactId>jackson-datatype-jsr310</artifactId>
         </dependency>
 
+        <!-- ===== JSON 日志编码器（logback-spring.xml 的 FILE appender 用，ELK 采集） ===== -->
+        <dependency>
+            <groupId>net.logstash.logback</groupId>
+            <artifactId>logstash-logback-encoder</artifactId>
+            <version>7.2</version>
+        </dependency>
+
         <!-- ===== Lombok ===== -->
         <dependency>
             <groupId>org.projectlombok</groupId>
@@ -138,19 +159,7 @@
         <dependency>
             <groupId>org.springdoc</groupId>
             <artifactId>springdoc-openapi-webflux-ui</artifactId>
-            <version>1.6.15</version>
-        </dependency>
-
-        <!-- ===== 测试 ===== -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>io.projectreactor</groupId>
-            <artifactId>reactor-test</artifactId>
-            <scope>test</scope>
+            <version>1.7.0</version>
         </dependency>
     </dependencies>
 

@@ -46,7 +46,7 @@
     </appender>
 
     <!-- ===== Profile 选择 ===== -->
-    <springProfile name="dev">
+    <springProfile name="dev,local,default">
         <root level="${LOG_LEVEL}">
             <appender-ref ref="CONSOLE"/>
         </root>

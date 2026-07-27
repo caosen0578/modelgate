@@ -1,6 +1,6 @@
 package com.pab.ficc.ibp.modelgate.server.domain.vo;
 
-import com.pab.ficc.ibp.modelgate.server.domain.entity.AppInfo;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.AppInfoEntity;
 import lombok.Data;
 
 import java.time.LocalDateTime;
@@ -15,9 +15,9 @@ public class AppVO {
     private String        owner;
     private String        remark;
     private Boolean       enabled;
-    private LocalDateTime createdAt;
+    private LocalDateTime createTime;
 
-    public static AppVO of(AppInfo e) {
+    public static AppVO of(AppInfoEntity e) {
         AppVO vo = new AppVO();
         vo.appId     = e.getAppId();
         vo.appName   = e.getAppName();
@@ -26,7 +26,7 @@ public class AppVO {
         vo.owner     = e.getOwner();
         vo.remark    = e.getRemark();
         vo.enabled   = e.getEnabled();
-        vo.createdAt = e.getCreatedAt();
+        vo.createTime = e.getCreateTime();
         return vo;
     }
 }

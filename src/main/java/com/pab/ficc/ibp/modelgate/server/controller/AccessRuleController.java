@@ -1,7 +1,8 @@
 package com.pab.ficc.ibp.modelgate.server.controller;
+import com.pab.ficc.ibp.modelgate.server.common.UrlConstant;
 
-import com.pab.ficc.ibp.modelgate.server.common.Result;
-import com.pab.ficc.ibp.modelgate.server.domain.dto.AddRuleRequest;
+import com.pab.ficc.cus.web.result.Result;
+import com.pab.ficc.ibp.modelgate.server.domain.bo.AddRuleRequestBO;
 import com.pab.ficc.ibp.modelgate.server.domain.vo.AccessRuleVO;
 import com.pab.ficc.ibp.modelgate.server.service.AccessRuleService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -18,38 +19,38 @@ import java.util.stream.Collectors;
 
 @Tag(name = "访问控制", description = "配置接入系统的 IP / CIDR / 域名来源白名单")
 @RestController
-@RequestMapping("/admin/access")
+@RequestMapping(UrlConstant.ADMIN_ACCESS)
 @RequiredArgsConstructor
 public class AccessRuleController {
 
     private final AccessRuleService accessRuleService;
 
     @Operation(summary = "查询系统访问规则列表")
-    @GetMapping("/list")
+    @GetMapping(UrlConstant.LIST)
     public Mono<Result<List<AccessRuleVO>>> list(
             @Parameter(description = "系统 ID") @RequestParam String appId) {
         return Mono.fromCallable(() -> accessRuleService.listByAppId(appId)
                         .stream().map(AccessRuleVO::of).collect(Collectors.toList()))
                 .subscribeOn(Schedulers.boundedElastic())
-                .map(Result::ok);
+                .map(Result::success);
     }
 
     @Operation(summary = "新增访问规则（ip / cidr / domain）")
-    @PostMapping("/add")
-    public Mono<Result<AccessRuleVO>> add(@RequestBody @Valid AddRuleRequest req) {
+    @PostMapping(UrlConstant.ADD)
+    public Mono<Result<AccessRuleVO>> add(@RequestBody @Valid AddRuleRequestBO req) {
         return Mono.fromCallable(() -> AccessRuleVO.of(
                         accessRuleService.add(req.getAppId(), req.toEntity())))
                 .subscribeOn(Schedulers.boundedElastic())
-                .map(Result::ok);
+                .map(Result::success);
     }
 
     @Operation(summary = "删除访问规则")
-    @DeleteMapping("/delete")
+    @DeleteMapping(UrlConstant.DELETE)
     public Mono<Result<Void>> delete(
             @Parameter(description = "系统 ID") @RequestParam String appId,
             @Parameter(description = "规则 ID") @RequestParam Long id) {
         return Mono.fromRunnable(() -> accessRuleService.delete(appId, id))
                 .subscribeOn(Schedulers.boundedElastic())
-                .then(Mono.just(Result.<Void>ok()));
+                .then(Mono.just(Result.<Void>success(null)));
     }
 }

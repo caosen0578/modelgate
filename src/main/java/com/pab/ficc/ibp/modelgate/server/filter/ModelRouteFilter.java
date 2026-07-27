@@ -6,8 +6,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pab.ficc.ibp.modelgate.server.adapter.ProviderAdapter;
 import com.pab.ficc.ibp.modelgate.server.common.ErrorCode;
 import com.pab.ficc.ibp.modelgate.server.common.Result;
-import com.pab.ficc.ibp.modelgate.server.domain.entity.ModelCredential;
-import com.pab.ficc.ibp.modelgate.server.domain.entity.ModelInstance;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.ModelCredentialEntity;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.ModelInstanceEntity;
 import com.pab.ficc.ibp.modelgate.server.service.ModelService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -37,7 +37,7 @@ import java.util.Optional;
  * Dynamic model routing filter (order=-140).
  *
  * 1. Reads request body to extract 'model' field
- * 2. Loads ModelInstance + ModelCredential from cache
+ * 2. Loads ModelInstanceEntity + ModelCredentialEntity from cache
  * 3. Delegates to ProviderAdapter for request transformation
  * 4. Sets GATEWAY_REQUEST_URL_ATTR for upstream routing
  */
@@ -102,12 +102,12 @@ public class ModelRouteFilter implements GlobalFilter, Ordered {
         exchange.getAttributes().put("mg.modelId", modelId);
 
         return Mono.fromCallable(() -> {
-            Optional<ModelInstance> modelOpt = modelService.getModelCached(modelId);
+            Optional<ModelInstanceEntity> modelOpt = modelService.getModelCached(modelId);
             if (modelOpt.isEmpty()) return null;
-            ModelInstance model = modelOpt.get();
+            ModelInstanceEntity model = modelOpt.get();
 
             // 从缓存读取上游鉴权凭证并解密 SK
-            ModelCredential credential = modelService.getCredentialDecrypted(modelId);
+            ModelCredentialEntity credential = modelService.getCredentialDecrypted(modelId);
 
             // 按 apiSpec 选择适配器（Strategy 模式）：openai/azure_openai/anthropic/custom
             ProviderAdapter adapter = adapters.stream()

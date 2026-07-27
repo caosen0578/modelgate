@@ -1,7 +1,7 @@
 package com.pab.ficc.ibp.modelgate.server.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.pab.ficc.ibp.modelgate.server.domain.entity.GatewayConfig;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.GatewayConfigEntity;
 import com.pab.ficc.ibp.modelgate.server.mapper.GatewayConfigMapper;
 import javax.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
@@ -31,16 +31,16 @@ public class GatewayConfigService {
     @PostConstruct
     public void init() {
         loadFromDb();
-        log.info("[GatewayConfig] Initialized, upstream.url={}", getUpstreamUrl());
+        log.info("[GatewayConfigEntity] Initialized, upstream.url={}", getUpstreamUrl());
     }
 
     @Scheduled(fixedDelay = 30_000, initialDelay = 30_000)
     public void refresh() {
         try {
             loadFromDb();
-            log.debug("[GatewayConfig] Refreshed from DB, entries={}", configCache.size());
+            log.debug("[GatewayConfigEntity] Refreshed from DB, entries={}", configCache.size());
         } catch (Exception e) {
-            log.error("[GatewayConfig] Refresh failed, using cached values: {}", e.getMessage());
+            log.error("[GatewayConfigEntity] Refresh failed, using cached values: {}", e.getMessage());
         }
     }
 
@@ -50,20 +50,20 @@ public class GatewayConfigService {
     }
 
     public String getUpstreamUrl() {
-        return configCache.getOrDefault(GatewayConfig.KEY_UPSTREAM_URL, fallbackUpstreamUrl);
+        return configCache.getOrDefault(GatewayConfigEntity.KEY_UPSTREAM_URL, fallbackUpstreamUrl);
     }
 
     public boolean isAuthEnabled() {
-        return Boolean.parseBoolean(configCache.getOrDefault(GatewayConfig.KEY_AUTH_ENABLED, "true"));
+        return Boolean.parseBoolean(configCache.getOrDefault(GatewayConfigEntity.KEY_AUTH_ENABLED, "true"));
     }
 
     public boolean isCircuitBreakerEnabled() {
-        return Boolean.parseBoolean(configCache.getOrDefault(GatewayConfig.KEY_CIRCUIT_BREAKER_ENABLED, "true"));
+        return Boolean.parseBoolean(configCache.getOrDefault(GatewayConfigEntity.KEY_CIRCUIT_BREAKER_ENABLED, "true"));
     }
 
     public int getDefaultRateLimit() {
         try {
-            return Integer.parseInt(configCache.getOrDefault(GatewayConfig.KEY_DEFAULT_RATE_LIMIT, "10"));
+            return Integer.parseInt(configCache.getOrDefault(GatewayConfigEntity.KEY_DEFAULT_RATE_LIMIT, "10"));
         } catch (NumberFormatException e) {
             return 10;
         }
@@ -77,30 +77,30 @@ public class GatewayConfigService {
         return Map.copyOf(configCache);
     }
 
-    public List<GatewayConfig> findAll() {
+    public List<GatewayConfigEntity> findAll() {
         return configMapper.selectList(null);
     }
 
-    public GatewayConfig upsert(GatewayConfig config, String operatorName) {
+    public GatewayConfigEntity upsert(GatewayConfigEntity config, String operatorName) {
         config.setUpdatedBy(operatorName);
-        config.setUpdatedAt(LocalDateTime.now());
+        config.setUpdateTime(LocalDateTime.now());
 
-        GatewayConfig existing = configMapper.selectById(config.getConfigKey());
+        GatewayConfigEntity existing = configMapper.selectById(config.getConfigKey());
         if (existing != null) {
             configMapper.updateById(config);
         } else {
-            config.setCreatedAt(LocalDateTime.now());
+            config.setCreateTime(LocalDateTime.now());
             configMapper.insert(config);
         }
 
         configCache.put(config.getConfigKey(), config.getConfigValue());
-        log.info("[GatewayConfig] Updated: key={}, by={}", config.getConfigKey(), operatorName);
+        log.info("[GatewayConfigEntity] Updated: key={}, by={}", config.getConfigKey(), operatorName);
         return configMapper.selectById(config.getConfigKey());
     }
 
     public void delete(String key) {
         configMapper.deleteById(key);
         configCache.remove(key);
-        log.info("[GatewayConfig] Deleted: key={}", key);
+        log.info("[GatewayConfigEntity] Deleted: key={}", key);
     }
 }

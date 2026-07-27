@@ -1,6 +1,6 @@
 package com.pab.ficc.ibp.modelgate.server.domain.vo;
 
-import com.pab.ficc.ibp.modelgate.server.domain.entity.ModelInstance;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.ModelInstanceEntity;
 import lombok.Data;
 
 import java.time.LocalDateTime;
@@ -19,10 +19,10 @@ public class ModelVO {
     private String        forceParams;
     private String        description;
     private Boolean       enabled;
-    private LocalDateTime createdAt;
-    private LocalDateTime updatedAt;
+    private LocalDateTime createTime;
+    private LocalDateTime updateTime;
 
-    public static ModelVO of(ModelInstance e) {
+    public static ModelVO of(ModelInstanceEntity e) {
         ModelVO vo = new ModelVO();
         vo.modelId      = e.getModelId();
         vo.modelName    = e.getModelName();
@@ -35,8 +35,8 @@ public class ModelVO {
         vo.forceParams  = e.getForceParams();
         vo.description  = e.getDescription();
         vo.enabled      = e.getEnabled();
-        vo.createdAt    = e.getCreatedAt();
-        vo.updatedAt    = e.getUpdatedAt();
+        vo.createTime    = e.getCreateTime();
+        vo.updateTime    = e.getUpdateTime();
         return vo;
     }
 }

@@ -1,6 +1,7 @@
 package com.pab.ficc.ibp.modelgate.server.controller;
+import com.pab.ficc.ibp.modelgate.server.common.UrlConstant;
 
-import com.pab.ficc.ibp.modelgate.server.common.Result;
+import com.pab.ficc.cus.web.result.Result;
 import com.pab.ficc.ibp.modelgate.server.mapper.AuditLogMapper;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -22,14 +23,14 @@ import java.util.Map;
 
 @Tag(name = "用量统计", description = "查询 API 调用量、Token 消耗、平均延迟、成功率汇总数据")
 @RestController
-@RequestMapping("/admin/stats")
+@RequestMapping(UrlConstant.ADMIN_STATS)
 @RequiredArgsConstructor
 public class UsageStatsController {
 
     private final AuditLogMapper auditLogMapper;
 
     @Operation(summary = "用量统计汇总（总请求数 / Token 消耗 / 平均延迟 / 成功率）")
-    @GetMapping("/usage")
+    @GetMapping(UrlConstant.USAGE)
     public Mono<Result<Map<String, Object>>> usage(
             @Parameter(description = "系统 ID，不传则汇总全部") @RequestParam(required = false) String appId,
             @Parameter(description = "模型 ID，不传则汇总全部") @RequestParam(required = false) String modelId,
@@ -43,7 +44,7 @@ public class UsageStatsController {
 
         return Mono.fromCallable(() -> buildStats(appId, modelId, startDt, endDt))
                 .subscribeOn(Schedulers.boundedElastic())
-                .map(Result::ok);
+                .map(Result::success);
     }
 
     private Map<String, Object> buildStats(String appId, String modelId,

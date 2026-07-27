@@ -1,11 +1,12 @@
 package com.pab.ficc.ibp.modelgate.server.controller;
+import com.pab.ficc.ibp.modelgate.server.common.UrlConstant;
 
 import com.pab.ficc.ibp.modelgate.server.common.BusinessException;
 import com.pab.ficc.ibp.modelgate.server.common.ErrorCode;
-import com.pab.ficc.ibp.modelgate.server.common.Result;
-import com.pab.ficc.ibp.modelgate.server.domain.dto.UpstreamUrlRequest;
-import com.pab.ficc.ibp.modelgate.server.domain.dto.UpsertConfigRequest;
-import com.pab.ficc.ibp.modelgate.server.domain.entity.GatewayConfig;
+import com.pab.ficc.cus.web.result.Result;
+import com.pab.ficc.ibp.modelgate.server.domain.bo.UpstreamUrlRequestBO;
+import com.pab.ficc.ibp.modelgate.server.domain.bo.UpsertConfigRequestBO;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.GatewayConfigEntity;
 import com.pab.ficc.ibp.modelgate.server.domain.vo.GatewayConfigVO;
 import com.pab.ficc.ibp.modelgate.server.service.GatewayConfigService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -35,7 +36,7 @@ import java.util.stream.Collectors;
 @Tag(name = "网关配置", description = "动态管理网关全局配置，变更实时生效")
 @Slf4j
 @RestController
-@RequestMapping("/admin/config")
+@RequestMapping(UrlConstant.ADMIN_CONFIG)
 @RequiredArgsConstructor
 public class GatewayConfigController {
 
@@ -47,11 +48,11 @@ public class GatewayConfigController {
         return Mono.fromCallable(() -> configService.findAll()
                         .stream().map(GatewayConfigVO::of).collect(Collectors.toList()))
                 .subscribeOn(Schedulers.boundedElastic())
-                .map(Result::ok);
+                .map(Result::success);
     }
 
     @Operation(summary = "查询单个配置项")
-    @GetMapping("/detail")
+    @GetMapping(UrlConstant.DETAIL)
     public Mono<Result<GatewayConfigVO>> findOne(
             @Parameter(description = "配置 key") @RequestParam String key) {
         return Mono.fromCallable(() -> configService.findAll().stream()
@@ -60,15 +61,15 @@ public class GatewayConfigController {
                         .map(GatewayConfigVO::of)
                         .orElseThrow(() -> new BusinessException(ErrorCode.WHITELIST_NOT_FOUND, "config key: " + key)))
                 .subscribeOn(Schedulers.boundedElastic())
-                .map(Result::ok);
+                .map(Result::success);
     }
 
     @Operation(summary = "新增或更新配置项")
-    @PutMapping("/save")
-    public Mono<Result<GatewayConfigVO>> upsert(@RequestBody @Valid UpsertConfigRequest req,
+    @PutMapping(UrlConstant.SAVE)
+    public Mono<Result<GatewayConfigVO>> upsert(@RequestBody @Valid UpsertConfigRequestBO req,
                                                  ServerHttpRequest httpRequest) {
         String operator = httpRequest.getHeaders().getFirst("X-Admin-User");
-        GatewayConfig config = GatewayConfig.builder()
+        GatewayConfigEntity config = GatewayConfigEntity.builder()
                 .configKey(req.getKey())
                 .configValue(req.getValue())
                 .description(req.getDescription())
@@ -77,31 +78,31 @@ public class GatewayConfigController {
         return Mono.fromCallable(() -> GatewayConfigVO.of(
                         configService.upsert(config, operator != null ? operator : "unknown")))
                 .subscribeOn(Schedulers.boundedElastic())
-                .map(Result::ok);
+                .map(Result::success);
     }
 
     @Operation(summary = "删除配置项")
-    @DeleteMapping("/delete")
+    @DeleteMapping(UrlConstant.DELETE)
     public Mono<Result<Void>> delete(
             @Parameter(description = "配置 key") @RequestParam String key) {
         return Mono.fromRunnable(() -> configService.delete(key))
                 .subscribeOn(Schedulers.boundedElastic())
-                .then(Mono.just(Result.<Void>ok()));
+                .then(Mono.just(Result.<Void>success(null)));
     }
 
     @Operation(summary = "查询当前上游模型服务地址")
-    @GetMapping("/upstream/url")
+    @GetMapping(UrlConstant.UPSTREAM_URL)
     public Mono<Result<String>> getUpstreamUrl() {
-        return Mono.just(Result.ok(configService.getUpstreamUrl()));
+        return Mono.just(Result.success(configService.getUpstreamUrl()));
     }
 
     @Operation(summary = "修改上游模型服务地址（30s 内热生效）")
-    @PutMapping("/upstream/url")
-    public Mono<Result<GatewayConfigVO>> updateUpstreamUrl(@RequestBody @Valid UpstreamUrlRequest req,
+    @PutMapping(UrlConstant.UPSTREAM_URL)
+    public Mono<Result<GatewayConfigVO>> updateUpstreamUrl(@RequestBody @Valid UpstreamUrlRequestBO req,
                                                             ServerHttpRequest httpRequest) {
         String operator = httpRequest.getHeaders().getFirst("X-Admin-User");
-        GatewayConfig config = GatewayConfig.builder()
-                .configKey(GatewayConfig.KEY_UPSTREAM_URL)
+        GatewayConfigEntity config = GatewayConfigEntity.builder()
+                .configKey(GatewayConfigEntity.KEY_UPSTREAM_URL)
                 .configValue(req.getUrl())
                 .description("上游模型服务地址")
                 .build();
@@ -110,6 +111,6 @@ public class GatewayConfigController {
                         configService.upsert(config, operator != null ? operator : "unknown")))
                 .subscribeOn(Schedulers.boundedElastic())
                 .doOnSuccess(vo -> log.info("[Config] upstream.url updated to: {} by {}", req.getUrl(), operator))
-                .map(Result::ok);
+                .map(Result::success);
     }
 }

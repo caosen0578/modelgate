@@ -1,6 +1,6 @@
 package com.pab.ficc.ibp.modelgate.server.domain.vo;
 
-import com.pab.ficc.ibp.modelgate.server.domain.entity.AppCredential;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.AppCredentialEntity;
 import lombok.Data;
 
 import java.time.LocalDateTime;
@@ -18,9 +18,9 @@ public class AppCredentialVO {
     private Boolean       enabled;
     private LocalDateTime expiresAt;
     private String        remark;
-    private LocalDateTime createdAt;
+    private LocalDateTime createTime;
 
-    public static AppCredentialVO of(AppCredential e) {
+    public static AppCredentialVO of(AppCredentialEntity e) {
         AppCredentialVO vo = new AppCredentialVO();
         vo.id        = e.getId();
         vo.credName  = e.getCredName();
@@ -29,7 +29,7 @@ public class AppCredentialVO {
         vo.enabled   = e.getEnabled();
         vo.expiresAt = e.getExpiresAt();
         vo.remark    = e.getRemark();
-        vo.createdAt = e.getCreatedAt();
+        vo.createTime = e.getCreateTime();
         return vo;
     }
 }

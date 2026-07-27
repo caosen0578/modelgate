@@ -6,7 +6,7 @@ import com.pab.ficc.ibp.modelgate.server.cache.GatewayCacheManager;
 import com.pab.ficc.ibp.modelgate.server.common.BusinessException;
 import com.pab.ficc.ibp.modelgate.server.common.ErrorCode;
 import com.pab.ficc.ibp.modelgate.server.crypto.CryptoService;
-import com.pab.ficc.ibp.modelgate.server.domain.entity.AppCredential;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.AppCredentialEntity;
 import com.pab.ficc.ibp.modelgate.server.mapper.AppCredentialMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -49,10 +49,10 @@ public class CredentialService {
     private final GatewayCacheManager cacheManager;
 
     /** 查询指定 App 下的所有凭证，按创建时间倒序（不含密钥明文）。 */
-    public List<AppCredential> listByAppId(String appId) {
+    public List<AppCredentialEntity> listByAppId(String appId) {
         return credentialMapper.selectList(
-                new LambdaQueryWrapper<AppCredential>().eq(AppCredential::getAppId, appId)
-                        .orderByDesc(AppCredential::getCreatedAt));
+                new LambdaQueryWrapper<AppCredentialEntity>().eq(AppCredentialEntity::getAppId, appId)
+                        .orderByDesc(AppCredentialEntity::getCreateTime));
     }
 
     /**
@@ -65,16 +65,16 @@ public class CredentialService {
      * @param request 凭证配置（credType、expiresAt、remark 等）
      * @return 已保存的凭证实体 + 一次性明文密钥
      */
-    public CreatedCredential create(String appId, AppCredential request) {
-        AppCredential cred = new AppCredential();
+    public CreatedCredential create(String appId, AppCredentialEntity request) {
+        AppCredentialEntity cred = new AppCredentialEntity();
         cred.setAppId(appId);
         cred.setCredName(request.getCredName());
         cred.setCredType(request.getCredType());
         cred.setExpiresAt(request.getExpiresAt());
         cred.setRemark(request.getRemark());
         cred.setEnabled(true);
-        cred.setCreatedAt(LocalDateTime.now());
-        cred.setUpdatedAt(LocalDateTime.now());
+        cred.setCreateTime(LocalDateTime.now());
+        cred.setUpdateTime(LocalDateTime.now());
 
         String plainSecret;
         if ("ak_sk".equals(request.getCredType())) {
@@ -107,11 +107,11 @@ public class CredentialService {
      *
      * @param hash SHA-256(api_key) 十六进制字符串
      */
-    public Optional<AppCredential> findBySecretHash(String hash) {
+    public Optional<AppCredentialEntity> findBySecretHash(String hash) {
         return cacheManager.getCredential(hash, () -> Optional.ofNullable(
-                credentialMapper.selectOne(new LambdaQueryWrapper<AppCredential>()
-                        .eq(AppCredential::getSecretHash, hash)
-                        .eq(AppCredential::getEnabled, true))));
+                credentialMapper.selectOne(new LambdaQueryWrapper<AppCredentialEntity>()
+                        .eq(AppCredentialEntity::getSecretHash, hash)
+                        .eq(AppCredentialEntity::getEnabled, true))));
     }
 
     /**
@@ -120,11 +120,11 @@ public class CredentialService {
      * <p>AK 不走缓存：AK/SK 请求量相对较少，且 AK 查询后还需再做签名验证，
      * 缓存收益不显著；直接查 DB 保证数据新鲜度。
      */
-    public Optional<AppCredential> findByAccessKey(String accessKey) {
+    public Optional<AppCredentialEntity> findByAccessKey(String accessKey) {
         return Optional.ofNullable(credentialMapper.selectOne(
-                new LambdaQueryWrapper<AppCredential>()
-                        .eq(AppCredential::getAccessKey, accessKey)
-                        .eq(AppCredential::getEnabled, true)));
+                new LambdaQueryWrapper<AppCredentialEntity>()
+                        .eq(AppCredentialEntity::getAccessKey, accessKey)
+                        .eq(AppCredentialEntity::getEnabled, true)));
     }
 
     /**
@@ -132,11 +132,11 @@ public class CredentialService {
      * 确保下一次请求不会命中旧的"已禁用"缓存条目。
      */
     public void enable(String appId, Long credId) {
-        AppCredential cred = getCredentialByIdAndApp(appId, credId);
-        credentialMapper.update(null, new LambdaUpdateWrapper<AppCredential>()
-                .set(AppCredential::getEnabled, true)
-                .set(AppCredential::getUpdatedAt, LocalDateTime.now())
-                .eq(AppCredential::getId, credId));
+        AppCredentialEntity cred = getCredentialByIdAndApp(appId, credId);
+        credentialMapper.update(null, new LambdaUpdateWrapper<AppCredentialEntity>()
+                .set(AppCredentialEntity::getEnabled, true)
+                .set(AppCredentialEntity::getUpdateTime, LocalDateTime.now())
+                .eq(AppCredentialEntity::getId, credId));
         if (cred.getSecretHash() != null) cacheManager.evictCredentialCache(cred.getSecretHash());
     }
 
@@ -144,17 +144,17 @@ public class CredentialService {
      * 禁用凭证并立即失效缓存，禁用效果秒级生效（不需等 Caffeine TTL 自然过期）。
      */
     public void disable(String appId, Long credId) {
-        AppCredential cred = getCredentialByIdAndApp(appId, credId);
-        credentialMapper.update(null, new LambdaUpdateWrapper<AppCredential>()
-                .set(AppCredential::getEnabled, false)
-                .set(AppCredential::getUpdatedAt, LocalDateTime.now())
-                .eq(AppCredential::getId, credId));
+        AppCredentialEntity cred = getCredentialByIdAndApp(appId, credId);
+        credentialMapper.update(null, new LambdaUpdateWrapper<AppCredentialEntity>()
+                .set(AppCredentialEntity::getEnabled, false)
+                .set(AppCredentialEntity::getUpdateTime, LocalDateTime.now())
+                .eq(AppCredentialEntity::getId, credId));
         if (cred.getSecretHash() != null) cacheManager.evictCredentialCache(cred.getSecretHash());
     }
 
     /** 删除凭证并失效缓存，删除后该凭证下次请求立即 401。 */
     public void delete(String appId, Long credId) {
-        AppCredential cred = getCredentialByIdAndApp(appId, credId);
+        AppCredentialEntity cred = getCredentialByIdAndApp(appId, credId);
         credentialMapper.deleteById(credId);
         if (cred.getSecretHash() != null) cacheManager.evictCredentialCache(cred.getSecretHash());
     }
@@ -162,8 +162,8 @@ public class CredentialService {
     /**
      * 校验凭证归属，防止跨 App 操作（如用 appA 的 token 删 appB 的凭证）。
      */
-    private AppCredential getCredentialByIdAndApp(String appId, Long credId) {
-        AppCredential cred = credentialMapper.selectById(credId);
+    private AppCredentialEntity getCredentialByIdAndApp(String appId, Long credId) {
+        AppCredentialEntity cred = credentialMapper.selectById(credId);
         if (cred == null || !cred.getAppId().equals(appId)) {
             throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "credentialId: " + credId);
         }
@@ -185,5 +185,5 @@ public class CredentialService {
      * 凭证创建结果：已持久化的凭证实体 + 一次性明文密钥。
      * plainSecret 在 Controller 层响应给前端后即可丢弃，不应在服务内部存储。
      */
-    public record CreatedCredential(AppCredential credential, String plainSecret) {}
+    public record CreatedCredential(AppCredentialEntity credential, String plainSecret) {}
 }

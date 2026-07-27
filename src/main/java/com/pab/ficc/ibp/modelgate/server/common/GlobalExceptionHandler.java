@@ -14,9 +14,12 @@ import reactor.core.publisher.Mono;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+// 管理后台统一返回改用行内标准 Result（单类型 import 会 shadow 同包的旧 common.Result）
+import com.pab.ficc.cus.web.result.Result;
+
 /**
  * 全局异常处理器（WebFlux 版）
- * 统一将未捕获异常转换为标准 Result 响应格式
+ * 统一将未捕获异常转换为行内标准 Result 响应格式（resultCode/resultMessage 结构）
  */
 @Slf4j
 @Order(-1)
@@ -36,14 +39,15 @@ public class GlobalExceptionHandler implements ErrorWebExceptionHandler {
 
         if (ex instanceof ResponseStatusException rse) {
             status = HttpStatus.valueOf(rse.getStatus().value());
-            result = Result.fail(status.value(), rse.getReason() != null ? rse.getReason() : ex.getMessage());
+            String reason = rse.getReason() != null ? rse.getReason() : ex.getMessage();
+            result = Result.fail(String.valueOf(status.value()), reason);
         } else if (ex instanceof BusinessException be) {
             status = HttpStatus.valueOf(be.getErrorCode().getCode() < 600
                     ? be.getErrorCode().getCode() : HttpStatus.BAD_REQUEST.value());
-            result = Result.fail(be.getErrorCode());
+            result = Result.fail(String.valueOf(be.getErrorCode().getCode()), be.getErrorCode().getMessage());
         } else {
             log.error("[ModelGate] Unhandled exception: {}", ex.getMessage(), ex);
-            result = Result.fail(ErrorCode.INTERNAL_ERROR);
+            result = Result.fail(String.valueOf(ErrorCode.INTERNAL_ERROR.getCode()), ErrorCode.INTERNAL_ERROR.getMessage());
         }
 
         exchange.getResponse().setStatusCode(status);
@@ -59,7 +63,7 @@ public class GlobalExceptionHandler implements ErrorWebExceptionHandler {
         try {
             bytes = objectMapper.writeValueAsBytes(result);
         } catch (JsonProcessingException e) {
-            bytes = "{\"code\":500,\"message\":\"internal server error\"}".getBytes();
+            bytes = "{\"resultCode\":\"500\",\"resultMessage\":\"internal server error\"}".getBytes();
         }
 
         DataBuffer buffer = exchange.getResponse().bufferFactory().wrap(bytes);

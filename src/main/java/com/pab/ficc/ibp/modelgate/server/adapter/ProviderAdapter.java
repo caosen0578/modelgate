@@ -1,7 +1,7 @@
 package com.pab.ficc.ibp.modelgate.server.adapter;
 
-import com.pab.ficc.ibp.modelgate.server.domain.entity.ModelCredential;
-import com.pab.ficc.ibp.modelgate.server.domain.entity.ModelInstance;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.ModelCredentialEntity;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.ModelInstanceEntity;
 import org.springframework.http.HttpHeaders;
 
 import java.net.URI;
@@ -24,15 +24,15 @@ public interface ProviderAdapter {
      * Transforms the raw request body bytes before forwarding to upstream.
      * Return the original bytes unchanged if no transformation is needed.
      */
-    byte[] transformRequestBody(byte[] originalBody, ModelInstance model, ModelCredential credential);
+    byte[] transformRequestBody(byte[] originalBody, ModelInstanceEntity model, ModelCredentialEntity credential);
 
     /**
      * Builds the upstream authorization and protocol headers.
      */
-    HttpHeaders buildUpstreamHeaders(ModelInstance model, ModelCredential credential);
+    HttpHeaders buildUpstreamHeaders(ModelInstanceEntity model, ModelCredentialEntity credential);
 
     /**
      * Constructs the target upstream URI from the model config and original request URI.
      */
-    URI buildUpstreamUri(ModelInstance model, URI originalUri);
+    URI buildUpstreamUri(ModelInstanceEntity model, URI originalUri);
 }

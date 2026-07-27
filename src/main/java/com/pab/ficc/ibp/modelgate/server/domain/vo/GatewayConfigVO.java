@@ -1,6 +1,6 @@
 package com.pab.ficc.ibp.modelgate.server.domain.vo;
 
-import com.pab.ficc.ibp.modelgate.server.domain.entity.GatewayConfig;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.GatewayConfigEntity;
 import lombok.Data;
 
 import java.time.LocalDateTime;
@@ -12,17 +12,17 @@ public class GatewayConfigVO {
     private String        configValue;
     private String        description;
     private String        updatedBy;
-    private LocalDateTime updatedAt;
-    private LocalDateTime createdAt;
+    private LocalDateTime updateTime;
+    private LocalDateTime createTime;
 
-    public static GatewayConfigVO of(GatewayConfig e) {
+    public static GatewayConfigVO of(GatewayConfigEntity e) {
         GatewayConfigVO vo = new GatewayConfigVO();
         vo.configKey   = e.getConfigKey();
         vo.configValue = e.getConfigValue();
         vo.description = e.getDescription();
         vo.updatedBy   = e.getUpdatedBy();
-        vo.updatedAt   = e.getUpdatedAt();
-        vo.createdAt   = e.getCreatedAt();
+        vo.updateTime   = e.getUpdateTime();
+        vo.createTime   = e.getCreateTime();
         return vo;
     }
 }

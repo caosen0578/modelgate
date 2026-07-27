@@ -1,7 +1,10 @@
 package com.pab.ficc.ibp.modelgate.server.service;
 
-import com.pab.ficc.ibp.modelgate.server.domain.entity.AuditLog;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.AuditLogEntity;
 import com.pab.ficc.ibp.modelgate.server.mapper.AuditLogMapper;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -42,6 +45,10 @@ public class AuditService {
 
     private final AuditLogMapper auditLogMapper;
     private final RateLimitService rateLimitService;
+    private final MeterRegistry meterRegistry;
+
+    /** 因队列满被丢弃的审计条数（压测/生产监控用） */
+    private Counter droppedCounter;
 
     @Value("${modelgate.audit.enabled:true}")
     private boolean auditEnabled;
@@ -53,11 +60,24 @@ public class AuditService {
     @Value("${modelgate.audit.buffer-size:200000}")
     private int bufferSize;
 
-    private LinkedBlockingQueue<AuditLog> queue;
+    private LinkedBlockingQueue<AuditLogEntity> queue;
 
     @PostConstruct
     public void init() {
         queue = new LinkedBlockingQueue<>(bufferSize);
+
+        // 队列深度（当前积压条数）——压测时观测是否逼近 bufferSize，逼近即开始丢日志
+        Gauge.builder("modelgate.audit.queue.size", queue, LinkedBlockingQueue::size)
+                .description("Current backlog of audit log entries waiting to be flushed")
+                .register(meterRegistry);
+        // 队列容量上限，便于面板计算水位百分比
+        Gauge.builder("modelgate.audit.queue.capacity", this, s -> s.bufferSize)
+                .description("Configured audit queue capacity")
+                .register(meterRegistry);
+        // 因队列满而丢弃的累计条数
+        droppedCounter = Counter.builder("modelgate.audit.dropped.total")
+                .description("Total audit log entries dropped because the queue was full")
+                .register(meterRegistry);
     }
 
     /**
@@ -72,7 +92,7 @@ public class AuditService {
                     int inputTokens, int outputTokens, String errorMsg, String traceId) {
         if (!auditEnabled) return;
 
-        AuditLog entry = buildEntry(traceId, appId, modelId, credType, clientIp,
+        AuditLogEntity entry = buildEntry(traceId, appId, modelId, credType, clientIp,
                 requestPath, httpStatus, latencyMs, inputTokens, outputTokens, errorMsg);
 
         // 无论 dbWriteEnabled 是否开启，都必须入队：
@@ -80,6 +100,7 @@ public class AuditService {
         // Redis 月度计数器永远不更新，导致月度配额彻底失效。
         boolean offered = queue.offer(entry);
         if (!offered) {
+            droppedCounter.increment();
             log.warn("[AuditService] Queue full, dropping audit log traceId={}", traceId);
         }
     }
@@ -94,7 +115,7 @@ public class AuditService {
     @Scheduled(fixedDelayString = "${modelgate.audit.flush-interval-ms:2000}")
     public void flush() {
         if (queue == null || queue.isEmpty()) return;
-        List<AuditLog> batch = new ArrayList<>(5000);
+        List<AuditLogEntity> batch = new ArrayList<>(5000);
         queue.drainTo(batch, 5000);
         if (batch.isEmpty()) return;
 
@@ -120,11 +141,11 @@ public class AuditService {
      *   <li>批量汇总后，同一 app+model 的多次请求只需一次 Redis INCRBY，I/O 显著减少。</li>
      * </ol>
      */
-    private void accumulateMonthlyTokens(List<AuditLog> batch) {
+    private void accumulateMonthlyTokens(List<AuditLogEntity> batch) {
         // 使用 record 作为 Map key，按 app+model 分组累加 token 数
         record Key(String appId, String modelId) {}
         Map<Key, Long> totals = new HashMap<>();
-        for (AuditLog entry : batch) {
+        for (AuditLogEntity entry : batch) {
             if (entry.getAppId() == null || entry.getModelId() == null) continue;
             long tokens = (entry.getInputTokens() != null ? entry.getInputTokens() : 0)
                     + (entry.getOutputTokens() != null ? entry.getOutputTokens() : 0);
@@ -134,10 +155,10 @@ public class AuditService {
         totals.forEach((k, tokens) -> rateLimitService.addMonthlyTokens(k.appId(), k.modelId(), tokens));
     }
 
-    private AuditLog buildEntry(String traceId, String appId, String modelId, String credType,
+    private AuditLogEntity buildEntry(String traceId, String appId, String modelId, String credType,
                                  String clientIp, String requestPath, int httpStatus,
                                  long latencyMs, int inputTokens, int outputTokens, String errorMsg) {
-        AuditLog entry = new AuditLog();
+        AuditLogEntity entry = new AuditLogEntity();
         entry.setTraceId(traceId);
         entry.setAppId(appId);
         entry.setModelId(modelId);

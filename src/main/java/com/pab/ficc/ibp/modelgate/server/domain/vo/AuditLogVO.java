@@ -1,6 +1,6 @@
 package com.pab.ficc.ibp.modelgate.server.domain.vo;
 
-import com.pab.ficc.ibp.modelgate.server.domain.entity.AuditLog;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.AuditLogEntity;
 import lombok.Data;
 
 import java.time.LocalDateTime;
@@ -21,7 +21,7 @@ public class AuditLogVO {
     private String        errorMsg;
     private LocalDateTime createdAt;
 
-    public static AuditLogVO of(AuditLog e) {
+    public static AuditLogVO of(AuditLogEntity e) {
         AuditLogVO vo = new AuditLogVO();
         vo.id           = e.getId();
         vo.traceId      = e.getTraceId();

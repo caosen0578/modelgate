@@ -1,6 +1,6 @@
 package com.pab.ficc.ibp.modelgate.server.domain.vo;
 
-import com.pab.ficc.ibp.modelgate.server.domain.entity.AppModelAuth;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.AppModelAuthEntity;
 import lombok.Data;
 
 import java.time.LocalDateTime;
@@ -15,9 +15,9 @@ public class AppModelAuthVO {
     private Integer       dailyLimit;
     private Long          monthlyTokens;
     private LocalDateTime expiresAt;
-    private LocalDateTime createdAt;
+    private LocalDateTime createTime;
 
-    public static AppModelAuthVO of(AppModelAuth e) {
+    public static AppModelAuthVO of(AppModelAuthEntity e) {
         AppModelAuthVO vo = new AppModelAuthVO();
         vo.appId         = e.getAppId();
         vo.modelId       = e.getModelId();
@@ -26,7 +26,7 @@ public class AppModelAuthVO {
         vo.dailyLimit    = e.getDailyLimit();
         vo.monthlyTokens = e.getMonthlyTokens();
         vo.expiresAt     = e.getExpiresAt();
-        vo.createdAt     = e.getCreatedAt();
+        vo.createTime     = e.getCreateTime();
         return vo;
     }
 }

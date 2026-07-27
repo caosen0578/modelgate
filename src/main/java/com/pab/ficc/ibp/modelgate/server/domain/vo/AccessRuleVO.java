@@ -1,6 +1,6 @@
 package com.pab.ficc.ibp.modelgate.server.domain.vo;
 
-import com.pab.ficc.ibp.modelgate.server.domain.entity.AccessRule;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.AccessRuleEntity;
 import lombok.Data;
 
 @Data
@@ -12,7 +12,7 @@ public class AccessRuleVO {
     private String ruleValue;
     private String remark;
 
-    public static AccessRuleVO of(AccessRule e) {
+    public static AccessRuleVO of(AccessRuleEntity e) {
         AccessRuleVO vo = new AccessRuleVO();
         vo.id        = e.getId();
         vo.appId     = e.getAppId();

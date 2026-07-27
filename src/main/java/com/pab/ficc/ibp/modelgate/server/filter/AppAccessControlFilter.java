@@ -5,7 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pab.ficc.ibp.modelgate.server.admin.IpMatcher;
 import com.pab.ficc.ibp.modelgate.server.common.ErrorCode;
 import com.pab.ficc.ibp.modelgate.server.common.Result;
-import com.pab.ficc.ibp.modelgate.server.domain.entity.AccessRule;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.AccessRuleEntity;
 import com.pab.ficc.ibp.modelgate.server.service.AccessRuleService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -95,8 +95,8 @@ public class AppAccessControlFilter implements GlobalFilter, Ordered {
     /**
      * 任意一条规则命中即返回 true（OR 逻辑）。
      */
-    private boolean isAllowed(String clientIp, String clientDomain, List<AccessRule> rules) {
-        for (AccessRule rule : rules) {
+    private boolean isAllowed(String clientIp, String clientDomain, List<AccessRuleEntity> rules) {
+        for (AccessRuleEntity rule : rules) {
             switch (rule.getRuleType()) {
                 case "ip"              -> { if (clientIp != null && clientIp.equals(rule.getRuleValue())) return true; }
                 case "cidr"            -> { if (clientIp != null && ipMatcher.matchesCidr(clientIp, rule.getRuleValue())) return true; }

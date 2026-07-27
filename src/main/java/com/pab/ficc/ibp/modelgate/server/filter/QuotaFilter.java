@@ -4,7 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pab.ficc.ibp.modelgate.server.common.ErrorCode;
 import com.pab.ficc.ibp.modelgate.server.common.Result;
-import com.pab.ficc.ibp.modelgate.server.domain.entity.AppModelAuth;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.AppModelAuthEntity;
 import com.pab.ficc.ibp.modelgate.server.service.ModelAuthService;
 import com.pab.ficc.ibp.modelgate.server.service.RateLimitService;
 import lombok.RequiredArgsConstructor;
@@ -77,13 +77,13 @@ public class QuotaFilter implements GlobalFilter, Ordered {
             return null;
         }
 
-        List<AppModelAuth> auths = modelAuthService.listByAppIdCached(appId);
-        Optional<AppModelAuth> authOpt = auths.stream()
+        List<AppModelAuthEntity> auths = modelAuthService.listByAppIdCached(appId);
+        Optional<AppModelAuthEntity> authOpt = auths.stream()
                 .filter(a -> a.getModelId().equals(modelId))
                 .findFirst();
 
         if (authOpt.isEmpty()) return null;
-        AppModelAuth auth = authOpt.get();
+        AppModelAuthEntity auth = authOpt.get();
 
         if (!rateLimitService.isQpsAllowed(appId, modelId, auth.getQpsLimit())) {
             log.info("[QuotaFilter] QPS exceeded appId={} modelId={}", appId, modelId);
