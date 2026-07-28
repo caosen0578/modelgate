@@ -56,12 +56,18 @@
 
         <!-- ===== Redis =====
              内网 com.pab.framework:redis 无法外网解析，已用精简源码桩 CacheProvider.java（仅
-             get/setex/del/eval）替代，本地无需 jedis。合入内网时删桩并恢复：
+             get/setex/del/eval）替代。合入内网时删桩并恢复：
         <dependency>
             <groupId>com.pab.framework</groupId>
             <artifactId>redis</artifactId>
         </dependency>
         -->
+        <!-- 本地 Redis 客户端（local Profile 直连本地 Redis，jedis 3.x） -->
+        <dependency>
+            <groupId>redis.clients</groupId>
+            <artifactId>jedis</artifactId>
+            <version>3.8.0</version>
+        </dependency>
         <!-- 本地数据源连接池（local Profile 的 localDataSource 用） -->
         <dependency>
             <groupId>com.zaxxer</groupId>

@@ -6,19 +6,19 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
+import redis.clients.jedis.Jedis;
+import redis.clients.jedis.JedisPool;
+import redis.clients.jedis.JedisPoolConfig;
 
-import java.lang.reflect.Proxy;
 import java.util.List;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Redis CacheProvider 装配。
  *
  * <ul>
- *   <li>非 local：内网 Redis 集群（{@link RedisClusterProvider}）。</li>
- *   <li>local：内存版 CacheProvider（动态代理实现完整接口，仅 get/setex/del/eval 有真实语义，
- *       其余方法返回类型默认值）——够本地 admin CRUD 联调，不需要真实 Redis。</li>
+ *   <li>非 local：内网 Redis 集群（{@link RedisClusterProvider}，配置经 Apollo {@code redis-cluster-key} 下发）。</li>
+ *   <li>local：jedis 直连本地 Redis（{@code redis.local.*}，见 application-local.yml），
+ *       仅实现本项目用到的 get/setex/del/eval。<b>本地兼容件，合入内网时删除。</b></li>
  * </ul>
  */
 @Configuration
@@ -31,69 +31,59 @@ public class RedisConfig {
         return RedisClusterProvider.getInstance(redisClusterKey);
     }
 
-    /** local：内存版 CacheProvider（动态代理，无需真实 Redis）。 */
+    /** local：jedis 直连本地 Redis。 */
     @Bean
     @Profile("local")
-    public CacheProvider localCacheProvider() {
-        final ConcurrentHashMap<String, String> store = new ConcurrentHashMap<>();
-        final ConcurrentHashMap<String, AtomicLong> counters = new ConcurrentHashMap<>();
-        return (CacheProvider) Proxy.newProxyInstance(
-                CacheProvider.class.getClassLoader(),
-                new Class[]{CacheProvider.class},
-                (proxy, method, args) -> {
-                    switch (method.getName()) {
-                        case "get":
-                            if (args != null && args.length == 1 && args[0] instanceof String) {
-                                return store.get((String) args[0]);
-                            }
-                            break;
-                        case "setex":
-                            if (args != null && args.length == 3 && args[0] instanceof String) {
-                                store.put((String) args[0], String.valueOf(args[2]));
-                                return "OK";
-                            }
-                            break;
-                        case "del":
-                            if (args != null && args.length == 1 && args[0] instanceof String) {
-                                String k = (String) args[0];
-                                counters.remove(k);
-                                return store.remove(k) != null ? 1L : 0L;
-                            }
-                            break;
-                        case "eval":
-                            if (args != null && args.length == 3 && args[1] instanceof List) {
-                                return evalStub((String) args[0], (List<String>) args[1], (List<String>) args[2], counters);
-                            }
-                            break;
-                        default:
-                            break;
-                    }
-                    return defaultValue(method.getReturnType());
-                });
+    public CacheProvider localCacheProvider(
+            @Value("${redis.local.host:127.0.0.1}") String host,
+            @Value("${redis.local.port:6379}") int port,
+            @Value("${redis.local.password:}") String password) {
+        return new LocalJedisCacheProvider(host, port, password);
     }
 
-    /** 模拟限流/月度计数脚本：INCRBY→累加返回；INCR→超限返0否则1；其余(GET)→返回当前累计。 */
-    private static Object evalStub(String script, List<String> keys, List<String> args,
-                                  ConcurrentHashMap<String, AtomicLong> counters) {
-        String key = (keys == null || keys.isEmpty()) ? "" : keys.get(0);
-        AtomicLong counter = counters.computeIfAbsent(key, k -> new AtomicLong());
-        if (script.contains("INCRBY")) {
-            long inc = (args == null || args.isEmpty()) ? 0L : Long.parseLong(args.get(0));
-            return counter.addAndGet(inc);
-        }
-        if (script.contains("INCR")) {
-            long current = counter.incrementAndGet();
-            long limit = (args == null || args.isEmpty()) ? Long.MAX_VALUE : Long.parseLong(args.get(0));
-            return current > limit ? 0L : 1L;
-        }
-        return counter.get();
-    }
+    /** 本地 jedis CacheProvider：仅实现代码实际调用的 4 个方法。 */
+    static class LocalJedisCacheProvider implements CacheProvider {
 
-    private static Object defaultValue(Class<?> t) {
-        if (t == long.class || t == Long.class) return 0L;
-        if (t == int.class || t == Integer.class) return 0;
-        if (t == boolean.class || t == Boolean.class) return false;
-        if (t == double.class || t == Double.class) return 0.0d;
-        return null;
+        private final JedisPool pool;
+
+        LocalJedisCacheProvider(String host, int port, String password) {
+            JedisPoolConfig config = new JedisPoolConfig();
+            config.setMaxTotal(16);
+            config.setMaxIdle(8);
+            config.setMinIdle(1);
+            if (password != null && !password.isEmpty()) {
+                this.pool = new JedisPool(config, host, port, 2000, password);
+            } else {
+                this.pool = new JedisPool(config, host, port, 2000);
+            }
+        }
+
+        @Override
+        public String get(String key) {
+            try (Jedis jedis = pool.getResource()) {
+                return jedis.get(key);
+            }
+        }
+
+        @Override
+        public String setex(String key, int seconds, String value) {
+            try (Jedis jedis = pool.getResource()) {
+                return jedis.setex(key, seconds, value);
+            }
+        }
+
+        @Override
+        public Long del(String key) {
+            try (Jedis jedis = pool.getResource()) {
+                return jedis.del(key);
+            }
+        }
+
+        @Override
+        public Object eval(String script, List<String> keys, List<String> args) {
+            try (Jedis jedis = pool.getResource()) {
+                return jedis.eval(script, keys, args);
+            }
+        }
     }
 }
