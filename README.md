@@ -20,9 +20,8 @@
 ## 快速开始
 
 ```bash
-# 1. 初始化数据库（全新环境）
-mysql -u root -p < sql/V1__baseline_schema.sql
-#    存量环境升级：sql/V2__upgrade_base_fields.sql
+# 1. 初始化数据库（在目标库下执行完整建表脚本）
+mysql -u root -p 你的库名 < sql/modelgate_schema.sql
 
 # 2. 必需环境变量
 export MODELGATE_CRYPTO_KEY=$(openssl rand -base64 32)   # 凭证加密密钥（32字节 base64）
@@ -47,9 +46,9 @@ java -jar target/modelgate-1.0.0-SNAPSHOT.jar
 export JAVA_HOME=/path/to/jdk-17
 
 # 1. 起本地 MySQL 并建库（二选一）
-mysql -uroot -p -e "SOURCE sql/V1__baseline_schema.sql"          # 已有 MySQL
+mysql -uroot -p 你的库名 < sql/modelgate_schema.sql          # 已有 MySQL
 # docker run --name mg-mysql -e MYSQL_ROOT_PASSWORD=root -e MYSQL_DATABASE=modelgate \
-#   -p 3306:3306 -d mysql:8 && mysql -uroot -proot modelgate < sql/V1__baseline_schema.sql   # 或用 Docker
+#   -p 3306:3306 -d mysql:8 && mysql -uroot -proot modelgate < sql/modelgate_schema.sql   # 或用 Docker
 
 # 2. 改 src/main/resources/application-local.yml 里的 spring.datasource（url/username/password）
 
@@ -85,7 +84,7 @@ Authorization: Bearer {api_key}          # 或 AKSK {ak}:{timestamp}:{signature}
 | 05-边界限制与禁止规则 / 06-验收标准 | 红线与验收清单 |
 | 09-压测方案 | JMeter 压测场景、JVM/连接池参数、指标与红线 |
 | 10-部署与运维手册 | 资源清单、环境变量、监控告警、上线检查清单 |
-| [sql/](sql/) | V1 基线建表 + V2 存量升级脚本 |
+| [sql/](sql/) | 完整建表脚本 `modelgate_schema.sql`（8 张表，字段注释齐全） |
 
 ## 目录结构
 
