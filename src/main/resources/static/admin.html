@@ -497,7 +497,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
         <div class="form-group"><label>负责人</label><input type="text" id="di_owner"/></div>
         <div class="form-group"><label>备注</label><input type="text" id="di_remark"/></div>
         <div class="form-group"><label>状态</label><select id="di_enabled"><option value="true">启用</option><option value="false">禁用</option></select></div>
-        <div class="form-group"><label>创建时间</label><input type="text" id="di_createdAt" readonly style="background:#f8fafc"/></div>
+        <div class="form-group"><label>创建时间</label><input type="text" id="di_createTime" readonly style="background:#f8fafc"/></div>
       </div>
       <div class="flex gap-8 mt-12">
         <button class="btn btn-primary" data-api="PUT /admin/apps/update" onclick="saveAppInfo()">保存修改</button>
@@ -1167,7 +1167,7 @@ async function submitModel(){
       const idx = allModels.findIndex(x=>x.modelId===editingModelId);
       if(idx>=0) allModels[idx] = {...allModels[idx], ...body};
     } else {
-      allModels.push({...body, enabled:true, createdAt:new Date().toISOString()});
+      allModels.push({...body, enabled:true, createTime:new Date().toISOString()});
     }
     $('modelCount').textContent = allModels.length;
     renderModels(allModels);
@@ -1326,7 +1326,7 @@ async function submitApp(){
     if(j.code===0){ toast('系统已创建'); closeModal('appModal'); loadApps(); }
     else toast('失败: '+j.message,'error');
   }catch(e){
-    allApps.push({...body, enabled:true, authCount:0, credCount:0, createdAt:new Date().toISOString()});
+    allApps.push({...body, enabled:true, authCount:0, credCount:0, createTime:new Date().toISOString()});
     $('appCount').textContent = allApps.length;
     renderApps(allApps);
     toast('系统已创建（演示）');
@@ -1379,7 +1379,7 @@ function openDrawer(appId, tab='info'){
   $('di_owner').value      = currentApp.owner||'';
   $('di_remark').value     = currentApp.remark||'';
   $('di_enabled').value    = String(currentApp.enabled!==false);
-  $('di_createdAt').value  = fmtTime(currentApp.createdAt);
+  $('di_createTime').value  = fmtTime(currentApp.createTime);
   $('di_sysCodeLabel').textContent = currentApp.sysCode||'-';
   $('di_appIdLabel').textContent   = currentApp.appId||'-';
 
@@ -1733,7 +1733,7 @@ function renderAudit(data){
   if(!data.length){ tbody.innerHTML='<tr class="empty-row"><td colspan="8">暂无审计数据</td></tr>'; return; }
   tbody.innerHTML = data.map(a=>`
     <tr>
-      <td style="font-size:12px;white-space:nowrap">${fmtTime(a.createdAt)}</td>
+      <td style="font-size:12px;white-space:nowrap">${fmtTime(a.createTime)}</td>
       <td><code style="font-size:11px">${(a.traceId||'').slice(0,12)}...</code></td>
       <td>${a.appId||'-'}</td>
       <td>${a.modelId||'-'}</td>
@@ -1781,7 +1781,7 @@ function renderConfig(data){
       <td><code>${c.configKey}</code></td>
       <td><input type="text" value="${escHtml(c.configValue)}" id="cfgv_${c.configKey.replace(/\./g,'_')}" style="width:100%;min-width:200px"/></td>
       <td style="font-size:12px;color:#64748b">${c.description||'-'}</td>
-      <td style="font-size:12px;color:#94a3b8">${fmtTime(c.updatedAt)}</td>
+      <td style="font-size:12px;color:#94a3b8">${fmtTime(c.updateTime)}</td>
       <td>
         <div class="flex gap-8">
           <button class="btn btn-success btn-sm" title="PUT /admin/config/save  {key:'${c.configKey}'}" onclick="saveConfigKv('${c.configKey}','${escHtml(c.description||'')}')">保存</button>
@@ -2077,9 +2077,9 @@ const DEMO_MODELS = [
 ];
 
 const DEMO_APPS = [
-  {appId:'crm-service', sysCode:'CRM',  appCode:'CRM001',  appName:'客户关系管理系统', owner:'张三', enabled:true,  authCount:2,credCount:2,createdAt:'2026-01-15T10:00:00'},
-  {appId:'bi-platform', sysCode:'BI',   appCode:'BI001',   appName:'BI 数据平台',      owner:'李四', enabled:true,  authCount:1,credCount:1,createdAt:'2026-02-01T09:00:00'},
-  {appId:'risk-engine', sysCode:'RISK', appCode:'RISK001', appName:'风控引擎',          owner:'王五', enabled:true,  authCount:3,credCount:2,createdAt:'2026-03-10T14:00:00'},
+  {appId:'crm-service', sysCode:'CRM',  appCode:'CRM001',  appName:'客户关系管理系统', owner:'张三', enabled:true,  authCount:2,credCount:2,createTime:'2026-01-15T10:00:00'},
+  {appId:'bi-platform', sysCode:'BI',   appCode:'BI001',   appName:'BI 数据平台',      owner:'李四', enabled:true,  authCount:1,credCount:1,createTime:'2026-02-01T09:00:00'},
+  {appId:'risk-engine', sysCode:'RISK', appCode:'RISK001', appName:'风控引擎',          owner:'王五', enabled:true,  authCount:3,credCount:2,createTime:'2026-03-10T14:00:00'},
 ];
 
 const DEMO_CREDS = {
@@ -2106,16 +2106,16 @@ const DEMO_ACCESS = {
 };
 
 const DEMO_AUDIT = [
-  {traceId:'abc123def456',appId:'crm-service',modelId:'gpt-4o',clientIp:'10.0.1.5',httpStatus:200,latencyMs:342,inputTokens:100,outputTokens:1104,createdAt:'2026-04-23T10:01:00'},
-  {traceId:'def456ghi789',appId:'bi-platform',modelId:'gpt-4o',clientIp:'10.0.2.8',httpStatus:429,latencyMs:12,inputTokens:0,outputTokens:0,createdAt:'2026-04-23T10:01:05'},
-  {traceId:'ghi789jkl012',appId:'risk-engine',modelId:'claude-3-5-sonnet',clientIp:'192.168.1.9',httpStatus:403,latencyMs:5,inputTokens:0,outputTokens:0,createdAt:'2026-04-23T10:01:10'},
+  {traceId:'abc123def456',appId:'crm-service',modelId:'gpt-4o',clientIp:'10.0.1.5',httpStatus:200,latencyMs:342,inputTokens:100,outputTokens:1104,createTime:'2026-04-23T10:01:00'},
+  {traceId:'def456ghi789',appId:'bi-platform',modelId:'gpt-4o',clientIp:'10.0.2.8',httpStatus:429,latencyMs:12,inputTokens:0,outputTokens:0,createTime:'2026-04-23T10:01:05'},
+  {traceId:'ghi789jkl012',appId:'risk-engine',modelId:'claude-3-5-sonnet',clientIp:'192.168.1.9',httpStatus:403,latencyMs:5,inputTokens:0,outputTokens:0,createTime:'2026-04-23T10:01:10'},
 ];
 
 const DEMO_CONFIG = [
-  {configKey:'auth.enabled',configValue:'true',description:'鉴权总开关',updatedAt:'2026-04-23T10:00:00'},
-  {configKey:'circuit.breaker.enabled',configValue:'true',description:'熔断开关',updatedAt:'2026-04-23T10:00:00'},
-  {configKey:'rate.limit.default',configValue:'100',description:'全局默认 QPS',updatedAt:'2026-04-23T10:00:00'},
-  {configKey:'aksk.window.seconds',configValue:'300',description:'AK/SK 防重放时间窗口',updatedAt:'2026-04-23T10:00:00'},
+  {configKey:'auth.enabled',configValue:'true',description:'鉴权总开关',updateTime:'2026-04-23T10:00:00'},
+  {configKey:'circuit.breaker.enabled',configValue:'true',description:'熔断开关',updateTime:'2026-04-23T10:00:00'},
+  {configKey:'rate.limit.default',configValue:'100',description:'全局默认 QPS',updateTime:'2026-04-23T10:00:00'},
+  {configKey:'aksk.window.seconds',configValue:'300',description:'AK/SK 防重放时间窗口',updateTime:'2026-04-23T10:00:00'},
 ];
 
 // ============================================================

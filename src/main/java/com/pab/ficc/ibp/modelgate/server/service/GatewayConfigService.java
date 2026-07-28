@@ -82,7 +82,7 @@ public class GatewayConfigService {
     }
 
     public GatewayConfigEntity upsert(GatewayConfigEntity config, String operatorName) {
-        config.setUpdatedBy(operatorName);
+        config.setUpdater(operatorName);
         config.setUpdateTime(LocalDateTime.now());
 
         GatewayConfigEntity existing = configMapper.selectById(config.getConfigKey());

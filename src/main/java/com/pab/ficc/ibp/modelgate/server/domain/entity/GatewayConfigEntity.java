@@ -29,10 +29,7 @@ public class GatewayConfigEntity {
     /** 描述说明 */
     private String description;
 
-    /** 最后修改人（从 X-Admin-User 透传，业务语义保留） */
-    private String updatedBy;
-
-    // ===== 内部规范基础字段 =====
+    // ===== 内部规范基础字段（修改人 X-Admin-User 透传写入 updater） =====
     @TableField(fill = FieldFill.INSERT)
     private String creater;
     @TableField(fill = FieldFill.INSERT)

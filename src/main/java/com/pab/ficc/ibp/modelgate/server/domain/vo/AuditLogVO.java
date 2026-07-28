@@ -19,7 +19,7 @@ public class AuditLogVO {
     private Integer       inputTokens;
     private Integer       outputTokens;
     private String        errorMsg;
-    private LocalDateTime createdAt;
+    private LocalDateTime createTime;
 
     public static AuditLogVO of(AuditLogEntity e) {
         AuditLogVO vo = new AuditLogVO();
@@ -34,7 +34,7 @@ public class AuditLogVO {
         vo.inputTokens  = e.getInputTokens();
         vo.outputTokens = e.getOutputTokens();
         vo.errorMsg     = e.getErrorMsg();
-        vo.createdAt    = e.getCreatedAt();
+        vo.createTime   = e.getCreateTime();
         return vo;
     }
 }

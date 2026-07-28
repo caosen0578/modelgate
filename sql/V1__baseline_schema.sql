@@ -159,7 +159,6 @@ CREATE TABLE IF NOT EXISTS mg_gateway_config (
     config_key   VARCHAR(128) NOT NULL PRIMARY KEY COMMENT '配置键，全局唯一',
     config_value TEXT         NOT NULL              COMMENT '配置值',
     description  VARCHAR(256)                       COMMENT '说明',
-    updated_by   VARCHAR(64)                        COMMENT '最后修改人（X-Admin-User 透传）',
     creater      VARCHAR(50)  CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL COMMENT '创建人',
     create_time  DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     updater      VARCHAR(50)  CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL COMMENT '修改人',
@@ -177,7 +176,7 @@ INSERT INTO mg_gateway_config (config_key, config_value, description) VALUES
 ON DUPLICATE KEY UPDATE config_key = config_key;
 
 -- ============================================================
--- 8. 审计日志（高频追加表，无基础字段，仅 created_at；被清理/统计 SQL 直接引用）
+-- 8. 审计日志（高频追加表，无基础字段，仅 create_time；被清理/统计 SQL 直接引用）
 -- ============================================================
 CREATE TABLE IF NOT EXISTS mg_audit_log (
     id             BIGINT        NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -193,11 +192,11 @@ CREATE TABLE IF NOT EXISTS mg_audit_log (
     input_tokens   INT           NOT NULL DEFAULT 0,
     output_tokens  INT           NOT NULL DEFAULT 0,
     error_msg      VARCHAR(1024),
-    created_at     DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_trace_id   (trace_id),
-    INDEX idx_app_id     (app_id),
-    INDEX idx_model_id   (model_id),
-    INDEX idx_created_at (created_at)
+    create_time    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '事件时间',
+    INDEX idx_trace_id    (trace_id),
+    INDEX idx_app_id      (app_id),
+    INDEX idx_model_id    (model_id),
+    INDEX idx_create_time (create_time)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='调用审计日志';
 
 -- ============================================================

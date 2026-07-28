@@ -11,7 +11,7 @@ public class GatewayConfigVO {
     private String        configKey;
     private String        configValue;
     private String        description;
-    private String        updatedBy;
+    private String        updater;
     private LocalDateTime updateTime;
     private LocalDateTime createTime;
 
@@ -20,7 +20,7 @@ public class GatewayConfigVO {
         vo.configKey   = e.getConfigKey();
         vo.configValue = e.getConfigValue();
         vo.description = e.getDescription();
-        vo.updatedBy   = e.getUpdatedBy();
+        vo.updater     = e.getUpdater();
         vo.updateTime   = e.getUpdateTime();
         vo.createTime   = e.getCreateTime();
         return vo;

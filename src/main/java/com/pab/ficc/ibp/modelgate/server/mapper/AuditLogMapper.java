@@ -25,7 +25,7 @@ public interface AuditLogMapper extends BaseMapper<AuditLogEntity> {
                 list, 1000, (sqlSession, entity) -> sqlSession.insert(statement, entity));
     }
 
-    @Delete("DELETE FROM mg_audit_log WHERE created_at < #{cutoff} LIMIT #{limit}")
+    @Delete("DELETE FROM mg_audit_log WHERE create_time < #{cutoff} LIMIT #{limit}")
     int deleteBefore(@Param("cutoff") LocalDateTime cutoff, @Param("limit") int limit);
 
     @Select("SELECT COUNT(*) AS totalRequests, " +
@@ -34,7 +34,7 @@ public interface AuditLogMapper extends BaseMapper<AuditLogEntity> {
             "COALESCE(AVG(latency_ms), 0) AS avgLatencyMs, " +
             "COALESCE(SUM(CASE WHEN http_status < 400 THEN 1 ELSE 0 END), 0) AS successCount " +
             "FROM mg_audit_log " +
-            "WHERE created_at BETWEEN #{start} AND #{end} " +
+            "WHERE create_time BETWEEN #{start} AND #{end} " +
             "AND (#{appId} IS NULL OR app_id = #{appId}) " +
             "AND (#{modelId} IS NULL OR model_id = #{modelId})")
     Map<String, Object> selectUsageStats(@Param("appId") String appId,

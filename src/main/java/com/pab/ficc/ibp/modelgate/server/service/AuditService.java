@@ -170,7 +170,7 @@ public class AuditService {
         entry.setInputTokens(inputTokens);
         entry.setOutputTokens(outputTokens);
         entry.setErrorMsg(errorMsg);
-        entry.setCreatedAt(LocalDateTime.now());
+        entry.setCreateTime(LocalDateTime.now());
         return entry;
     }
 

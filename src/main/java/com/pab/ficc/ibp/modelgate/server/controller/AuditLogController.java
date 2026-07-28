@@ -22,7 +22,7 @@ import java.util.stream.Collectors;
 
 /**
  * 审计日志查询接口
- * GET /admin/audit — 原始审计明细，最多返回 200 条，按 created_at 倒序
+ * GET /admin/audit — 原始审计明细，最多返回 200 条，按 create_time 倒序
  */
 @Tag(name = "审计日志", description = "查询 API 调用明细，支持按系统、模型、状态码、traceId 筛选")
 @RestController
@@ -52,7 +52,7 @@ public class AuditLogController {
                 .eq(modelId != null && !modelId.isBlank(), AuditLogEntity::getModelId,    modelId)
                 .eq(status  != null,                       AuditLogEntity::getHttpStatus, status)
                 .eq(traceId != null && !traceId.isBlank(), AuditLogEntity::getTraceId,    traceId)
-                .orderByDesc(AuditLogEntity::getCreatedAt)
+                .orderByDesc(AuditLogEntity::getCreateTime)
                 .last("LIMIT 200");
 
         return auditLogMapper.selectList(wrapper);

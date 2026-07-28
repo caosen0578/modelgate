@@ -4,8 +4,9 @@
 --   1) created_at/updated_at 重命名为 create_time/update_time
 --   2) 追加内部规范基础字段（creater/updater/is_del/creater_um/updater_um）
 --   3) mg_app_model_auth 唯一键纳入 is_del（软删行不占用唯一键）
+--   4) mg_gateway_config 去掉 updated_by（并入标准 updater）
+--   5) mg_audit_log 仅把 created_at 改名 create_time（追加表，不加其余基础字段）
 -- 注意：
---   - mg_audit_log 不动（保留 created_at）
 --   - MySQL 8 的 ADD COLUMN ... DEFAULT '0' 会以默认值回填存量行；
 --     执行后请抽查 is_del 均为 '0'
 --   - 执行前备份，建议在变更窗口内执行
@@ -75,7 +76,7 @@ ALTER TABLE mg_access_rule
     ADD COLUMN creater_um VARCHAR(100) DEFAULT NULL COMMENT '创建人um',
     ADD COLUMN updater_um VARCHAR(100) DEFAULT NULL COMMENT '更新人um';
 
--- 7. mg_gateway_config（原表只有 updated_at，需补 create_time）
+-- 7. mg_gateway_config（原表只有 updated_at + updated_by，需补 create_time、并入 updater）
 ALTER TABLE mg_gateway_config
     CHANGE updated_at update_time DATETIME NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '修改时间',
     ADD COLUMN create_time DATETIME NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
@@ -84,6 +85,15 @@ ALTER TABLE mg_gateway_config
     ADD COLUMN is_del     VARCHAR(50)  CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT '0'  COMMENT '删除标志(1-已删除 0-未删除)',
     ADD COLUMN creater_um VARCHAR(100) DEFAULT NULL COMMENT '创建人um',
     ADD COLUMN updater_um VARCHAR(100) DEFAULT NULL COMMENT '更新人um';
+-- 迁移旧 updated_by 到标准 updater，再删除旧列
+UPDATE mg_gateway_config SET updater = updated_by WHERE updated_by IS NOT NULL AND updater IS NULL;
+ALTER TABLE mg_gateway_config DROP COLUMN updated_by;
+
+-- 8. mg_audit_log（仅改名 created_at→create_time，含索引；不加其余基础字段）
+ALTER TABLE mg_audit_log
+    CHANGE created_at create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '事件时间',
+    DROP INDEX idx_created_at,
+    ADD INDEX idx_create_time (create_time);
 
 -- ============================================================
 -- 验证（执行后抽查）

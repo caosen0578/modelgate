@@ -24,5 +24,6 @@ public class AuditLogEntity {
     private Integer inputTokens;
     private Integer outputTokens;
     private String errorMsg;
-    private LocalDateTime createdAt;
+    /** 事件时间（审计追加表，命名对齐基础字段 create_time；不含 is_del/creater 等其余基础字段） */
+    private LocalDateTime createTime;
 }
