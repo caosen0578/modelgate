@@ -1,5 +1,6 @@
 package com.pab.ficc.ibp.modelgate.server.filter;
 
+import com.pab.ficc.ibp.modelgate.server.constant.UrlConstant;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pab.ficc.ibp.modelgate.server.common.ErrorCode;
@@ -47,6 +48,17 @@ public class CredentialAuthFilter implements GlobalFilter, Ordered {
     private static final int ORDER = -190;
     private static final long MAX_TIMESTAMP_SKEW_MS = 5L * 60 * 1000;
 
+    /**
+     * 鉴权结果写入 exchange attribute 供下游读取。
+     *
+     * <p>此前只写请求头 X-Mg-App，而 TraceFilter 前移到 -200 后先于本过滤器执行，
+     * 只能在 doFinally 里回读——请求头挂在 mutate 出来的新 request 上、原 exchange 读不到，
+     * 而 attribute 在 mutate 前后是同一份，因此必须走 attribute。
+     * 请求头照旧保留：ModelAuthFilter / QuotaFilter 仍从头里取。
+     */
+    public static final String ATTR_APP_ID = "mg.appId";
+    public static final String ATTR_CRED_TYPE = "mg.credType";
+
     private final CredentialService credentialService;
     private final AppService appService;
     private final CryptoService cryptoService;
@@ -60,15 +72,18 @@ public class CredentialAuthFilter implements GlobalFilter, Ordered {
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
         String path = exchange.getRequest().getURI().getPath();
-        // /admin/** 由 AdminAuthFilter 单独处理；/actuator/**、/swagger-ui/**、/v3/api-docs/** 直接放行
-        if (path.startsWith("/admin/") || path.startsWith("/actuator/")
-                || path.startsWith("/swagger-ui") || path.startsWith("/v3/api-docs")
-                || path.startsWith("/webjars/")) {
+        // 管理面（/modelgate/**）走内网逐接口鉴权，不在本进程校验；
+        // /actuator/** 同样不属于业务流量，直接放行
+        if (path.startsWith(UrlConstant.MANAGE_PREFIX) || path.startsWith(UrlConstant.ACTUATOR_PREFIX)) {
             return chain.filter(exchange);
         }
 
         String authorization = exchange.getRequest().getHeaders().getFirst("Authorization");
         if (authorization == null || authorization.isBlank()) {
+            // 最常见的 401，此前完全静默：接入方漏带 Authorization 时后端一条日志都没有，
+            // 只能靠对方描述现象来猜。业务拒绝按 03 §7 记 INFO
+            log.info("[CredentialAuth] 拒绝: 未携带 Authorization, path={}, clientIp={}",
+                    path, clientIp(exchange));
             return reject(exchange, HttpStatus.UNAUTHORIZED, ErrorCode.MISSING_CREDENTIAL);
         }
 
@@ -77,16 +92,20 @@ public class CredentialAuthFilter implements GlobalFilter, Ordered {
                 .subscribeOn(Schedulers.boundedElastic())
                 .flatMap(result -> {
                     if (result.isEmpty()) {
-                        log.info("[CredentialAuth] Invalid credential, path={}", path);
+                        log.info("[CredentialAuth] 拒绝: 凭证无效或不存在, path={}, clientIp={}", path, clientIp(exchange));
                         return reject(exchange, HttpStatus.UNAUTHORIZED, ErrorCode.INVALID_API_KEY);
                     }
                     AppCredentialEntity cred = result.get();
 
                     // 凭证状态检查（enabled=false 或已过期）
                     if (Boolean.FALSE.equals(cred.getEnabled())) {
+                        log.info("[CredentialAuth] 拒绝: 凭证已禁用, appId={}, credId={}, path={}",
+                                cred.getAppId(), cred.getId(), path);
                         return reject(exchange, HttpStatus.UNAUTHORIZED, ErrorCode.INVALID_API_KEY);
                     }
                     if (cred.getExpiresAt() != null && cred.getExpiresAt().isBefore(LocalDateTime.now())) {
+                        log.info("[CredentialAuth] 拒绝: 凭证已过期, appId={}, credId={}, expiresAt={}, path={}",
+                                cred.getAppId(), cred.getId(), cred.getExpiresAt(), path);
                         return reject(exchange, HttpStatus.UNAUTHORIZED, ErrorCode.CREDENTIAL_EXPIRED);
                     }
 
@@ -98,10 +117,19 @@ public class CredentialAuthFilter implements GlobalFilter, Ordered {
                         app = Optional.empty();
                     }
                     if (app.isEmpty() || Boolean.FALSE.equals(app.get().getEnabled())) {
+                        // app.isEmpty() 既可能是系统被删、也可能是查库异常，两者后果相同但成因不同，
+                        // 打出来才能区分"业务上禁用了"和"DB 出问题了"
+                        log.info("[CredentialAuth] 拒绝: 接入系统不可用, appId={}, 存在={}, path={}",
+                                cred.getAppId(), app.isPresent(), path);
                         return reject(exchange, HttpStatus.FORBIDDEN, ErrorCode.APP_DISABLED);
                     }
 
-                    // 将 appId 和凭证类型注入请求头，供后续过滤器（ModelAuthFilter、QuotaFilter、TraceFilter）读取
+                    // 同时写 attribute（供先于本过滤器执行的 TraceFilter 在 doFinally 回读）
+                    exchange.getAttributes().put(ATTR_APP_ID, cred.getAppId());
+                    if (cred.getCredType() != null) {
+                        exchange.getAttributes().put(ATTR_CRED_TYPE, cred.getCredType());
+                    }
+                    // 将 appId 和凭证类型注入请求头，供后续过滤器（ModelAuthFilter、QuotaFilter）读取
                     var mutated = exchange.getRequest().mutate()
                             .header("X-Mg-App", cred.getAppId())
                             .header("X-Mg-Cred-Type", cred.getCredType())
@@ -134,7 +162,7 @@ public class CredentialAuthFilter implements GlobalFilter, Ordered {
                 return Optional.empty();
             }
             if (Math.abs(System.currentTimeMillis() - ts) > MAX_TIMESTAMP_SKEW_MS) {
-                log.info("[CredentialAuth] Timestamp out of range: ts={}", ts);
+                log.info("[CredentialAuth] 拒绝: AKSK 时间戳超出 ±5 分钟窗口（防重放）, ts={}", ts);
                 return Optional.empty();
             }
 
@@ -145,7 +173,7 @@ public class CredentialAuthFilter implements GlobalFilter, Ordered {
 
             // 3. 验证 HMAC-SHA256 签名：证明调用方持有 SK 而不仅仅知道 AK
             if (!verifyAkSkHmac(cred, accessKey, timestampStr, signature)) {
-                log.info("[CredentialAuth] HMAC verification failed for AK={}", accessKey);
+                log.info("[CredentialAuth] 拒绝: AKSK 签名校验失败, accessKey={}", accessKey);
                 return Optional.empty();
             }
             return credOpt;
@@ -163,7 +191,7 @@ public class CredentialAuthFilter implements GlobalFilter, Ordered {
     private boolean verifyAkSkHmac(AppCredentialEntity cred, String accessKey,
                                     String timestamp, String signature) {
         if (cred.getSecretEncrypted() == null) {
-            log.warn("[CredentialAuth] AK={} has no encrypted SK, cannot verify HMAC", accessKey);
+            log.warn("[CredentialAuth] AKSK 无密文 SK，无法验签（该凭证创建于密钥可查看启用之前，需重新生成）, accessKey={}", accessKey);
             return false;
         }
         try {
@@ -179,9 +207,15 @@ public class CredentialAuthFilter implements GlobalFilter, Ordered {
             }
             return MessageDigest.isEqual(expected, actual);
         } catch (Exception e) {
-            log.warn("[CredentialAuth] HMAC verification error AK={}: {}", accessKey, e.getMessage());
+            log.warn("[CredentialAuth] AKSK 验签异常（多为 MODELGATE_CRYPTO_KEY 变更导致密文解不开）, accessKey={}: {}", accessKey, e.getMessage());
             return false;
         }
+    }
+
+    /** 取调用方 IP 用于日志定位；取不到返回 unknown（不抛异常影响主流程）。 */
+    private static String clientIp(ServerWebExchange exchange) {
+        return exchange.getRequest().getRemoteAddress() != null
+                ? exchange.getRequest().getRemoteAddress().getAddress().getHostAddress() : "unknown";
     }
 
     private Mono<Void> reject(ServerWebExchange exchange, HttpStatus status, ErrorCode errorCode) {

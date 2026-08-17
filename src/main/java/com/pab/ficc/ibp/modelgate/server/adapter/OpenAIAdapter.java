@@ -29,7 +29,7 @@ public class OpenAIAdapter implements ProviderAdapter {
     public HttpHeaders buildUpstreamHeaders(ModelInstanceEntity model, ModelCredentialEntity credential) {
         var headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
-        if (credential != null && credential.getSecretKey() != null) {
+        if (ProviderAdapter.shouldAuthenticate(credential)) {
             headers.setBearerAuth(credential.getSecretKey());
         }
         return headers;
@@ -38,7 +38,8 @@ public class OpenAIAdapter implements ProviderAdapter {
     @Override
     public URI buildUpstreamUri(ModelInstanceEntity model, URI originalUri) {
         String base = model.getUpstreamUrl().replaceAll("/$", "");
-        String path = originalUri.getPath();
+        // 配了 upstream_path 用它；留空则沿用原行为——透传调用方路径（/v1/chat/completions 等）
+        String path = resolvePath(model.getUpstreamPath(), originalUri.getPath());
         String query = originalUri.getRawQuery();
         String full = base + path + (query != null ? "?" + query : "");
         return URI.create(full);

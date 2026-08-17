@@ -1,5 +1,6 @@
 package com.pab.ficc.ibp.modelgate.server.filter;
 
+import com.pab.ficc.ibp.modelgate.server.constant.UrlConstant;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pab.ficc.ibp.modelgate.server.admin.IpMatcher;
@@ -65,7 +66,7 @@ public class AppAccessControlFilter implements GlobalFilter, Ordered {
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
         String path = exchange.getRequest().getURI().getPath();
-        if (path.startsWith("/admin/") || path.startsWith("/actuator/")) {
+        if (path.startsWith(UrlConstant.MANAGE_PREFIX) || path.startsWith(UrlConstant.ACTUATOR_PREFIX)) {
             return chain.filter(exchange);
         }
 
@@ -87,7 +88,7 @@ public class AppAccessControlFilter implements GlobalFilter, Ordered {
                     if (isAllowed(clientIp, clientDomain, rules)) {
                         return chain.filter(exchange);
                     }
-                    log.info("[AccessControl] Denied appId={} clientIp={} domain={}", appId, clientIp, clientDomain);
+                    log.info("[AccessControl] 拒绝: 来源不在白名单, appId={}, clientIp={}, domain={}", appId, clientIp, clientDomain);
                     return reject(exchange, HttpStatus.FORBIDDEN, ErrorCode.ACCESS_DENIED);
                 });
     }

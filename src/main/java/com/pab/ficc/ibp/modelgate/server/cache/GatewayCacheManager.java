@@ -82,7 +82,7 @@ public class GatewayCacheManager {
     /**
      * 上游凭证缓存（含已解密 SK）：key = modelId，TTL 30s。
      * 与模型配置缓存保持相同 TTL，确保凭证更新后最多 30s 内对所有实例生效。
-     * 写操作（upsertCredential）后主动 evict，变更即时生效。
+     * 写操作（applyCredentialUpdate）后主动 evict，变更即时生效。
      */
     private final Cache<String, Optional<ModelCredentialEntity>> modelCredentialCache = Caffeine.newBuilder()
             .expireAfterWrite(30, TimeUnit.SECONDS)

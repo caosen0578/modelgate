@@ -11,7 +11,7 @@ import javax.sql.DataSource;
  *
  * <p><b>本地兼容说明：</b>此文件为本地编译用的桩。仅在非 local Profile 的
  * {@code ServiceConfiguration} 中被 {@code new}；local Profile 用 HikariDataSource 从
- * application-local.yml 读取连接信息，不会实例化本类。合入内网项目时删除本桩。
+ * application.yml 的 datasource.local.* 读取连接信息，不会实例化本类。合入内网项目时删除本桩。
  */
 public class VenusDataSourceBean implements DataSource {
 

@@ -1,52 +1,40 @@
 package com.pab.ficc.ibp.modelgate.server.config;
 
 import com.pab.framework.redis.CacheProvider;
-import com.pab.framework.redis.RedisClusterProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Profile;
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisPool;
 import redis.clients.jedis.JedisPoolConfig;
+import redis.clients.jedis.params.SetParams;
 
 import java.util.List;
 
 /**
- * Redis CacheProvider 装配。
+ * Redis {@link CacheProvider} 装配：jedis 直连，读 {@code redis.local.*}（application.yml）。
  *
- * <ul>
- *   <li>非 local：内网 Redis 集群（{@link RedisClusterProvider}，配置经 Apollo {@code redis-cluster-key} 下发）。</li>
- *   <li>local：jedis 直连本地 Redis（{@code redis.local.*}，见 application-local.yml），
- *       仅实现本项目用到的 get/setex/del/eval。<b>本地兼容件，合入内网时删除。</b></li>
- * </ul>
+ * <p>不再按 Profile 区分（决策：数据源与 Redis 统一直连，不再依赖内网 Redis 集群 SDK）。
+ * 所有环境走同一个 Bean，差异只在 {@code redis.local.*} 这三个配置值——
+ * 部署到不同环境时直接改 application.yml 里的这三行即可，不依赖 Spring Profile 机制。
+ * 仅实现本项目实际调用的 get/setex/del/eval 四个方法。
  */
 @Configuration
 public class RedisConfig {
 
-    /** 非 local：内网 Redis 集群。 */
     @Bean
-    @Profile("!local")
-    public CacheProvider cacheProvider(@Value("${redis-cluster-key}") String redisClusterKey) throws Exception {
-        return RedisClusterProvider.getInstance(redisClusterKey);
-    }
-
-    /** local：jedis 直连本地 Redis。 */
-    @Bean
-    @Profile("local")
-    public CacheProvider localCacheProvider(
+    public CacheProvider cacheProvider(
             @Value("${redis.local.host:127.0.0.1}") String host,
             @Value("${redis.local.port:6379}") int port,
             @Value("${redis.local.password:}") String password) {
-        return new LocalJedisCacheProvider(host, port, password);
+        return new JedisCacheProvider(host, port, password);
     }
 
-    /** 本地 jedis CacheProvider：仅实现代码实际调用的 4 个方法。 */
-    static class LocalJedisCacheProvider implements CacheProvider {
+    static class JedisCacheProvider implements CacheProvider {
 
         private final JedisPool pool;
 
-        LocalJedisCacheProvider(String host, int port, String password) {
+        JedisCacheProvider(String host, int port, String password) {
             JedisPoolConfig config = new JedisPoolConfig();
             config.setMaxTotal(16);
             config.setMaxIdle(8);
@@ -83,6 +71,13 @@ public class RedisConfig {
         public Object eval(String script, List<String> keys, List<String> args) {
             try (Jedis jedis = pool.getResource()) {
                 return jedis.eval(script, keys, args);
+            }
+        }
+
+        @Override
+        public String set(String key, String value, SetParams setParams) {
+            try (Jedis jedis = pool.getResource()) {
+                return jedis.set(key, value, setParams);
             }
         }
     }

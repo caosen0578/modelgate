@@ -88,7 +88,7 @@
 <mxCell id="36" value="📊 &lt;b&gt;Prometheus / Grafana&lt;/b&gt;&lt;br&gt;指标采集与可视化" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#bbf7d0;fontSize=11;" vertex="1" parent="30">
   <mxGeometry x="345" y="215" width="285" height="65" as="geometry"/>
 </mxCell>
-<mxCell id="37" value="🖥️ &lt;b&gt;管理后台 /admin/**&lt;/b&gt;&lt;br&gt;ModelController / AppController / CredentialController / ModelAuthController ···" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#fcd34d;fontSize=11;" vertex="1" parent="30">
+<mxCell id="37" value="🖥️ &lt;b&gt;管理后台 /modelgate/**&lt;/b&gt;&lt;br&gt;ModelController / AppController / CredentialController / ModelAuthController ···" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#fcd34d;fontSize=11;" vertex="1" parent="30">
   <mxGeometry x="20" y="300" width="610" height="65" as="geometry"/>
 </mxCell>
 
@@ -160,8 +160,8 @@
   <mxGeometry x="220" y="105" width="880" height="680" as="geometry"/>
 </mxCell>
 
-<!-- F1: AdminAuthFilter -->
-<mxCell id="110" value="&lt;font color='#991b1b'&gt;&lt;b&gt;order = -200&lt;/b&gt;&lt;/font&gt;　　&lt;b&gt;AdminAuthFilter&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:10px'&gt;保护 /admin/** 和 /actuator/**，IP 白名单 → X-Admin-Token → Basic Auth 三层验证&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef2f2;strokeColor=#fca5a5;fontSize=12;align=left;spacingLeft=12;" vertex="1" parent="101">
+<!-- F1: 管理面旁路说明（原 AdminAuthFilter -200 已移除） -->
+<mxCell id="110" value="&lt;font color='#64748b'&gt;&lt;b&gt;（已移除）&lt;/b&gt;&lt;/font&gt;　　&lt;b&gt;管理面 /modelgate/** 不入本链路&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:10px'&gt;原 AdminAuthFilter(-200) 已删除，改由内网逐接口鉴权体系承担&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef2f2;strokeColor=#fca5a5;fontSize=12;align=left;spacingLeft=12;" vertex="1" parent="101">
   <mxGeometry x="25" y="50" width="810" height="62" as="geometry"/>
 </mxCell>
 <mxCell id="110r" value="→ 401 / 403" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontColor=#991b1b;fontStyle=1;fontSize=11;" vertex="1" parent="101">

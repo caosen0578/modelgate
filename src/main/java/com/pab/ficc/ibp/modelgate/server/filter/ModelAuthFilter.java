@@ -1,7 +1,7 @@
 package com.pab.ficc.ibp.modelgate.server.filter;
 
+import com.pab.ficc.ibp.modelgate.server.constant.UrlConstant;
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pab.ficc.ibp.modelgate.server.common.ErrorCode;
 import com.pab.ficc.ibp.modelgate.server.common.Result;
@@ -53,7 +53,7 @@ public class ModelAuthFilter implements GlobalFilter, Ordered {
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
         String path = exchange.getRequest().getURI().getPath();
-        if (path.startsWith("/admin/") || path.startsWith("/actuator/")) {
+        if (path.startsWith(UrlConstant.MANAGE_PREFIX) || path.startsWith(UrlConstant.ACTUATOR_PREFIX)) {
             return chain.filter(exchange);
         }
 
@@ -69,13 +69,28 @@ public class ModelAuthFilter implements GlobalFilter, Ordered {
             return chain.filter(exchange);
         }
 
-        return Mono.fromCallable(() -> checkAuth(appId, modelId))
+                // ⚠️ 必须用 Optional 包一层：Mono.fromCallable 在 Callable 返回 null 时
+                // **发出的是 empty 而非 null 元素**，下游 flatMap 根本不会执行，
+                // 过滤器链就此断掉、Gateway 直接返回 200 空响应体。
+                // 而本方法恰恰用「返回 null」表示校验通过 —— 结果是**所有通过校验的请求
+                // 都拿不到模型响应**，只有被拒的请求（返回非 null）才走得通。
+                // Optional 永远非 null，保证 flatMap 必定执行。
+                return Mono.fromCallable(() -> Optional.ofNullable(checkAuth(appId, modelId)))
                 .subscribeOn(Schedulers.boundedElastic())
-                .flatMap(error -> {
+                .flatMap(result -> {
+                    ErrorCode error = result.orElse(null);
                     if (error == null) {
+                        log.debug("[ModelAuth] 通过: appId={}, modelId={}", appId, modelId);
                         return chain.filter(exchange);
                     }
-                    return reject(exchange, HttpStatus.FORBIDDEN, error);
+                    // 业务拒绝按 03 §7 记 INFO：这是排查"某系统调不通某模型"的第一现场，
+                    // 且本过滤器早于 TraceFilter(-150) 执行，被拒请求不会留下审计记录，日志是唯一痕迹
+                    log.info("[ModelAuth] 拒绝: appId={}, modelId={}, reason={}", appId, modelId, error.getMessage());
+                    // HTTP 状态取自 ErrorCode 自身，不再一律 FORBIDDEN：
+                    // 本过滤器的 4 个拒绝原因里 MODEL_NOT_FOUND 是 404，其余 3 个才是 403。
+                    // 写死 403 会造成「状态码 403、响应体 code:404 Model not found」的自相矛盾，
+                    // 调用方按 403 去查授权与白名单，实际原因却是 model 字段写错了——极其误导。
+                    return reject(exchange, HttpStatus.valueOf(error.getCode()), error);
                 });
     }
 

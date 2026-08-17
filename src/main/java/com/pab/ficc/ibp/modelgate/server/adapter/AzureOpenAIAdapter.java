@@ -47,7 +47,7 @@ public class AzureOpenAIAdapter implements ProviderAdapter {
     public HttpHeaders buildUpstreamHeaders(ModelInstanceEntity model, ModelCredentialEntity credential) {
         var headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
-        if (credential != null && credential.getSecretKey() != null) {
+        if (ProviderAdapter.shouldAuthenticate(credential)) {
             headers.set("api-key", credential.getSecretKey());
         }
         return headers;
@@ -56,6 +56,9 @@ public class AzureOpenAIAdapter implements ProviderAdapter {
     @Override
     public URI buildUpstreamUri(ModelInstanceEntity model, URI originalUri) {
         // upstreamUrl should already be the full Azure deployment URL
+        // （含 /openai/deployments/{id}/chat/completions?api-version=...）
+        // 故 azure_openai 规范**有意忽略** upstream_path：再拼一段路径只会破坏部署 URL。
+        // 前端在 apiSpec=azure_openai 时会把该输入框置灰并说明原因。
         String base = model.getUpstreamUrl().replaceAll("/$", "");
         String query = originalUri.getRawQuery();
         String full = base + (query != null ? "?" + query : "");

@@ -9,7 +9,6 @@ import java.time.Instant;
  * 统一响应结构（网关业务流量 / Filter 错误响应使用）。
  *
  * <p><b>注意：</b>管理后台 Controller 已改用行内标准
- * {@link com.pab.ficc.cus.web.result.Result}；
  * 本类仅保留给网关 Filter 对外（OpenAI 兼容客户端）的错误响应使用，结构保持稳定不变。
  *
  * <pre>

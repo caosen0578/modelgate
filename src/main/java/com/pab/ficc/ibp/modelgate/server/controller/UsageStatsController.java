@@ -1,7 +1,7 @@
 package com.pab.ficc.ibp.modelgate.server.controller;
-import com.pab.ficc.ibp.modelgate.server.common.UrlConstant;
+import com.pab.ficc.ibp.modelgate.server.constant.UrlConstant;
 
-import com.pab.ficc.cus.web.result.Result;
+import com.pab.ficc.ibp.modelgate.server.domain.Result;
 import com.pab.ficc.ibp.modelgate.server.mapper.AuditLogMapper;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -23,7 +23,7 @@ import java.util.Map;
 
 @Tag(name = "用量统计", description = "查询 API 调用量、Token 消耗、平均延迟、成功率汇总数据")
 @RestController
-@RequestMapping(UrlConstant.ADMIN_STATS)
+@RequestMapping(UrlConstant.MG_STATS)
 @RequiredArgsConstructor
 public class UsageStatsController {
 
@@ -32,11 +32,11 @@ public class UsageStatsController {
     @Operation(summary = "用量统计汇总（总请求数 / Token 消耗 / 平均延迟 / 成功率）")
     @GetMapping(UrlConstant.USAGE)
     public Mono<Result<Map<String, Object>>> usage(
-            @Parameter(description = "系统 ID，不传则汇总全部") @RequestParam(required = false) String appId,
-            @Parameter(description = "模型 ID，不传则汇总全部") @RequestParam(required = false) String modelId,
-            @Parameter(description = "开始日期（yyyy-MM-dd），默认近 30 天") @RequestParam(required = false)
+            @Parameter(description = "系统 ID，不传则汇总全部") @RequestParam(name = "appId", required = false) String appId,
+            @Parameter(description = "模型 ID，不传则汇总全部") @RequestParam(name = "modelId", required = false) String modelId,
+            @Parameter(description = "开始日期（yyyy-MM-dd），默认近 30 天") @RequestParam(name = "start", required = false)
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate start,
-            @Parameter(description = "结束日期（yyyy-MM-dd），默认今天") @RequestParam(required = false)
+            @Parameter(description = "结束日期（yyyy-MM-dd），默认今天") @RequestParam(name = "end", required = false)
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate end) {
 
         LocalDateTime startDt = start != null ? start.atStartOfDay() : LocalDate.now().minusDays(30).atStartOfDay();

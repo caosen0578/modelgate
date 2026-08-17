@@ -8,12 +8,16 @@
 --          请先 `USE 你的库名;` 或用 `mysql -h.. -P.. -u.. -p 库名 < modelgate_schema.sql`）。
 --          例：mysql -h47.119.189.29 -P65522 -uroot -p cbdb < sql/modelgate_schema.sql
 -- ----------------------------------------------------------------------------
--- 内部规范基础字段（7 张管理表均含；高频审计表 mg_audit_log 除外）：
+-- 内部规范基础字段：
 --   creater      创建人           create_time  创建时间
 --   updater      修改人           update_time  修改时间
 --   is_del       删除标志(逻辑删除，'0'=未删 '1'=已删，@TableLogic 驱动)
 --   creater_um   创建人 UM        updater_um   更新人 UM
 --   → 由 AuditFieldMetaObjectHandler 自动填充；creater/updater/um 当前占位为 NULL。
+-- 两处例外（有意为之，勿"补齐"）：
+--   mg_audit_log       高频追加表，不含任何基础字段，按 create_time 物理清理
+--   mg_gateway_config  含其余基础字段但**无 is_del**：config_key 即主键，软删后同 key
+--                      无法重建（详见该表上方说明），改为物理删除
 -- 建表顺序遵循外键依赖：先父表（mg_model / mg_app）后子表。
 -- ============================================================================
 
@@ -27,7 +31,8 @@ CREATE TABLE IF NOT EXISTS mg_model (
     provider       VARCHAR(32)  NOT NULL                          COMMENT '提供商：openai|azure_openai|anthropic|private|custom',
     model_type     VARCHAR(32)  NOT NULL DEFAULT 'chat'           COMMENT '模型类型：chat|embedding|image|audio',
     api_spec       VARCHAR(32)  NOT NULL DEFAULT 'openai'         COMMENT 'API 规范（参数转换规则）：openai|azure_openai|anthropic|custom',
-    upstream_url   VARCHAR(512) NOT NULL                          COMMENT '上游模型服务请求地址',
+    upstream_url   VARCHAR(512) NOT NULL                          COMMENT '上游模型服务请求地址（协议+域名+端口，不含接口路径）',
+    upstream_path  VARCHAR(256)                                   COMMENT '上游接口路径，如 /v1/chat/completions；留空则按 api_spec 取默认值（openai/custom 透传调用方路径，anthropic 用 /v1/messages，azure 忽略本字段）',
     timeout_ms     INT          NOT NULL DEFAULT 30000            COMMENT '上游请求超时时间（毫秒）',
     default_params TEXT                                           COMMENT '默认参数（JSON），业务未传时注入，可被业务覆盖',
     force_params   TEXT                                           COMMENT '强制参数（JSON），强制注入，业务不可覆盖',
@@ -42,7 +47,7 @@ CREATE TABLE IF NOT EXISTS mg_model (
     creater_um     VARCHAR(100) DEFAULT NULL                      COMMENT '创建人 UM 账号',
     updater_um     VARCHAR(100) DEFAULT NULL                      COMMENT '更新人 UM 账号',
     PRIMARY KEY (id),
-    UNIQUE KEY uk_model_id (model_id)
+    UNIQUE KEY uk_model_id (model_id, is_del)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI 模型实例';
 
 -- ============================================================================
@@ -63,7 +68,7 @@ CREATE TABLE IF NOT EXISTS mg_model_credential (
     creater_um    VARCHAR(100) DEFAULT NULL                      COMMENT '创建人 UM 账号',
     updater_um    VARCHAR(100) DEFAULT NULL                      COMMENT '更新人 UM 账号',
     PRIMARY KEY (id),
-    UNIQUE KEY uk_model_id (model_id),
+    UNIQUE KEY uk_model_id (model_id, is_del),
     CONSTRAINT fk_modelcred_model FOREIGN KEY (model_id) REFERENCES mg_model (model_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='模型上游鉴权凭证';
 
@@ -87,7 +92,7 @@ CREATE TABLE IF NOT EXISTS mg_app (
     creater_um   VARCHAR(100) DEFAULT NULL                       COMMENT '创建人 UM 账号',
     updater_um   VARCHAR(100) DEFAULT NULL                       COMMENT '更新人 UM 账号',
     PRIMARY KEY (id),
-    UNIQUE KEY uk_app_id (app_id)
+    UNIQUE KEY uk_app_id (app_id, is_del)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='接入系统（调用方应用）';
 
 -- ============================================================================
@@ -129,6 +134,7 @@ CREATE TABLE IF NOT EXISTS mg_app_model_auth (
     qps_limit      INT         NOT NULL DEFAULT 0                COMMENT '每秒请求数上限，0=不限',
     daily_limit    INT         NOT NULL DEFAULT 0                COMMENT '每日请求数上限，0=不限',
     monthly_tokens BIGINT      NOT NULL DEFAULT 0                COMMENT '每月 Token 消耗上限，0=不限',
+    payload_log_enabled TINYINT(1) NOT NULL DEFAULT 0            COMMENT '请求/响应报文记录开关：1=记录到 mg_request_payload，0=不记录（默认关闭）',
     expires_at     DATETIME                                     COMMENT '授权过期时间，NULL=永久授权（过期等同禁用）',
     creater        VARCHAR(50)  CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL COMMENT '创建人',
     create_time    DATETIME     DEFAULT CURRENT_TIMESTAMP        COMMENT '创建时间',
@@ -168,6 +174,10 @@ CREATE TABLE IF NOT EXISTS mg_access_rule (
 
 -- ============================================================================
 -- 7. mg_gateway_config —— 网关全局配置（KV 结构，热更新，无需重启）
+--    ⚠️ 本表**无 is_del、物理删除**，与其余 6 张管理表的约定不同，是有意为之：
+--       config_key 即主键，逻辑删除后行仍在，再存同名 key 会因 selectById 被过滤而走
+--       insert → 主键冲突，导致"配置项删了就加不回来"。且配置非业务数据无留痕需求
+--       （追溯有 updater / update_time）。对应实体 GatewayConfigEntity 亦不含 isDel 字段。
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS mg_gateway_config (
     config_key    VARCHAR(128) NOT NULL                          COMMENT '配置键（主键，全局唯一）',
@@ -177,18 +187,44 @@ CREATE TABLE IF NOT EXISTS mg_gateway_config (
     create_time   DATETIME     DEFAULT CURRENT_TIMESTAMP         COMMENT '创建时间',
     updater       VARCHAR(50)  CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL COMMENT '修改人',
     update_time   DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '修改时间',
-    is_del        VARCHAR(50)  CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT '0' COMMENT '删除标志：1=已删除 0=未删除（逻辑删除）',
     creater_um    VARCHAR(100) DEFAULT NULL                      COMMENT '创建人 UM 账号',
     updater_um    VARCHAR(100) DEFAULT NULL                      COMMENT '更新人 UM 账号',
     PRIMARY KEY (config_key)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='网关动态配置（KV）';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='网关动态配置（KV，物理删除）';
 
 -- 初始配置（幂等：已存在则不覆盖）
+-- 注：仅保留确有代码读取的配置项。
+-- 已移除 'auth.enabled' 与 'rate.limit.default'：二者全链路无任何读取方（死开关），
+-- 运维在管理页改动会显示成功但毫无作用，属误导性配置，详见 spec/modelgate/11 §16。
+-- ============================================================================
+-- 9. mg_request_payload —— 模型调用请求/响应报文留档
+--    仅当 mg_app_model_auth.payload_log_enabled=1 时才写入；通过 trace_id 关联 mg_audit_log。
+--    独立成表而非给审计表加列：审计是全量高频瘦表，报文只在开关开启时产生且体积大，
+--    保留期也应远短于审计（modelgate.payload-log.retention-days）。
+--    ⚠️ Token 不在本表冗余：唯一真相在 mg_audit_log，统计一律走审计表。
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS mg_request_payload (
+    id              BIGINT       NOT NULL AUTO_INCREMENT        COMMENT '主键，自增',
+    trace_id        VARCHAR(64)  NOT NULL                       COMMENT '全链路追踪 ID，关联 mg_audit_log.trace_id',
+    app_id          VARCHAR(64)                                 COMMENT '调用方 appId（冗余自审计，便于按接入系统直接筛选）',
+    model_id        VARCHAR(64)                                 COMMENT '模型 ID（冗余自审计，便于按模型直接筛选）',
+    is_stream       TINYINT(1)   NOT NULL DEFAULT 0             COMMENT '是否流式响应：1=SSE 流式，0=一次性返回',
+    request_body    LONGTEXT                                    COMMENT '请求报文原文（JSON）。⚠️ 含用户原始 prompt，脱敏方案待定',
+    response_raw    LONGTEXT                                    COMMENT '响应报文原文：流式为完整 SSE 流（含 data: 前缀与所有分帧），非流式为原始 JSON。供排查时完整复现上游返回',
+    response_text   LONGTEXT                                    COMMENT '响应正文：流式为各帧 delta.content 拼接后的最终文本，非流式为 choices[0].message.content。供查询展示，人可直读',
+    finish_reason   VARCHAR(32)                                 COMMENT '结束原因：stop|length|tool_calls|content_filter 等，取自响应最后一帧',
+    upstream_status INT                                         COMMENT '上游返回的 HTTP 状态码',
+    truncated       VARCHAR(16)  NOT NULL DEFAULT 'none'        COMMENT '截断标记：none=完整 request=请求被截 response=响应被截 both=均被截（仅在触发内存保护阈值时出现）',
+    create_time     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录写入时间（用于保留期清理）',
+    PRIMARY KEY (id),
+    KEY idx_trace_id        (trace_id),
+    KEY idx_app_model_time  (app_id, model_id, create_time),
+    KEY idx_create_time     (create_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='模型调用请求/响应报文留档（按授权开关记录，保留期独立于审计）';
+
+
 INSERT INTO mg_gateway_config (config_key, config_value, description) VALUES
-    ('upstream.url',            'http://127.0.0.1:9090', '上游模型服务地址，实时生效'),
-    ('auth.enabled',            'true',                  '鉴权总开关：true=开启，false=放行所有'),
-    ('circuit.breaker.enabled', 'true',                  '熔断开关：true=开启'),
-    ('rate.limit.default',      '10',                    '默认每秒限流数（无单独配置时生效）')
+    ('circuit.breaker.enabled', 'true',                  '熔断开关：true=开启（CircuitBreakerFilter 读取）')
 ON DUPLICATE KEY UPDATE config_key = config_key;
 
 -- ============================================================================
@@ -208,6 +244,7 @@ CREATE TABLE IF NOT EXISTS mg_audit_log (
     latency_ms     INT                                           COMMENT '请求耗时（毫秒）',
     input_tokens   INT           NOT NULL DEFAULT 0              COMMENT '输入 Token 数',
     output_tokens  INT           NOT NULL DEFAULT 0              COMMENT '输出 Token 数',
+    token_source   VARCHAR(16)                                   COMMENT 'Token 来源口径：usage=上游精确返回 estimated=本地估算 none=无',
     error_msg      VARCHAR(1024)                                 COMMENT '错误信息（失败时记录）',
     create_time    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '事件发生时间（写入时间）',
     PRIMARY KEY (id),

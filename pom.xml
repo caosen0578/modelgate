@@ -4,10 +4,14 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
+    <!--
+      Spring Boot 3.5.6 / Spring 6.2.11 / JDK 17，对齐内网 framework-bom 2.0.0（spring6）。
+      合入内网时此 parent 换成 com.pab:super-pom + com.pab.framework:framework-bom:2.0.0。
+    -->
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>2.7.18</version>
+        <version>3.5.6</version>
         <relativePath/>
     </parent>
 
@@ -19,13 +23,36 @@
 
     <properties>
         <java.version>17</java.version>
-        <spring-cloud.version>2021.0.9</spring-cloud.version>
-        <apollo.version>2.3.0</apollo.version>
-        <resilience4j.version>1.7.0</resilience4j.version>
-        <micrometer.version>1.9.6</micrometer.version>
+
+        <!--
+          ⚠️ 内网 framework-bom 2.0.0 定义的是 2025.0.0.0（四段，内网定制坐标）。
+          此处用 Maven Central 可解析的 2025.0.0（同代）以保证外网可编译验证；
+          合入内网时改为 2025.0.0.0，或直接由 framework-bom 统一管理、删掉本属性。
+        -->
+        <spring-cloud.version>2025.0.0</spring-cloud.version>
+
+        <!-- 以下版本对齐 framework-bom 2.0.0（spring6）。
+             属性名必须与 spring-boot-dependencies 的定义一致才会覆盖生效，
+             Jackson 由 jackson-bom 统一管理，属性名是 jackson-bom.version（不是 jackson.version）。 -->
+        <jackson-bom.version>2.19.2</jackson-bom.version>
+        <logback.version>1.5.18</logback.version>
+        <slf4j.version>2.0.17</slf4j.version>
+        <snakeyaml.version>2.2</snakeyaml.version>
+        <!-- ⚠️ com.mysql:mysql-connector-j 新坐标从 8.0.31 起在 Maven Central 发布，
+             8.0.30 仍是旧坐标 mysql:mysql-connector-java，此处必须 ≥ 8.0.31 -->
+        <mysql.version>8.0.33</mysql.version>
+        <jedis.version>3.1.0</jedis.version>
+
+        <!-- Boot 3 专用坐标：与 Boot 2 的 artifactId 不同，见下方依赖注释 -->
+        <!-- ⚠️ mybatis-plus-jsqlparser 独立模块从 3.5.9 起才发布到 Maven Central，
+             starter 与 jsqlparser 模块版本必须保持一致，故此处 ≥ 3.5.9 -->
+        <mybatis-plus.version>3.5.7</mybatis-plus.version>
+        <resilience4j.version>2.2.0</resilience4j.version>
+        <!-- 内网无 springdoc，仅保留 swagger 注解；2.2.0 与内网既有工程一致 -->
+        <swagger-annotations.version>2.2.0</swagger-annotations.version>
+        <logstash-encoder.version>8.0</logstash-encoder.version>
+
         <caffeine.version>3.1.8</caffeine.version>
-        <mysql.version>8.0.30</mysql.version>
-        <mybatis-plus.version>3.5.9</mybatis-plus.version>
     </properties>
 
     <dependencyManagement>
@@ -41,18 +68,46 @@
     </dependencyManagement>
 
     <dependencies>
-        <!-- ===== Spring Cloud Gateway (WebFlux 响应式) ===== -->
+
+        <!--<dependency>
+            <groupId>com.pab.ficc.ibp</groupId>
+            <artifactId>ibp-web</artifactId>
+            <version>1.0-SNAPSHOT</version>
+        </dependency>-->
         <dependency>
-            <groupId>org.springframework.cloud</groupId>
-            <artifactId>spring-cloud-starter-gateway</artifactId>
+            <groupId>com.pab.ficc.ibp</groupId>
+            <artifactId>ibp-domain</artifactId>
+            <version>1.0-SNAPSHOT</version>
+        </dependency>
+        <dependency>
+            <groupId>com.pab.ficc.ibp</groupId>
+            <artifactId>ibp-mybatis</artifactId>
+            <version>1.0-SNAPSHOT</version>
         </dependency>
 
-<!-- ===== Apollo 配置中心（标准 client，支持 Spring Boot 2.7.x） ===== -->
+        <!-- ===== Spring Cloud Gateway (WebFlux 响应式) =====
+             ⚠️ Gateway 4.3.0（Spring Cloud 2025.0.x）起坐标一分为二（webflux / webmvc），
+             旧坐标 spring-cloud-starter-gateway 已弃用，下个大版本移除。沿用旧坐标会在启动时打两段告警：
+               · spring-cloud-starter-gateway 内的 StarterDeprecatedAutoConfiguration 无条件打印
+               · spring-cloud-gateway-server 内的 GatewayClassPathWarningAutoConfiguration 打印，
+                 其条件是 @ConditionalOnMissingClass("...gateway.server.webflux.Marker")
+             新坐标 spring-cloud-starter-gateway-server-webflux 会带入只含 Marker 类的
+             spring-cloud-gateway-server-webflux，两段告警随之消失。
+             注：spring-cloud-gateway-server（真正装着全部网关类）仍会作为传递依赖存在，属正常，勿再手工排除。
+
+             ⚠️ 该新 starter 还会传递带入 spring-boot-properties-migrator（compile 作用域，会进 fat jar）。
+             它负责把弃用属性名在运行时映射到新名，正是旧前缀 spring.cloud.gateway.* 仍能生效的原因。
+             本项目 yml 已全用新前缀 spring.cloud.gateway.server.webflux.*，启动时它不打印任何内容；
+             **保留不排除**——内网 dev/prod 的配置不在本仓库，若那边仍有旧前缀，排除掉会让路由静默失效。 -->
         <dependency>
-            <groupId>com.ctrip.framework.apollo</groupId>
-            <artifactId>apollo-client</artifactId>
-            <version>${apollo.version}</version>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-gateway-server-webflux</artifactId>
         </dependency>
+
+        <!-- 【已移除】com.ctrip.framework.apollo:apollo-client
+             行内不需要本项目自行引入 Apollo：此前只是占位，ApolloConfig 除了打变更日志没做任何事，
+             实际生效的配置一直来自配置文件。移除后同时规避了 apollo-client 对 Boot 3 的兼容性未知。
+             配置中心若确需接入，走内网 halo-config-apollo，不由本项目声明依赖。 -->
 
         <!-- ===== Redis =====
              内网 com.pab.framework:redis 无法外网解析，已用精简源码桩 CacheProvider.java（仅
@@ -62,11 +117,12 @@
             <artifactId>redis</artifactId>
         </dependency>
         -->
-        <!-- 本地 Redis 客户端（local Profile 直连本地 Redis，jedis 3.x） -->
+        <!-- 本地 Redis 客户端（local Profile 直连本地 Redis）；
+             版本对齐 BOM：内网 redis 组件 0.6.x 要求 jedis 3.1.0 -->
         <dependency>
             <groupId>redis.clients</groupId>
             <artifactId>jedis</artifactId>
-            <version>3.8.0</version>
+            <version>${jedis.version}</version>
         </dependency>
         <!-- 本地数据源连接池（local Profile 的 localDataSource 用） -->
         <dependency>
@@ -74,10 +130,13 @@
             <artifactId>HikariCP</artifactId>
         </dependency>
 
-        <!-- ===== MyBatis Plus（持久化，Lambda API，无 XML，Spring Boot 2.x） ===== -->
+        <!-- ===== MyBatis Plus =====
+             ⚠️ Boot 3 必须用 mybatis-plus-spring-boot3-starter：
+             原 mybatis-plus-boot-starter 的自动装配写在 spring.factories（Boot 2 机制），
+             Boot 3 改用 AutoConfiguration.imports，沿用旧坐标会导致 Mapper 全部注入失败。 -->
         <dependency>
             <groupId>com.baomidou</groupId>
-            <artifactId>mybatis-plus-boot-starter</artifactId>
+            <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
             <version>${mybatis-plus.version}</version>
             <exclusions>
                 <!-- 内网框架统一使用 Druid，排除 HikariCP 避免冲突 -->
@@ -87,15 +146,16 @@
                 </exclusion>
             </exclusions>
         </dependency>
-        <!-- MyBatis-Plus 3.5.9 起分页等 jsqlparser 依赖的内置拦截器拆到此模块 -->
+        <!-- 【已移除】com.baomidou:mybatis-plus-jsqlparser
+             该独立模块**从 3.5.9 才开始发布**，本项目现锁 3.5.7，Maven Central 上没有 3.5.7 的坐标，
+             留着会直接 "Could not find artifact ... mybatis-plus-jsqlparser:jar:3.5.7" 构建失败。
+             3.5.7 的 PaginationInnerInterceptor 与 jsqlparser 依赖仍在 mybatis-plus-extension 内
+             （由 starter 传递引入），无需单独声明。
+             ⚠️ 若日后把 mybatis-plus.version 升回 ≥3.5.9，**必须把这段依赖加回来**，否则分页拦截器缺类。 -->
+        <!-- Boot 3 起 MySQL 驱动坐标改为 com.mysql:mysql-connector-j，旧坐标 mysql:mysql-connector-java 已废弃 -->
         <dependency>
-            <groupId>com.baomidou</groupId>
-            <artifactId>mybatis-plus-jsqlparser</artifactId>
-            <version>${mybatis-plus.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>mysql</groupId>
-            <artifactId>mysql-connector-java</artifactId>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
             <version>${mysql.version}</version>
         </dependency>
 
@@ -106,10 +166,11 @@
             <version>${caffeine.version}</version>
         </dependency>
 
-        <!-- ===== 熔断器 Resilience4j（Spring Boot 2.x 版） ===== -->
+        <!-- ===== 熔断器 Resilience4j =====
+             ⚠️ 坐标由 resilience4j-spring-boot2 换成 -spring-boot3，同样是自动装配机制变更 -->
         <dependency>
             <groupId>io.github.resilience4j</groupId>
-            <artifactId>resilience4j-spring-boot2</artifactId>
+            <artifactId>resilience4j-spring-boot3</artifactId>
             <version>${resilience4j.version}</version>
         </dependency>
         <dependency>
@@ -118,14 +179,28 @@
             <version>${resilience4j.version}</version>
         </dependency>
 
-        <!-- ===== Actuator + Prometheus 监控 ===== -->
+        <!-- ===== Actuator =====
+             【已移除】io.micrometer:micrometer-registry-prometheus —— 决策：本项目不接 Prometheus/Grafana。
+             随之删除的还有 metrics/GatewayMetrics、AuditService 的 Gauge/Counter 埋点、
+             /actuator/prometheus 端点暴露。可观测性改为全部落在日志上（详见 11 §16）。
+
+             ⚠️ actuator 本身**保留**：/actuator/health 是 K8s liveness/readiness 探针的依赖
+             （见 10 §3），与 Prometheus 无关，删掉会直接导致 Pod 起不来。 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
+
+        <!-- ===== Reactor 上下文传播（MDC traceId 跨线程） =====
+             WebFlux 下请求在 Netty 事件循环组装、阻塞逻辑在 boundedElastic 执行，
+             MDC 这种 ThreadLocal 不会自动跟随，导致日志 traceId 全空且会串号。
+             本包让 Reactor 在每次线程切换时自动搬运已登记的 ThreadLocal，
+             由 config/ReactorContextPropagationConfig 注册 MDC 访问器后生效。
+             36KB，无任何传递依赖。⚠️ 合入内网需确认该坐标可用，缺失会导致启动失败。 -->
         <dependency>
             <groupId>io.micrometer</groupId>
-            <artifactId>micrometer-registry-prometheus</artifactId>
+            <artifactId>context-propagation</artifactId>
+            <version>1.1.3</version>
         </dependency>
 
         <!-- ===== 参数校验 ===== -->
@@ -141,10 +216,12 @@
         </dependency>
 
         <!-- ===== JSON 日志编码器（logback-spring.xml 的 FILE appender 用，ELK 采集） ===== -->
+        <!-- ⚠️ 7.x 对应 logback 1.2/1.3；BOM 的 logback 1.5.18 + slf4j 2.0.17 需要 8.x，
+             否则 FILE appender 初始化即 NoClassDefFoundError -->
         <dependency>
             <groupId>net.logstash.logback</groupId>
             <artifactId>logstash-logback-encoder</artifactId>
-            <version>7.2</version>
+            <version>${logstash-encoder.version}</version>
         </dependency>
 
         <!-- ===== Lombok ===== -->
@@ -161,11 +238,18 @@
             <optional>true</optional>
         </dependency>
 
-        <!-- ===== Swagger / OpenAPI（springdoc WebFlux，兼容 Spring Boot 2.7 + WebFlux） ===== -->
+        <!-- ===== Swagger 注解 =====
+             【已移除】org.springdoc:springdoc-openapi-starter-webflux-ui —— 内网仓库无此包。
+             随之失去的能力：在线 Swagger UI（/swagger-ui.html）与 /v3/api-docs 文档生成。
+             接口契约以 spec/modelgate/04-接口与数据结构.md 为准。
+
+             注解本身保留（Controller 上的 @Tag/@Operation/@Parameter 是有效的接口说明），
+             故显式引入 swagger-annotations；版本取 2.2.0，与内网既有工程一致。
+             ⚠️ 若内网连此包也没有，则需一并删除全部 io.swagger.v3 注解（8 个 Controller）。 -->
         <dependency>
-            <groupId>org.springdoc</groupId>
-            <artifactId>springdoc-openapi-webflux-ui</artifactId>
-            <version>1.7.0</version>
+            <groupId>io.swagger.core.v3</groupId>
+            <artifactId>swagger-annotations</artifactId>
+            <version>${swagger-annotations.version}</version>
         </dependency>
     </dependencies>
 

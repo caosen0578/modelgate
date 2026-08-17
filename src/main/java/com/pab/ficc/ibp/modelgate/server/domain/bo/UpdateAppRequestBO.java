@@ -3,7 +3,7 @@ package com.pab.ficc.ibp.modelgate.server.domain.bo;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.AppInfoEntity;
 import lombok.Data;
 
-import javax.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotBlank;
 
 @Data
 public class UpdateAppRequestBO {

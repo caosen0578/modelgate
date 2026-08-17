@@ -1,5 +1,6 @@
 package com.pab.ficc.ibp.modelgate.server.filter;
 
+import com.pab.ficc.ibp.modelgate.server.constant.UrlConstant;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pab.ficc.ibp.modelgate.server.common.ErrorCode;
@@ -49,7 +50,7 @@ public class QuotaFilter implements GlobalFilter, Ordered {
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
         String path = exchange.getRequest().getURI().getPath();
-        if (path.startsWith("/admin/") || path.startsWith("/actuator/")) {
+        if (path.startsWith(UrlConstant.MANAGE_PREFIX) || path.startsWith(UrlConstant.ACTUATOR_PREFIX)) {
             return chain.filter(exchange);
         }
 
@@ -60,10 +61,21 @@ public class QuotaFilter implements GlobalFilter, Ordered {
 
         String modelId = exchange.getAttribute("mg.modelId");
 
-        return Mono.fromCallable(() -> checkQuota(appId, modelId))
+                // ⚠️ 必须用 Optional 包一层：Mono.fromCallable 在 Callable 返回 null 时
+                // **发出的是 empty 而非 null 元素**，下游 flatMap 根本不会执行，
+                // 过滤器链就此断掉、Gateway 直接返回 200 空响应体。
+                // 而本方法恰恰用「返回 null」表示校验通过 —— 结果是**所有通过校验的请求
+                // 都拿不到模型响应**，只有被拒的请求（返回非 null）才走得通。
+                // Optional 永远非 null，保证 flatMap 必定执行。
+                return Mono.fromCallable(() -> Optional.ofNullable(checkQuota(appId, modelId)))
                 .subscribeOn(Schedulers.boundedElastic())
-                .flatMap(error -> {
+                .flatMap(result -> {
+                    ErrorCode error = result.orElse(null);
                     if (error == null) return chain.filter(exchange);
+                    // 429 是接入方最需要自查的拒绝类型（QPS/日调用量/月 Token 三选一），
+                    // 必须打出是哪一层配额触发的，否则对方只知道被限流、不知道该调哪个参数
+                    log.info("[QuotaFilter] 拒绝: appId={}, modelId={}, reason={}",
+                            appId, modelId, error.getMessage());
                     return reject(exchange, error);
                 });
     }

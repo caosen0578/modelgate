@@ -1,5 +1,7 @@
 package com.pab.framework.redis;
 
+import redis.clients.jedis.params.SetParams;
+
 import java.util.List;
 
 /**
@@ -27,4 +29,11 @@ public interface CacheProvider {
      * @return 脚本返回值（限流脚本返回 Long）
      */
     Object eval(String script, List<String> keys, List<String> args);
+
+    /**
+     * {@code SET key value [NX] [EX ttl]}，加锁成功返回 {@code "OK"}。
+     * 用于 DynamicTaskScheduler 的分布式锁竞争。
+     */
+    String set(String key, String value, SetParams setParams);
+
 }

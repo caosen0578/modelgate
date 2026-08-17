@@ -1,5 +1,6 @@
 package com.pab.ficc.ibp.modelgate.server.filter;
 
+import com.pab.ficc.ibp.modelgate.server.constant.UrlConstant;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -36,7 +37,7 @@ import java.nio.charset.StandardCharsets;
  * </ul>
  *
  * <p><b>作用范围：</b>仅对 POST /v1/** 且 Content-Type 为 JSON 的请求生效，
- * GET 请求和 /admin/** 接口直接放行。
+ * GET 请求和 /modelgate/** 接口直接放行。
  */
 @Slf4j
 @Component
@@ -55,7 +56,7 @@ public class BodyParseFilter implements GlobalFilter, Ordered {
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
         String path = exchange.getRequest().getURI().getPath();
-        if (!path.startsWith("/v1/") || exchange.getRequest().getMethod() != HttpMethod.POST) {
+        if (!path.startsWith(UrlConstant.BUSINESS_PREFIX) || exchange.getRequest().getMethod() != HttpMethod.POST) {
             return chain.filter(exchange);
         }
 
@@ -94,7 +95,7 @@ public class BodyParseFilter implements GlobalFilter, Ordered {
                 exchange.getAttributes().put("mg.modelId", modelNode.asText());
             }
         } catch (Exception e) {
-            log.debug("[BodyParseFilter] Could not parse model field: {}", e.getMessage());
+            log.debug("[BodyParse] 请求体未能解析出 model 字段: {}", e.getMessage());
         }
     }
 }

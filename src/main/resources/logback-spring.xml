@@ -14,12 +14,13 @@
     <!-- ===== 滚动文件（生产环境，JSON 格式方便 ELK 采集） ===== -->
     <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
         <file>logs/${APP_NAME}.log</file>
-        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+        <!-- 按时间+大小滚动。
+             ⚠️ 不要写回 TimeBasedRollingPolicy + SizeAndTimeBasedFNATP 的老组合：
+             logback 1.5 下 SizeAndTimeBasedFNATP 已弃用，启动时会打 4 行 WARN 状态信息。
+             SizeAndTimeBasedRollingPolicy 内部就是这两者的组合，行为完全等价。 -->
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
             <fileNamePattern>logs/${APP_NAME}.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
-            <timeBasedFileNamingAndTriggeringPolicy
-                    class="ch.qos.logback.core.rolling.SizeAndTimeBasedFNATP">
-                <maxFileSize>512MB</maxFileSize>
-            </timeBasedFileNamingAndTriggeringPolicy>
+            <maxFileSize>512MB</maxFileSize>
             <maxHistory>30</maxHistory>
             <totalSizeCap>10GB</totalSizeCap>
         </rollingPolicy>
@@ -46,10 +47,14 @@
     </appender>
 
     <!-- ===== Profile 选择 ===== -->
+    <!-- 本地/开发：控制台 + 文件双写（此前仅挂 CONSOLE，导致 logs/modelgate.log 恒为空，无法回溯排查） -->
     <springProfile name="dev,local,default">
         <root level="${LOG_LEVEL}">
             <appender-ref ref="CONSOLE"/>
+            <appender-ref ref="ASYNC_FILE"/>
         </root>
+        <!-- 本地调试放开业务包 DEBUG，生产由 root INFO 兜住（03-编码规范 §7：正常业务流程 DEBUG，生产关闭） -->
+        <logger name="com.pab.ficc.ibp.modelgate" level="DEBUG"/>
     </springProfile>
 
     <springProfile name="prod">
@@ -64,5 +69,4 @@
     <logger name="reactor.netty" level="WARN"/>
     <logger name="io.lettuce" level="WARN"/>
     <logger name="com.netflix" level="WARN"/>
-    <logger name="com.ctrip.framework.apollo" level="WARN"/>
 </configuration>

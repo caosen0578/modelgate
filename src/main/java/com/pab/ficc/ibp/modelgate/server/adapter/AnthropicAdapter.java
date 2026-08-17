@@ -82,7 +82,7 @@ public class AnthropicAdapter implements ProviderAdapter {
         var headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.set("anthropic-version", ANTHROPIC_VERSION);
-        if (credential != null && credential.getSecretKey() != null) {
+        if (ProviderAdapter.shouldAuthenticate(credential)) {
             headers.set("x-api-key", credential.getSecretKey());
         }
         return headers;
@@ -91,6 +91,7 @@ public class AnthropicAdapter implements ProviderAdapter {
     @Override
     public URI buildUpstreamUri(ModelInstanceEntity model, URI originalUri) {
         String base = model.getUpstreamUrl().replaceAll("/$", "");
-        return URI.create(base + "/v1/messages");
+        // 配了 upstream_path 用它；留空则沿用 Anthropic 官方规范的 /v1/messages
+        return URI.create(base + resolvePath(model.getUpstreamPath(), "/v1/messages"));
     }
 }

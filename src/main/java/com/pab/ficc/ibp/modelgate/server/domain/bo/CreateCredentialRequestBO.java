@@ -3,7 +3,7 @@ package com.pab.ficc.ibp.modelgate.server.domain.bo;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.AppCredentialEntity;
 import lombok.Data;
 
-import javax.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotBlank;
 import java.time.LocalDateTime;
 
 @Data

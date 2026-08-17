@@ -1,11 +1,11 @@
 package com.pab.ficc.ibp.modelgate.server.filter;
 
+import com.pab.ficc.ibp.modelgate.server.constant.UrlConstant;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.pab.ficc.ibp.modelgate.server.apollo.DynamicConfigHolder;
+import com.pab.ficc.ibp.modelgate.server.config.DynamicConfigHolder;
 import com.pab.ficc.ibp.modelgate.server.common.ErrorCode;
 import com.pab.ficc.ibp.modelgate.server.common.Result;
-import com.pab.ficc.ibp.modelgate.server.metrics.GatewayMetrics;
 import com.pab.ficc.ibp.modelgate.server.service.GatewayConfigService;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
@@ -42,7 +42,7 @@ import java.util.concurrent.TimeUnit;
  * <p><b>开关：</b>支持两级开关：
  * <ul>
  *   <li>DB 配置（{@link GatewayConfigService#isCircuitBreakerEnabled}）：运营人员通过管理页面动态调整</li>
- *   <li>Apollo 配置（{@link DynamicConfigHolder#isCircuitBreakerEnabled}）：配置中心热推送</li>
+ *   <li>配置文件开关（{@link DynamicConfigHolder#isCircuitBreakerEnabled}）：modelgate.circuit-breaker.enabled，改后需重启</li>
  * </ul>
  */
 @Slf4j
@@ -53,19 +53,16 @@ public class CircuitBreakerFilter implements GlobalFilter, Ordered {
 
     private final CircuitBreaker circuitBreaker;
     private final GatewayConfigService gatewayConfigService;
-    private final DynamicConfigHolder apolloConfigHolder;
-    private final GatewayMetrics metrics;
+    private final DynamicConfigHolder dynamicConfigHolder;
     private final ObjectMapper objectMapper;
 
     public CircuitBreakerFilter(CircuitBreakerRegistry registry,
                                 GatewayConfigService gatewayConfigService,
-                                DynamicConfigHolder apolloConfigHolder,
-                                GatewayMetrics metrics,
+                                DynamicConfigHolder dynamicConfigHolder,
                                 ObjectMapper objectMapper) {
         this.circuitBreaker = registry.circuitBreaker("modelUpstream");
         this.gatewayConfigService = gatewayConfigService;
-        this.apolloConfigHolder = apolloConfigHolder;
-        this.metrics = metrics;
+        this.dynamicConfigHolder = dynamicConfigHolder;
         this.objectMapper = objectMapper;
     }
 
@@ -77,19 +74,16 @@ public class CircuitBreakerFilter implements GlobalFilter, Ordered {
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
         String path = exchange.getRequest().getURI().getPath();
-        if (path.startsWith("/admin/") || path.startsWith("/actuator/")
-                || path.startsWith("/swagger-ui") || path.startsWith("/v3/api-docs")
-                || path.startsWith("/webjars/")) {
+        if (path.startsWith(UrlConstant.MANAGE_PREFIX) || path.startsWith(UrlConstant.ACTUATOR_PREFIX)) {
             return chain.filter(exchange);
         }
 
-        if (!gatewayConfigService.isCircuitBreakerEnabled() || !apolloConfigHolder.isCircuitBreakerEnabled()) {
+        if (!gatewayConfigService.isCircuitBreakerEnabled() || !dynamicConfigHolder.isCircuitBreakerEnabled()) {
             return chain.filter(exchange);
         }
 
         // tryAcquirePermission()：OPEN 状态时返回 false（快速失败），CLOSED/HALF_OPEN 时返回 true
         if (!circuitBreaker.tryAcquirePermission()) {
-            metrics.recordCircuitBreakerOpen();
             log.warn("[CircuitBreaker] Circuit OPEN, fast-fail: path={}", path);
             return reject(exchange);
         }
@@ -104,7 +98,9 @@ public class CircuitBreakerFilter implements GlobalFilter, Ordered {
                         circuitBreaker.onError(System.nanoTime() - startNano,
                                 TimeUnit.NANOSECONDS,
                                 new RuntimeException("Upstream HTTP " + status));
-                        metrics.recordUpstreamError("http_" + status);
+                        // 原先此处只打指标不打日志；Prometheus 已移除，改为 WARN，
+                        // 否则上游 5xx 在日志里完全不可见（熔断触发前无从察觉）
+                        log.warn("[CircuitBreaker] Upstream error: status={}, path={}", status, path);
                     } else {
                         // 上游 2xx/4xx 视为成功调用（4xx 是业务拒绝，非上游故障）
                         circuitBreaker.onSuccess(System.nanoTime() - startNano, TimeUnit.NANOSECONDS);
@@ -113,7 +109,7 @@ public class CircuitBreakerFilter implements GlobalFilter, Ordered {
                 .doOnError(ex -> {
                     // 网络异常、连接超时等，通知熔断器累计错误率
                     circuitBreaker.onError(System.nanoTime() - startNano, TimeUnit.NANOSECONDS, ex);
-                    metrics.recordUpstreamError("exception");
+                    log.warn("[CircuitBreaker] Upstream exception: path={}, err={}", path, ex.toString());
                 });
     }
 

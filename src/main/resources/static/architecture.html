@@ -143,21 +143,21 @@ svg{display:block}
 <text x="492" y="404" font-size="11" fill="#1f2937" font-weight="600">Consul</text>
 <text x="492" y="420" font-size="9" fill="#64748b">服务注册与发现</text>
 
-<!-- Apollo -->
+<!-- 配置文件（原 Apollo，apollo-client 已移除） -->
 <rect x="295" y="446" width="128" height="50" rx="8" fill="#fff" stroke="#bbf7d0" stroke-width="1"/>
 <text x="310" y="466" font-size="18">⚙️</text>
-<text x="355" y="466" font-size="11" fill="#1f2937" font-weight="600">Apollo</text>
-<text x="355" y="482" font-size="9" fill="#64748b">动态配置（紧急开关）</text>
+<text x="355" y="466" font-size="11" fill="#1f2937" font-weight="600">配置文件</text>
+<text x="355" y="482" font-size="9" fill="#64748b">开关改后需重启</text>
 
-<!-- Prometheus -->
+<!-- 日志采集（原 Prometheus/Grafana，已移除） -->
 <rect x="435" y="446" width="128" height="50" rx="8" fill="#fff" stroke="#bbf7d0" stroke-width="1"/>
-<text x="450" y="466" font-size="18">📊</text>
-<text x="492" y="466" font-size="11" fill="#1f2937" font-weight="600">Prometheus</text>
-<text x="492" y="482" font-size="9" fill="#64748b">指标采集 / Grafana</text>
+<text x="450" y="466" font-size="18">📄</text>
+<text x="492" y="466" font-size="11" fill="#1f2937" font-weight="600">日志采集</text>
+<text x="492" y="482" font-size="9" fill="#64748b">Logback JSON → ELK</text>
 
 <!-- Admin -->
 <rect x="295" y="508" width="268" height="50" rx="8" fill="#fef3c7" stroke="#fcd34d" stroke-width="1"/>
-<text x="429" y="528" font-size="11" fill="#92400e" font-weight="600" text-anchor="middle">管理后台 /admin/**</text>
+<text x="429" y="528" font-size="11" fill="#92400e" font-weight="600" text-anchor="middle">管理后台 /modelgate/**</text>
 <text x="429" y="545" font-size="9" fill="#78350f" text-anchor="middle">ModelController / AppController / CredentialController ···</text>
 
 <!-- ===== 右侧：上游模型 ===== -->
@@ -249,12 +249,11 @@ svg{display:block}
 <rect x="200" y="74" width="600" height="500" rx="14" fill="#f8faff" stroke="#c7d2fe" stroke-width="1.5"/>
 <text x="500" y="96" font-size="12" fill="#4338ca" font-weight="700" text-anchor="middle">GlobalFilter 过滤器链（Spring Cloud Gateway · WebFlux · Reactor Netty）</text>
 
-<!-- F1: AdminAuthFilter -->
-<rect x="220" y="106" width="560" height="48" rx="9" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.5" filter="url(#sh2)"/>
-<text x="280" y="127" font-size="10" fill="#991b1b" font-weight="700">order=-200</text>
-<text x="360" y="127" font-size="12" fill="#1f2937" font-weight="700">AdminAuthFilter</text>
-<text x="360" y="143" font-size="10" fill="#64748b">保护 /admin/** 和 /actuator/**，IP白名单 + X-Admin-Token 三层鉴权</text>
-<text x="735" y="130" font-size="10" fill="#991b1b" text-anchor="end">→ 401/403</text>
+<!-- F1: 管理面旁路说明（原 AdminAuthFilter -200 已移除） -->
+<rect x="220" y="106" width="560" height="48" rx="9" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 3" filter="url(#sh2)"/>
+<text x="280" y="127" font-size="10" fill="#64748b" font-weight="700">（已移除）</text>
+<text x="360" y="127" font-size="12" fill="#475569" font-weight="700">管理面 /modelgate/** 不入本链路</text>
+<text x="360" y="143" font-size="10" fill="#94a3b8">原 AdminAuthFilter(-200) 已删除，改由内网逐接口鉴权体系承担</text>
 
 <line x1="500" y1="155" x2="500" y2="170" stroke="#6366f1" stroke-width="1.5" marker-end="url(#arr2)"/>
 

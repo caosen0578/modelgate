@@ -14,11 +14,21 @@ public class AppCredentialVO {
     private Long          id;
     private String        credName;
     private String        credType;
-    private String        accessKey;   // AK/SK 类型才有值，api_key 类型此处为 null
+    /** ak_sk 类型为 AK 明文；api_key 类型为密钥末 4 位（仅供展示辨识） */
+    private String        accessKey;
     private Boolean       enabled;
     private LocalDateTime expiresAt;
     private String        remark;
     private LocalDateTime createTime;
+
+    /**
+     * 明文是否可找回。
+     *
+     * <p>只暴露"有没有"这个布尔位，**不暴露密文本身**（见 05 §4.1 禁令）。
+     * 启用「密钥可查看」之前创建的 api_key 凭证该位为 false，前端据此置灰查看按钮，
+     * 避免用户点了才发现找不回。
+     */
+    private Boolean       secretRetrievable;
 
     public static AppCredentialVO of(AppCredentialEntity e) {
         AppCredentialVO vo = new AppCredentialVO();
@@ -30,6 +40,7 @@ public class AppCredentialVO {
         vo.expiresAt = e.getExpiresAt();
         vo.remark    = e.getRemark();
         vo.createTime = e.getCreateTime();
+        vo.secretRetrievable = e.getSecretEncrypted() != null && !e.getSecretEncrypted().isBlank();
         return vo;
     }
 }

@@ -45,7 +45,8 @@ public class CustomAdapter implements ProviderAdapter {
     @Override
     public URI buildUpstreamUri(ModelInstanceEntity model, URI originalUri) {
         String base = model.getUpstreamUrl().replaceAll("/$", "");
-        String path = originalUri.getPath();
+        // 配了 upstream_path 用它；留空则沿用原行为——透传调用方路径
+        String path = resolvePath(model.getUpstreamPath(), originalUri.getPath());
         String query = originalUri.getRawQuery();
         return URI.create(base + path + (query != null ? "?" + query : ""));
     }

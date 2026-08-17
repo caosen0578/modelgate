@@ -2,16 +2,13 @@ package com.pab.ficc.ibp.modelgate.server.service;
 
 import com.pab.ficc.ibp.modelgate.server.domain.entity.AuditLogEntity;
 import com.pab.ficc.ibp.modelgate.server.mapper.AuditLogMapper;
-import io.micrometer.core.instrument.Counter;
-import io.micrometer.core.instrument.Gauge;
-import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
-import javax.annotation.PostConstruct;
+import jakarta.annotation.PostConstruct;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -45,10 +42,15 @@ public class AuditService {
 
     private final AuditLogMapper auditLogMapper;
     private final RateLimitService rateLimitService;
-    private final MeterRegistry meterRegistry;
 
-    /** 因队列满被丢弃的审计条数（压测/生产监控用） */
-    private Counter droppedCounter;
+    /**
+     * 因队列满被丢弃的累计条数。
+     *
+     * <p>原为 Micrometer Counter（{@code modelgate.audit.dropped.total}），
+     * Prometheus 出口移除后改为进程内累计值，随每条丢弃 WARN 一起打出——
+     * 丢审计是必须能察觉的事，不能因为没了指标出口就变成完全不可见。
+     */
+    private final java.util.concurrent.atomic.AtomicLong droppedTotal = new java.util.concurrent.atomic.AtomicLong();
 
     @Value("${modelgate.audit.enabled:true}")
     private boolean auditEnabled;
@@ -65,19 +67,7 @@ public class AuditService {
     @PostConstruct
     public void init() {
         queue = new LinkedBlockingQueue<>(bufferSize);
-
-        // 队列深度（当前积压条数）——压测时观测是否逼近 bufferSize，逼近即开始丢日志
-        Gauge.builder("modelgate.audit.queue.size", queue, LinkedBlockingQueue::size)
-                .description("Current backlog of audit log entries waiting to be flushed")
-                .register(meterRegistry);
-        // 队列容量上限，便于面板计算水位百分比
-        Gauge.builder("modelgate.audit.queue.capacity", this, s -> s.bufferSize)
-                .description("Configured audit queue capacity")
-                .register(meterRegistry);
-        // 因队列满而丢弃的累计条数
-        droppedCounter = Counter.builder("modelgate.audit.dropped.total")
-                .description("Total audit log entries dropped because the queue was full")
-                .register(meterRegistry);
+        log.info("[AuditService] 审计队列就绪, capacity={}", bufferSize);
     }
 
     /**
@@ -89,19 +79,20 @@ public class AuditService {
      */
     public void log(String appId, String modelId, String credType, String clientIp,
                     String requestPath, int httpStatus, long latencyMs,
-                    int inputTokens, int outputTokens, String errorMsg, String traceId) {
+                    int inputTokens, int outputTokens, String tokenSource,
+                    String errorMsg, String traceId) {
         if (!auditEnabled) return;
 
         AuditLogEntity entry = buildEntry(traceId, appId, modelId, credType, clientIp,
-                requestPath, httpStatus, latencyMs, inputTokens, outputTokens, errorMsg);
+                requestPath, httpStatus, latencyMs, inputTokens, outputTokens, tokenSource, errorMsg);
 
         // 无论 dbWriteEnabled 是否开启，都必须入队：
         // flush() 依赖队列内容来累计月度 Token 计数；若 dbWriteEnabled=false 时跳过入队，
         // Redis 月度计数器永远不更新，导致月度配额彻底失效。
         boolean offered = queue.offer(entry);
         if (!offered) {
-            droppedCounter.increment();
-            log.warn("[AuditService] Queue full, dropping audit log traceId={}", traceId);
+            log.warn("[AuditService] Queue full, dropping audit log traceId={}, 累计丢弃={}",
+                    traceId, droppedTotal.incrementAndGet());
         }
     }
 
@@ -157,7 +148,8 @@ public class AuditService {
 
     private AuditLogEntity buildEntry(String traceId, String appId, String modelId, String credType,
                                  String clientIp, String requestPath, int httpStatus,
-                                 long latencyMs, int inputTokens, int outputTokens, String errorMsg) {
+                                 long latencyMs, int inputTokens, int outputTokens,
+                                 String tokenSource, String errorMsg) {
         AuditLogEntity entry = new AuditLogEntity();
         entry.setTraceId(traceId);
         entry.setAppId(appId);
@@ -169,6 +161,7 @@ public class AuditService {
         entry.setLatencyMs((int) latencyMs);
         entry.setInputTokens(inputTokens);
         entry.setOutputTokens(outputTokens);
+        entry.setTokenSource(tokenSource);
         entry.setErrorMsg(errorMsg);
         entry.setCreateTime(LocalDateTime.now());
         return entry;

@@ -4,7 +4,6 @@ import com.baomidou.mybatisplus.annotation.FieldFill;
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
-import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -30,6 +29,11 @@ public class GatewayConfigEntity {
     private String description;
 
     // ===== 内部规范基础字段（修改人 X-Admin-User 透传写入 updater） =====
+    //
+    // 本表**不含 is_del、不做逻辑删除**（与其余 6 张管理表的约定不同，是有意为之）：
+    // config_key 即主键，逻辑删除后行仍在，再存同名 key 会因 selectById 被过滤而走 insert，
+    // 直接主键冲突——配置项删了就加不回来。且配置不是业务数据，无留痕需求
+    // （要追溯有 updater / update_time，变更本身也进审计）。故改为物理删除。
     @TableField(fill = FieldFill.INSERT)
     private String creater;
     @TableField(fill = FieldFill.INSERT)
@@ -38,10 +42,6 @@ public class GatewayConfigEntity {
     private String updater;
     @TableField(fill = FieldFill.INSERT_UPDATE)
     private LocalDateTime updateTime;
-    /** 删除标志(1-已删除 0-未删除)，逻辑删除 */
-    @TableLogic(value = "0", delval = "1")
-    @TableField(fill = FieldFill.INSERT)
-    private String isDel;
     @TableField(fill = FieldFill.INSERT)
     private String createrUm;
     @TableField(fill = FieldFill.INSERT_UPDATE)
@@ -49,15 +49,12 @@ public class GatewayConfigEntity {
 
     // ===== 内置 Key 常量，避免硬编码散落各处 =====
 
-    /** 上游模型服务地址 */
-    public static final String KEY_UPSTREAM_URL = "upstream.url";
+    // 注：原 KEY_UPSTREAM_URL("upstream.url") 已移除。
+    // 真实转发地址按模型动态取自 mg_model.upstream_url（见 ModelRouteFilter），
+    // 该全局配置从未参与路由，属早期"整网关转发到单一上游"设计的残留。
 
-    /** 鉴权总开关（true=开启，false=放行所有） */
-    public static final String KEY_AUTH_ENABLED = "auth.enabled";
 
     /** 熔断开关 */
     public static final String KEY_CIRCUIT_BREAKER_ENABLED = "circuit.breaker.enabled";
 
-    /** 默认限流（每秒） */
-    public static final String KEY_DEFAULT_RATE_LIMIT = "rate.limit.default";
 }

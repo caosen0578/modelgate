@@ -7,4 +7,7 @@ target/
 .DS_Store
 logs/
 *.log
-application-local.yml
+tree.txt
+New Text Document.txt
+src/main/resources/admin-bak.html
+src/main/java/com/pab/ficc/cus.7z
