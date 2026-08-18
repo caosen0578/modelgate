@@ -27,6 +27,7 @@ import reactor.core.scheduler.Schedulers;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 请求/响应报文查询接口。
@@ -103,19 +104,62 @@ public class PayloadController {
         return Mono.just(Result.success(m));
     }
 
+    /** 单页上限。报文行带正文预览与三个跨表子查询，比普通列表贵得多，上限压得比常规更狠。 */
+    private static final long MAX_PAGE_SIZE = 200;
+
     /**
-     * 关键字检索的前置校验。
+     * {@code truncated} 的合法取值。
      *
-     * <p>正文检索是 LONGTEXT 上的 {@code LIKE '%x%'}，无法走索引。若允许它单独使用，
-     * 一次点击就是一轮全表扫描 + 把全部正文读进 buffer pool，足以把在线业务的 DB 拖垮。
-     * 强制搭配一个能走索引的条件（系统/模型/traceId/时间范围），让 MySQL 先收窄候选集。
+     * <p>只有这两个：{@code PayloadService.toEntity} 写的是
+     * {@code truncated ? "response" : "none"}，请求侧根本没有截断机制
+     * （{@code BodyParseFilter} 用 {@code DataBufferUtils.join} 一次性读全请求体，无字节上限）。
+     * DDL 注释与 04 文档写的四态 {@code none|request|response|both} 是<b>从未兑现的契约</b>。
+     * 传 {@code request}/{@code both} 会得到 200 + 空列表，让人误以为"这段时间没有请求被截断"，
+     * 所以这里显式拒绝，让不合法的取值<b>响亮地失败</b>而不是安静地骗人。
+     */
+    private static final Set<String> VALID_TRUNCATED = Set.of("none", "response");
+
+    /**
+     * 入参校验。
+     *
+     * <p>三件事，每件都对应一条能把数据库拖垮或把人误导的真实路径：
+     * <ol>
+     *   <li><b>关键字必须搭配收窄条件</b>——正文检索是 LONGTEXT 上的 {@code LIKE '%x%'}，
+     *       无法走索引。单独使用就是一轮全表扫描 + 把全部正文读进 buffer pool，
+     *       连带把网关热数据（凭证/授权等小表）挤出缓冲池，这是"管理面拖垮转发"最隐蔽的路径。</li>
+     *   <li><b>pageSize 必须封顶</b>——{@code BaseBo.setPageSize} 是个裸 setter，不做任何收敛。
+     *       实测 {@code pageSize=5000} 会被原样接受。一个 GET 就能让 MySQL 吐出几千行带正文预览
+     *       的结果并长时间占住一条 Druid 连接（池上限 100），是最廉价的自伤方式。</li>
+     *   <li><b>truncated 取值白名单</b>——理由见 {@link #VALID_TRUNCATED}。
+     *       {@code finishReason} <b>不做</b>白名单：它的取值由上游模型决定，
+     *       新模型随时可能返回新值，写死白名单会把合法查询拒掉。</li>
+     * </ol>
      */
     private void validate(PayloadQueryBO q) {
         String keyword = q.getKeyword();
         if (keyword != null && !keyword.isBlank() && !q.hasNarrowingFilter()) {
+            throw new BusinessException(ErrorCode.INVALID_PARAMETER, String.format(
+                    "正文关键字检索必须同时指定以下之一：接入系统、模型、TraceID（至少 %d 位前缀）、"
+                            + "或两端齐全且跨度不超过 %d 小时的时间范围。"
+                            + "（关键字是 LONGTEXT 上的模糊匹配，走不了索引，不收窄会全表扫描拖垮数据库）",
+                    PayloadQueryBO.tracePrefixMin(), PayloadQueryBO.timeSpanMaxHours()));
+        }
+
+        if (q.getPageSize() > MAX_PAGE_SIZE) {
             throw new BusinessException(ErrorCode.INVALID_PARAMETER,
-                    "正文关键字检索必须同时指定 接入系统 / 模型 / TraceID / 时间范围 中的至少一项"
-                            + "（全表扫描 LONGTEXT 会拖垮数据库）");
+                    "pageSize 不能超过 " + MAX_PAGE_SIZE + "，当前传入 " + q.getPageSize()
+                            + "（报文行含正文预览与跨表 Token 查询，单页过大会长时间占用数据库连接）");
+        }
+        if (q.getPageSize() <= 0 || q.getPageIndex() <= 0) {
+            throw new BusinessException(ErrorCode.INVALID_PARAMETER,
+                    "pageIndex 与 pageSize 必须为正数");
+        }
+
+        String truncated = q.getTruncated();
+        if (truncated != null && !truncated.isBlank() && !VALID_TRUNCATED.contains(truncated)) {
+            throw new BusinessException(ErrorCode.INVALID_PARAMETER,
+                    "truncated 取值非法: " + truncated + "；当前系统只会写入 " + VALID_TRUNCATED
+                            + "（请求侧无截断机制，request/both 永远不会出现）");
         }
     }
 

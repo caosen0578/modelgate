@@ -65,22 +65,51 @@ public class PayloadQueryBO extends BaseBo {
     /** traceId 前缀至少要这么长才算"能收窄"——见 {@link #hasNarrowingFilter()}。 */
     private static final int TRACE_PREFIX_MIN = 8;
 
+    /** 时间范围跨度不超过这么多小时才算"能收窄"——见 {@link #hasNarrowingFilter()}。 */
+    private static final long TIME_SPAN_MAX_HOURS = 24;
+
     /**
      * 是否给出了能收窄候选集的条件——keyword 检索的前置条件。
      *
      * <p><b>只认这几个</b>：appId / modelId 走 {@code idx_app_model_time}，
-     * 时间范围走 {@code idx_create_time}，traceId 前缀走 {@code idx_trace_id}。
+     * 有界时间范围走 {@code idx_create_time}，traceId 前缀走 {@code idx_trace_id}。
      * {@code isStream} / {@code upstreamStatus} / {@code finishReason} / {@code truncated}
      * <b>刻意不算</b>：它们没有索引且区分度极低（{@code upstream_status=200} 能占九成以上），
      * 加上它们照样是全表扫描 LONGTEXT，只会让人误以为已经收窄了。
      *
      * <p>traceId 要求至少 {@value #TRACE_PREFIX_MIN} 位：前缀匹配下 1 位十六进制只能滤掉
      * 15/16 的行，用它当"收窄条件"等于没有。
+     *
+     * <p><b>时间范围必须两端都给且跨度 ≤ {@value #TIME_SPAN_MAX_HOURS} 小时</b>。
+     * 早先只判 {@code != null}，于是 {@code startTime=1990-01-01} 这种一眼假的下界
+     * 也算"已收窄"——实测 {@code keyword=hello&startTime=1990-01-01} 直接放行，
+     * 等于防护形同虚设。只给单端同理：只有 startTime 就是"从某时刻到现在"，
+     * 在保留期只有 7 天的表上几乎等于全表。
      */
     public boolean hasNarrowingFilter() {
-        boolean traceNarrow = notBlank(traceId) && traceId.trim().length() >= TRACE_PREFIX_MIN;
-        return notBlank(appId) || notBlank(modelId) || traceNarrow
-                || startTime != null || endTime != null;
+        return notBlank(appId) || notBlank(modelId) || hasTraceNarrow() || hasBoundedTimeRange();
+    }
+
+    /** traceId 前缀是否长到足以收窄 */
+    public boolean hasTraceNarrow() {
+        return notBlank(traceId) && traceId.trim().length() >= TRACE_PREFIX_MIN;
+    }
+
+    /** 时间范围是否两端齐全且跨度足够小 */
+    public boolean hasBoundedTimeRange() {
+        if (startTime == null || endTime == null || endTime.isBefore(startTime)) {
+            return false;
+        }
+        return java.time.Duration.between(startTime, endTime).toHours() <= TIME_SPAN_MAX_HOURS;
+    }
+
+    /** 供错误文案引用，避免提示里写死的数字与校验逻辑漂移 */
+    public static int tracePrefixMin() {
+        return TRACE_PREFIX_MIN;
+    }
+
+    public static long timeSpanMaxHours() {
+        return TIME_SPAN_MAX_HOURS;
     }
 
     private static boolean notBlank(String s) {

@@ -214,7 +214,11 @@ CREATE TABLE IF NOT EXISTS mg_request_payload (
     response_text   LONGTEXT                                    COMMENT '响应正文：流式为各帧 delta.content 拼接后的最终文本，非流式为 choices[0].message.content。供查询展示，人可直读',
     finish_reason   VARCHAR(32)                                 COMMENT '结束原因：stop|length|tool_calls|content_filter 等，取自响应最后一帧',
     upstream_status INT                                         COMMENT '上游返回的 HTTP 状态码',
-    truncated       VARCHAR(16)  NOT NULL DEFAULT 'none'        COMMENT '截断标记：none=完整 request=请求被截 response=响应被截 both=均被截（仅在触发内存保护阈值时出现）',
+    -- ⚠️ 当前实现只会写入 none / response 两种值（PayloadService.toEntity）。
+    -- request / both 是预留取值：请求侧目前没有截断机制（BodyParseFilter 用 DataBufferUtils.join
+    -- 一次性读全请求体，没有字节上限，max-capture-bytes 只作用于响应采集侧），
+    -- 除非将来给请求体也加采集上限，否则这两个值永远不会出现。管理面筛选只提供 none / response。
+    truncated       VARCHAR(16)  NOT NULL DEFAULT 'none'        COMMENT '截断标记：none=完整 response=响应被截（触发内存保护阈值）。request/both 为预留值，当前实现不会写入',
     create_time     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录写入时间（用于保留期清理）',
     PRIMARY KEY (id),
     KEY idx_trace_id        (trace_id),

@@ -412,12 +412,17 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
               <option value="tool_calls">tool_calls 调工具</option>
               <option value="content_filter">content_filter 拦截</option>
             </select>
+            <!-- 只列后端真正会写入的两个值。DDL 注释与 04 文档写的是四态
+                 (none|request|response|both)，但 PayloadService.toEntity 实际只写
+                 none / response 两种；请求侧根本没有截断机制（BodyParseFilter 用
+                 DataBufferUtils.join 一次性读全请求体，没有任何字节上限，
+                 max-capture-bytes 只作用于响应采集）。
+                 照抄文档把 request / both 摆出来，用户选了会得到 200 + 空列表，
+                 从而得出「这段时间没有请求被截断」的错误结论——系统压根不记录这个状态。 -->
             <select id="pl_truncated" style="width:130px">
               <option value="">全部完整性</option>
               <option value="none">完整</option>
               <option value="response">响应被截</option>
-              <option value="request">请求被截</option>
-              <option value="both">均被截</option>
             </select>
           </div>
         </div>
@@ -437,9 +442,10 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
         <!-- 关键字为何有约束：LONGTEXT 上的 LIKE '%x%' 走不了索引，单独使用就是全表扫描。
              后端会直接拒绝这种请求，这里提前把规则说清楚，免得用户点了才吃报错。 -->
         <div class="hint" style="margin-top:8px">
-          正文关键字为模糊匹配，<b>必须</b>与「系统 / 模型 / TraceID（≥8 位）/ 时间范围」中的至少一项同时使用——
-          单独按关键字查会在 LONGTEXT 上全表扫描，后端会拒绝该请求。
-          「类型 / 上游状态码 / 结束原因 / 完整性」<b>不算</b>收窄条件（无索引且区分度过低）。
+          正文关键字为模糊匹配，<b>必须</b>与「系统 / 模型 / TraceID（≥8 位）/ 跨度 ≤24 小时的时间范围」
+          中的至少一项同时使用——单独按关键字查会在 LONGTEXT 上全表扫描，后端会拒绝该请求。
+          「类型 / 上游状态码 / 结束原因 / 完整性」<b>不算</b>收窄条件（无索引且区分度过低）；
+          时间范围也必须两端都填，只填一端或跨度过大同样不算。
           TraceID 支持前缀匹配，可直接粘贴列表上显示的截断值。
         </div>
       </div>
@@ -1374,7 +1380,7 @@ function setStatus(ok){
 // ============================================================
 // 导航
 // ============================================================
-function navTo(page){
+function navTo(page, skipLoad = false){
   document.querySelectorAll('.nav-item').forEach(el=>{
     el.classList.toggle('active', el.dataset.page===page);
   });
@@ -1384,6 +1390,19 @@ function navTo(page){
   $('topbarTitle').textContent = PAGE_TITLES[page] || page;
   // 原先这里都带 `&& connected` 门禁——没先点「连接」页面就是空的。
   // 连接按钮已移除，切到哪页就直接加载哪页的数据。
+  //
+  // skipLoad：带条件跳转（如审计行「📨 报文」）时必须传 true。
+  // 否则 navTo 先发一次**无条件**查询，调用方随后再发一次带条件的查询——
+  // 两个请求并发在途，无条件那个数据量大、返回慢，往往后到并把带条件的结果盖掉。
+  // 表现是「筛选框里明明填着 traceId，列表却是全量」；更糟的是第二次点不同审计行时，
+  // 两个请求带的是**不同的 traceId**，谁赢不确定，赢的若是旧的，页面会安静地显示
+  // 另一次调用的报文，而输入框显示的是新 traceId——完全看不出错。
+  // 过滤器下拉填充与保留期提示不受影响，它们与查询条件无关，照常执行。
+  if(skipLoad){
+    if(page==='audit')   fillAuditFilters();
+    if(page==='payload'){ fillPayloadFilters(); loadPayloadMeta(); }
+    return;
+  }
   if(page==='models')   loadModels();
   if(page==='apps')     loadApps();
   if(page==='audit')  { fillAuditFilters(); loadStats(); loadAudit(); }
@@ -2960,9 +2979,14 @@ function statusTag(s){
   return `<span class="tag tag-gray">${s||'-'}</span>`;
 }
 
-/** 从审计行跳到报文页并按 traceId 精确定位。审计看到一条异常调用，下一步必然是看它的报文。 */
+/**
+ * 从审计行跳到报文页并按 traceId 定位。审计看到一条异常调用，下一步必然是看它的报文。
+ *
+ * navTo 传 skipLoad=true：不这么做会先发一次无条件查询，与随后带 traceId 的查询并发，
+ * 无条件那次更慢、往往后到并把结果盖掉（详见 navTo 注释）。这里只发一次请求。
+ */
 function payloadOfTrace(traceId){
-  navTo('payload');
+  navTo('payload', true);
   resetPayloadFilters(false);
   $('pl_trace').value = traceId || '';
   loadPayload();
@@ -3008,8 +3032,14 @@ async function loadPayloadMeta(){
  * isStream / 状态码 / 结束原因 / 截断 都**不算**：它们没索引且区分度极低，加上也还是全表扫。
  */
 function payloadNarrowed(){
-  return !!($('pl_app').value || $('pl_model').value || $('pl_start').value || $('pl_end').value
-            || $('pl_trace').value.trim().length >= 8);
+  if($('pl_app').value || $('pl_model').value) return true;
+  if($('pl_trace').value.trim().length >= 8) return true;
+  // 时间范围要**两端齐全且跨度 ≤24 小时**才算收窄。只判"填了没"是不够的：
+  // startTime=1990-01-01 这种一眼假的下界照样能通过，防护就白做了。
+  const s = $('pl_start').value, e = $('pl_end').value;
+  if(!s || !e) return false;
+  const ms = new Date(e) - new Date(s);
+  return ms >= 0 && ms <= 24*3600*1000;
 }
 
 /** Date → datetime-local 控件要的 "YYYY-MM-DDTHH:mm"（本地时区，不能用 toISOString，那是 UTC） */
@@ -3047,7 +3077,8 @@ function renderPayloadNeedNarrow(kw){
       <div style="font-weight:600;color:#b45309;margin-bottom:6px">⚠️ 正文关键字需要先收窄查询范围</div>
       <div style="font-size:13px;line-height:1.7">
         关键字是 LONGTEXT 上的模糊匹配，走不了索引，单独使用会全表扫描并把所有报文正文读进内存，
-        足以拖垮在线业务的数据库，因此必须搭配 <b>系统 / 模型 / TraceID（≥8 位）/ 时间范围</b> 之一。<br>
+        足以拖垮在线业务的数据库，因此必须搭配
+        <b>系统 / 模型 / TraceID（≥8 位）/ 两端齐全且跨度 ≤24 小时的时间范围</b> 之一。<br>
         <span style="color:#94a3b8">「类型 / 上游状态码 / 结束原因 / 完整性」不算收窄条件——它们没有索引，区分度也太低。</span>
       </div>
       <div class="flex gap-8" style="margin-top:12px">
@@ -3086,7 +3117,10 @@ async function loadPayload(resetPage = true){
     if(!isOk(j)){
       // 关键字缺少收窄条件时后端会拒绝，错误文案本身就是操作指引，原样弹出来
       toast('查询报文失败: '+errMsg(j),'error');
-      tbody.innerHTML = `<tr class="empty-row"><td colspan="10" style="color:#ef4444">${escHtml(errMsg(j))}</td></tr>`;
+      // colspan 必须跟表头列数（11）一致，否则错误提示横不满、最右列空一格；
+      // 分页条也要清掉，否则停留在上一次成功查询的「共 2727 条」，点下一页会基于错误页码继续发请求
+      tbody.innerHTML = `<tr class="empty-row"><td colspan="11" style="color:#ef4444">${escHtml(errMsg(j))}</td></tr>`;
+      $('payloadPager').innerHTML = '';
       return;
     }
     renderPayload(applyPage('payload', j.data || {}));
@@ -3094,7 +3128,8 @@ async function loadPayload(resetPage = true){
     setStatus(true);
   }catch(e){
     console.warn('[ModelGate] 报文查询异常', e);
-    tbody.innerHTML = `<tr class="empty-row"><td colspan="10" style="color:#f59e0b">请求异常: ${escHtml(e.message)}</td></tr>`;
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="11" style="color:#f59e0b">请求异常: ${escHtml(e.message)}</td></tr>`;
+    $('payloadPager').innerHTML = '';
   }
 }
 
@@ -3162,11 +3197,16 @@ function finishTag(f){
   return `<span class="tag ${map[f]||'tag-gray'}">${escHtml(f)}</span>`;
 }
 
-/** truncated≠none 说明报文本身不完整，排查时不能拿它当上游真实返回，必须显式标出 */
+/**
+ * truncated≠none 说明报文本身不完整，排查时不能拿它当上游真实返回，必须显式标出。
+ *
+ * 保留 request/both 的映射只是为了「万一以后请求侧也加了截断机制」时不显示成裸值，
+ * 当前后端只会写 none / response —— 见筛选下拉处的说明。
+ */
 function truncTag(t){
   if(!t || t==='none') return '';
   const label = {request:'请求被截', response:'响应被截', both:'均被截'}[t] || t;
-  return ` <span class="tag tag-red" style="font-size:10px">${label}</span>`;
+  return ` <span class="tag tag-red" style="font-size:10px">${escHtml(label)}</span>`;
 }
 
 /** 字符数（CHAR_LENGTH，非字节数）。只出现在正文预览的 tooltip 里，用于提示报文规模 */
@@ -3234,10 +3274,16 @@ async function openPayloadDetail(id){
   }
 }
 
-/** 反向跳转：从报文回到审计，看这次调用的耗时/token/最终状态码 */
+/**
+ * 反向跳转：从报文回到审计，看这次调用的耗时/token/最终状态码。
+ *
+ * 同样传 skipLoad=true。原先这条路径会并发发出四个请求：
+ * navTo 的 loadStats + loadAudit，加上这里的 loadAudit 又内部再调一次 loadStats。
+ * 现在只剩 loadAudit 一次（它内部自带 loadStats）。
+ */
 function payloadToAudit(traceId){
   closeModal('payloadDetailModal');
-  navTo('audit');
+  navTo('audit', true);
   $('auditApp').value = ''; $('auditModel').value = ''; $('auditStatus').value = '';
   $('auditTrace').value = traceId || '';
   loadAudit();
