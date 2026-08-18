@@ -137,7 +137,6 @@ public class PayloadController {
         LambdaQueryWrapper<RequestPayloadEntity> w = new LambdaQueryWrapper<RequestPayloadEntity>()
                 .eq(notBlank(appId),        RequestPayloadEntity::getAppId,          appId)
                 .eq(notBlank(modelId),      RequestPayloadEntity::getModelId,        modelId)
-                .eq(notBlank(traceId),      RequestPayloadEntity::getTraceId,        traceId)
                 .eq(notBlank(finishReason), RequestPayloadEntity::getFinishReason,   finishReason)
                 .eq(notBlank(truncated),    RequestPayloadEntity::getTruncated,      truncated)
                 .eq(q.getIsStream() != null,       RequestPayloadEntity::getIsStream,       q.getIsStream())
@@ -145,13 +144,20 @@ public class PayloadController {
                 .ge(q.getStartTime() != null,      RequestPayloadEntity::getCreateTime,     q.getStartTime())
                 .le(q.getEndTime() != null,        RequestPayloadEntity::getCreateTime,     q.getEndTime());
 
+        // traceId 按前缀匹配：列表展示的是截断值（前 12 字符），全等的话用户复制界面上看到的
+        // 内容来筛选永远查不到。likeRight 在 idx_trace_id 上是范围扫描，索引仍然生效。
+        if (notBlank(traceId)) {
+            w.likeRight(RequestPayloadEntity::getTraceId, escapeLike(traceId.trim()));
+        }
+
         if (notBlank(keyword)) {
             // 请求与响应都匹配：排查既可能从"用户问了什么"入手，也可能从"模型答了什么"入手。
             // 只搜 response_text 不搜 response_raw —— raw 是 SSE 分帧原文，同一句话被切碎在多帧里，
             // LIKE 匹配不到完整词，搜它只会给出误导性的空结果。
-            w.and(x -> x.like(RequestPayloadEntity::getRequestBody,  keyword)
+            String kw = escapeLike(keyword.trim());
+            w.and(x -> x.like(RequestPayloadEntity::getRequestBody,  kw)
                         .or()
-                        .like(RequestPayloadEntity::getResponseText, keyword));
+                        .like(RequestPayloadEntity::getResponseText, kw));
         }
 
         w.orderByDesc(RequestPayloadEntity::getCreateTime)
@@ -167,5 +173,21 @@ public class PayloadController {
 
     private static boolean notBlank(String s) {
         return s != null && !s.isBlank();
+    }
+
+    /**
+     * 转义 LIKE 的通配符。
+     *
+     * <p>MyBatis-Plus 的 {@code like()} 只负责把值包成 {@code %值%}，<b>不转义</b>值里的
+     * {@code %} 和 {@code _}。不处理的话，关键字填一个 {@code %} 就变成 {@code LIKE '%%%'}
+     * ——匹配全部行，把"必须先收窄"的防护整个绕过去，等于一次点击换一轮全表扫 LONGTEXT。
+     * 这不是 SQL 注入（值仍是绑定参数），是通配符被当成语法解释。
+     *
+     * <p>用反斜杠转义，不加 {@code ESCAPE} 子句：MySQL 的 LIKE 默认转义符就是反斜杠。
+     */
+    private static String escapeLike(String s) {
+        return s.replace("\\", "\\\\")
+                .replace("%", "\\%")
+                .replace("_", "\\_");
     }
 }

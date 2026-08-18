@@ -29,7 +29,14 @@ public class PayloadQueryBO extends BaseBo {
     /** 模型 ID，为空不过滤。 */
     private String modelId;
 
-    /** 链路追踪 ID，为空不过滤。与审计页共用同一个 traceId，可互相跳转。 */
+    /**
+     * 链路追踪 ID，为空不过滤。与审计页共用同一个 traceId，可互相跳转。
+     *
+     * <p><b>按前缀匹配而非全等</b>：列表页展示的 traceId 是截断过的（前 12 字符 + 省略号），
+     * 用户复制看到的值来筛选是最自然的操作，若用全等就<b>永远查不到</b>——
+     * 界面显示什么、筛选就得能接受什么。前缀匹配在 {@code idx_trace_id} 上是范围扫描，
+     * 索引照样能用。
+     */
     private String traceId;
 
     /** 是否流式：true=仅 SSE，false=仅非流式，null=不过滤。 */
@@ -55,9 +62,24 @@ public class PayloadQueryBO extends BaseBo {
     /** 正文关键字，同时匹配 request_body 与 response_text。⚠️ 必须搭配其它条件，见类注释。 */
     private String keyword;
 
-    /** 是否给出了能收窄候选集的条件——keyword 检索的前置条件。 */
+    /** traceId 前缀至少要这么长才算"能收窄"——见 {@link #hasNarrowingFilter()}。 */
+    private static final int TRACE_PREFIX_MIN = 8;
+
+    /**
+     * 是否给出了能收窄候选集的条件——keyword 检索的前置条件。
+     *
+     * <p><b>只认这几个</b>：appId / modelId 走 {@code idx_app_model_time}，
+     * 时间范围走 {@code idx_create_time}，traceId 前缀走 {@code idx_trace_id}。
+     * {@code isStream} / {@code upstreamStatus} / {@code finishReason} / {@code truncated}
+     * <b>刻意不算</b>：它们没有索引且区分度极低（{@code upstream_status=200} 能占九成以上），
+     * 加上它们照样是全表扫描 LONGTEXT，只会让人误以为已经收窄了。
+     *
+     * <p>traceId 要求至少 {@value #TRACE_PREFIX_MIN} 位：前缀匹配下 1 位十六进制只能滤掉
+     * 15/16 的行，用它当"收窄条件"等于没有。
+     */
     public boolean hasNarrowingFilter() {
-        return notBlank(appId) || notBlank(modelId) || notBlank(traceId)
+        boolean traceNarrow = notBlank(traceId) && traceId.trim().length() >= TRACE_PREFIX_MIN;
+        return notBlank(appId) || notBlank(modelId) || traceNarrow
                 || startTime != null || endTime != null;
     }
 

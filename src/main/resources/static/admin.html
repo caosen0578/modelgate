@@ -398,7 +398,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
           <div class="toolbar-left" style="flex-wrap:wrap;gap:8px">
             <select id="pl_app" style="width:150px"><option value="">全部系统</option></select>
             <select id="pl_model" style="width:150px"><option value="">全部模型</option></select>
-            <input type="text" id="pl_trace" placeholder="TraceID（精确）" style="width:170px"/>
+            <input type="text" id="pl_trace" placeholder="TraceID（支持前缀）" style="width:170px"/>
             <select id="pl_stream" style="width:110px">
               <option value="">全部类型</option>
               <option value="true">流式 SSE</option>
@@ -437,8 +437,10 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
         <!-- 关键字为何有约束：LONGTEXT 上的 LIKE '%x%' 走不了索引，单独使用就是全表扫描。
              后端会直接拒绝这种请求，这里提前把规则说清楚，免得用户点了才吃报错。 -->
         <div class="hint" style="margin-top:8px">
-          正文关键字为模糊匹配，<b>必须</b>与「系统 / 模型 / TraceID / 时间范围」中的至少一项同时使用——
+          正文关键字为模糊匹配，<b>必须</b>与「系统 / 模型 / TraceID（≥8 位）/ 时间范围」中的至少一项同时使用——
           单独按关键字查会在 LONGTEXT 上全表扫描，后端会拒绝该请求。
+          「类型 / 上游状态码 / 结束原因 / 完整性」<b>不算</b>收窄条件（无索引且区分度过低）。
+          TraceID 支持前缀匹配，可直接粘贴列表上显示的截断值。
         </div>
       </div>
 
@@ -3000,9 +3002,71 @@ async function loadPayloadMeta(){
  * 查询报文列表。
  * @param resetPage 改了筛选条件必须回第 1 页；翻页时传 false。同 loadAudit。
  */
+/**
+ * 关键字是否已被"能走索引的条件"收窄。规则必须与后端 PayloadQueryBO.hasNarrowingFilter 一致，
+ * 否则前端放行、后端拒绝，用户拿到的还是一个光秃秃的 400。
+ * isStream / 状态码 / 结束原因 / 截断 都**不算**：它们没索引且区分度极低，加上也还是全表扫。
+ */
+function payloadNarrowed(){
+  return !!($('pl_app').value || $('pl_model').value || $('pl_start').value || $('pl_end').value
+            || $('pl_trace').value.trim().length >= 8);
+}
+
+/** Date → datetime-local 控件要的 "YYYY-MM-DDTHH:mm"（本地时区，不能用 toISOString，那是 UTC） */
+function toLocalInput(d){
+  const p = n => String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/** 一键补上最近 24 小时，然后重查 */
+function payloadUseLast24h(){
+  const now = new Date();
+  $('pl_start').value = toLocalInput(new Date(now.getTime() - 24*3600*1000));
+  $('pl_end').value   = toLocalInput(now);
+  loadPayload();
+}
+
+/** 一键把关键字挪到 TraceID 框（前缀匹配），然后重查 */
+function payloadKeywordAsTrace(){
+  $('pl_trace').value = $('pl_keyword').value.trim();
+  $('pl_keyword').value = '';
+  loadPayload();
+}
+
+/**
+ * 关键字缺少收窄条件时的引导面板。
+ *
+ * 不直接把请求发出去等后端返回 400：那样用户只能看到一句"必须同时指定…"，
+ * 还得自己回去猜该填哪个框。这里直接把两条出路做成按钮——
+ * 尤其是"当 TraceID 搜"，因为从列表复制 traceId 粘到关键字框是最容易走错的一步。
+ */
+function renderPayloadNeedNarrow(kw){
+  const looksLikeTrace = /^[0-9a-fA-F]{8,64}$/.test(kw);
+  $('payloadTbody').innerHTML = `
+    <tr><td colspan="11" style="padding:22px;text-align:left;color:#475569">
+      <div style="font-weight:600;color:#b45309;margin-bottom:6px">⚠️ 正文关键字需要先收窄查询范围</div>
+      <div style="font-size:13px;line-height:1.7">
+        关键字是 LONGTEXT 上的模糊匹配，走不了索引，单独使用会全表扫描并把所有报文正文读进内存，
+        足以拖垮在线业务的数据库，因此必须搭配 <b>系统 / 模型 / TraceID（≥8 位）/ 时间范围</b> 之一。<br>
+        <span style="color:#94a3b8">「类型 / 上游状态码 / 结束原因 / 完整性」不算收窄条件——它们没有索引，区分度也太低。</span>
+      </div>
+      <div class="flex gap-8" style="margin-top:12px">
+        <button class="btn btn-primary btn-sm" onclick="payloadUseLast24h()">📅 按最近 24 小时搜</button>
+        ${looksLikeTrace
+          ? `<button class="btn btn-info btn-sm" onclick="payloadKeywordAsTrace()">🔗 「${escHtml(kw)}」当 TraceID 搜</button>`
+          : ''}
+        <button class="btn btn-neutral btn-sm" onclick="$('pl_keyword').value='';loadPayload()">清空关键字</button>
+      </div>
+    </td></tr>`;
+  $('payloadPager').innerHTML = '';
+}
+
 async function loadPayload(resetPage = true){
   if(resetPage) pageState.payload.pageIndex = 1;
   const tbody = $('payloadTbody');
+  // 前置拦截：条件不合法就不发请求，直接给出可点击的补救路径
+  const kw = $('pl_keyword').value.trim();
+  if(kw && !payloadNarrowed()){ renderPayloadNeedNarrow(kw); return; }
   try{
     const qs = pageQuery('payload', {
       appId:          $('pl_app').value,
@@ -3073,7 +3137,9 @@ function renderPayload(data){
   tbody.innerHTML = data.map(p=>`
     <tr>
       <td style="font-size:12px;white-space:nowrap">${fmtTime(p.createTime)}</td>
-      <td><code style="font-size:11px" title="${escHtml(p.traceId||'')}">${escHtml((p.traceId||'').slice(0,12))}…</code></td>
+      <td><code style="font-size:11px" title="${escHtml(p.traceId||'')}">${escHtml((p.traceId||'').slice(0,12))}…</code>
+          <span onclick="copyText('${escHtml(p.traceId||'')}')" style="cursor:pointer;color:#6366f1;font-size:11px"
+                title="复制完整 TraceID">复制</span></td>
       <td style="font-size:12px">${escHtml(p.appId||'-')}</td>
       <td style="font-size:12px">${escHtml(p.modelId||'-')}</td>
       <td>${p.isStream ? '<span class="tag tag-purple">流式</span>' : '<span class="tag tag-gray">非流式</span>'}</td>

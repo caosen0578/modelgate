@@ -58,9 +58,16 @@ public class GlobalExceptionHandler implements ErrorWebExceptionHandler {
         } else if (ex instanceof BusinessException be) {
             status = HttpStatus.valueOf(be.getErrorCode().getCode() < 600
                     ? be.getErrorCode().getCode() : HttpStatus.BAD_REQUEST.value());
+            // 用 be.getMessage() 而非 be.getErrorCode().getMessage()：
+            // BusinessException(errorCode, detail) 把 detail 拼进了 Throwable 的 message，
+            // 而 ErrorCode 里只有 "Invalid request parameter" 这类**泛化**文案。
+            // 原先取后者，等于把所有调用点辛苦写的具体原因全部丢掉——
+            // 前端只能看到"Invalid request parameter"，用户完全不知道该改什么。
+            // 影响的不只是报文查询：ModelController 的 "modelId 不能为空" 等 3 处同样被吞掉过。
+            String detail = be.getMessage() != null ? be.getMessage() : be.getErrorCode().getMessage();
             log.warn("[ModelGate] 业务异常: {} {} -> code={}, message={}",
-                    method, path, be.getErrorCode().getCode(), be.getErrorCode().getMessage());
-            result = Result.fail(String.valueOf(be.getErrorCode().getCode()), be.getErrorCode().getMessage());
+                    method, path, be.getErrorCode().getCode(), detail);
+            result = Result.fail(String.valueOf(be.getErrorCode().getCode()), detail);
         } else {
             log.error("[ModelGate] 未捕获异常: {} {} -> {}", method, path, ex.getMessage(), ex);
             result = Result.fail(String.valueOf(ErrorCode.INTERNAL_ERROR.getCode()), ErrorCode.INTERNAL_ERROR.getMessage());
