@@ -218,6 +218,9 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
     <div class="nav-item" data-page="audit" onclick="navTo('audit')">
       <span class="icon">📋</span> 审计日志
     </div>
+    <div class="nav-item" data-page="payload" onclick="navTo('payload')">
+      <span class="icon">📨</span> 报文记录
+    </div>
     <div class="nav-item" data-page="settings" onclick="navTo('settings')">
       <span class="icon">⚙️</span> 网关配置
     </div>
@@ -367,13 +370,100 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
                 <th>状态</th>
                 <th>延迟</th>
                 <th>Tokens</th>
+                <th>操作</th>
               </tr>
             </thead>
             <tbody id="auditTbody">
-              <tr class="empty-row"><td colspan="8">暂无审计数据</td></tr>
+              <tr class="empty-row"><td colspan="9">暂无审计数据</td></tr>
             </tbody>
           </table>
           <div id="auditPager"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ====== PAGE: 报文记录 ======
+         与审计页的分工：审计回答"成不成功、多久、多少 token"，本页回答"到底发了什么、回了什么"。
+         两页通过 traceId 关联，审计行的「报文」按钮直接跳到这里并带上 traceId。 -->
+    <div class="panel" id="page-payload">
+
+      <!-- 保留期提示：报文按保留期物理删除，用户必须先知道"能查多久"，
+           否则查不到历史会误以为功能坏了。数值取自 GET /modelgate/payload/meta，不写死在页面。 -->
+      <div class="warn-box" id="payloadMetaBar" style="margin-bottom:14px">
+        报文保留期加载中…
+      </div>
+
+      <div class="card">
+        <div class="toolbar">
+          <div class="toolbar-left" style="flex-wrap:wrap;gap:8px">
+            <select id="pl_app" style="width:150px"><option value="">全部系统</option></select>
+            <select id="pl_model" style="width:150px"><option value="">全部模型</option></select>
+            <input type="text" id="pl_trace" placeholder="TraceID（精确）" style="width:170px"/>
+            <select id="pl_stream" style="width:110px">
+              <option value="">全部类型</option>
+              <option value="true">流式 SSE</option>
+              <option value="false">非流式</option>
+            </select>
+            <input type="number" id="pl_status" placeholder="上游状态码" style="width:110px"/>
+            <select id="pl_finish" style="width:130px">
+              <option value="">全部结束原因</option>
+              <option value="stop">stop 正常结束</option>
+              <option value="length">length 触顶截断</option>
+              <option value="tool_calls">tool_calls 调工具</option>
+              <option value="content_filter">content_filter 拦截</option>
+            </select>
+            <select id="pl_truncated" style="width:130px">
+              <option value="">全部完整性</option>
+              <option value="none">完整</option>
+              <option value="response">响应被截</option>
+              <option value="request">请求被截</option>
+              <option value="both">均被截</option>
+            </select>
+          </div>
+        </div>
+        <div class="toolbar" style="border-top:1px dashed #e2e8f0;padding-top:10px">
+          <div class="toolbar-left" style="flex-wrap:wrap;gap:8px;align-items:center">
+            <span style="font-size:12px;color:#64748b">时间范围</span>
+            <input type="datetime-local" id="pl_start" style="width:200px"/>
+            <span style="font-size:12px;color:#94a3b8">至</span>
+            <input type="datetime-local" id="pl_end" style="width:200px"/>
+            <input type="text" id="pl_keyword" placeholder="正文关键字（匹配请求与响应）" style="width:230px"/>
+          </div>
+          <div class="toolbar-right">
+            <button class="btn btn-neutral" onclick="resetPayloadFilters()">重置</button>
+            <button class="btn btn-primary" data-api="GET /modelgate/payload" onclick="loadPayload()">查询</button>
+          </div>
+        </div>
+        <!-- 关键字为何有约束：LONGTEXT 上的 LIKE '%x%' 走不了索引，单独使用就是全表扫描。
+             后端会直接拒绝这种请求，这里提前把规则说清楚，免得用户点了才吃报错。 -->
+        <div class="hint" style="margin-top:8px">
+          正文关键字为模糊匹配，<b>必须</b>与「系统 / 模型 / TraceID / 时间范围」中的至少一项同时使用——
+          单独按关键字查会在 LONGTEXT 上全表扫描，后端会拒绝该请求。
+        </div>
+      </div>
+
+      <div class="card" style="padding:0;overflow:hidden">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>时间</th>
+                <th>TraceID</th>
+                <th>接入系统</th>
+                <th>模型</th>
+                <th>类型</th>
+                <th>上游状态</th>
+                <th>结束原因</th>
+                <th>体积（请求/响应）</th>
+                <th>正文预览</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="payloadTbody">
+              <tr class="empty-row"><td colspan="10">暂无报文数据</td></tr>
+            </tbody>
+          </table>
+          <div id="payloadPager"></div>
         </div>
       </div>
     </div>
@@ -720,6 +810,35 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
     </div>
     <div class="modal-footer">
       <button class="btn btn-neutral" onclick="closeModal('modelAuthAppsModal')">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- ========== MODAL: 报文详情 ==========
+     三个正文分三个 tab，不同时铺开：单条报文可达几 MB，一次性塞进 DOM 会把页面卡死。
+     切 tab 时只渲染当前那一份，数据本身已在 openPayloadDetail 里取回，不重复请求。 -->
+<div class="modal-backdrop" id="payloadDetailModal">
+  <div class="modal modal-wide">
+    <div class="modal-header">
+      <h3>报文详情 · <span id="pd_trace" style="font-family:monospace;font-size:13px"></span></h3>
+      <button class="modal-close" onclick="closeModal('payloadDetailModal')">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="rmeta" id="pd_meta">-</div>
+      <div class="flex gap-8" style="margin:12px 0 8px">
+        <button class="btn btn-neutral btn-sm" id="pd_tab_request"  onclick="setPayloadTab('request')">请求报文</button>
+        <button class="btn btn-neutral btn-sm" id="pd_tab_text"     onclick="setPayloadTab('text')">响应正文</button>
+        <button class="btn btn-neutral btn-sm" id="pd_tab_raw"      onclick="setPayloadTab('raw')">响应原文</button>
+        <span style="flex:1"></span>
+        <span class="hint" id="pd_tabHint"></span>
+      </div>
+      <pre id="pd_body" style="background:#1e293b;color:#e2e8f0;border-radius:8px;padding:14px;
+           font-family:monospace;font-size:12px;line-height:1.6;overflow:auto;max-height:420px;
+           white-space:pre-wrap;word-break:break-all;margin:0"></pre>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-neutral" onclick="closeModal('payloadDetailModal')">关闭</button>
+      <button class="btn btn-primary" onclick="copyText($('pd_body').textContent)">复制当前内容</button>
     </div>
   </div>
 </div>
@@ -1103,7 +1222,7 @@ let currentAccessRules = [];
 let editingModelId = null; // null=新增, string=编辑
 let currentStep = 1;
 
-const PAGE_TITLES = {models:'模型管理', apps:'接入系统', audit:'审计日志', settings:'网关配置'};
+const PAGE_TITLES = {models:'模型管理', apps:'接入系统', audit:'审计日志', payload:'报文记录', settings:'网关配置'};
 
 // ============================================================
 // 工具函数
@@ -1151,6 +1270,8 @@ const pageState = {
   models: {pageIndex:1, pageSize:20, total:0, pages:0},
   apps:   {pageIndex:1, pageSize:20, total:0, pages:0},
   audit:  {pageIndex:1, pageSize:20, total:0, pages:0},
+  // 报文行含正文预览，默认每页比其它列表小一档，避免一屏塞太多长文本
+  payload:{pageIndex:1, pageSize:20, total:0, pages:0},
 };
 
 /** 把 PageVo 的元信息回填到本地状态，返回 items 供渲染 */
@@ -1263,6 +1384,7 @@ function navTo(page){
   if(page==='models')   loadModels();
   if(page==='apps')     loadApps();
   if(page==='audit')  { fillAuditFilters(); loadStats(); loadAudit(); }
+  if(page==='payload'){ fillPayloadFilters(); loadPayloadMeta(); loadPayload(); }
   if(page==='settings') loadConfig();
 }
 
@@ -2810,17 +2932,19 @@ async function fillAuditFilters(){
 
 function renderAudit(data){
   const tbody = $('auditTbody');
-  if(!data.length){ tbody.innerHTML='<tr class="empty-row"><td colspan="8">暂无审计数据</td></tr>'; return; }
+  if(!data.length){ tbody.innerHTML='<tr class="empty-row"><td colspan="9">暂无审计数据</td></tr>'; return; }
   tbody.innerHTML = data.map(a=>`
     <tr>
       <td style="font-size:12px;white-space:nowrap">${fmtTime(a.createTime)}</td>
-      <td><code style="font-size:11px">${(a.traceId||'').slice(0,12)}...</code></td>
+      <td><code style="font-size:11px" title="${escHtml(a.traceId||'')}">${(a.traceId||'').slice(0,12)}...</code></td>
       <td>${a.appId||'-'}</td>
       <td>${a.modelId||'-'}</td>
       <td style="font-size:12px">${a.clientIp||'-'}</td>
       <td>${statusTag(a.httpStatus)}</td>
       <td>${a.latencyMs!=null?a.latencyMs+'ms':'-'}</td>
       <td>${(a.inputTokens||0)+(a.outputTokens||0)||'-'}</td>
+      <td><button class="btn btn-neutral btn-sm" title="按 traceId 查这次调用的请求/响应报文"
+                  onclick="payloadOfTrace('${escHtml(a.traceId||'')}')">📨 报文</button></td>
     </tr>
   `).join('');
 }
@@ -2831,6 +2955,234 @@ function statusTag(s){
   if(s>=400&&s<500) return `<span class="tag tag-red">${s}</span>`;
   if(s>=500) return `<span class="tag tag-red">${s}</span>`;
   return `<span class="tag tag-gray">${s||'-'}</span>`;
+}
+
+/** 从审计行跳到报文页并按 traceId 精确定位。审计看到一条异常调用，下一步必然是看它的报文。 */
+function payloadOfTrace(traceId){
+  navTo('payload');
+  resetPayloadFilters(false);
+  $('pl_trace').value = traceId || '';
+  loadPayload();
+}
+
+// ============================================================
+// 报文记录
+// ============================================================
+
+/**
+ * 报文保留期回显。
+ *
+ * 报文按保留期物理删除（默认 7 天，远短于审计的 90 天），用户不知道这一点时
+ * 会把"查不到上周的报文"当成功能坏了。数值一律从后端取，不在页面写死——
+ * 保留期是 application.yml 里的配置，写死必然与实际部署漂移。
+ */
+async function loadPayloadMeta(){
+  const bar = $('payloadMetaBar');
+  try{
+    const r = await fetch(apiUrl('/modelgate/payload/meta'), {headers:hdrs()});
+    const j = await r.json();
+    if(!isOk(j)){ bar.textContent = '保留期信息获取失败：' + errMsg(j); return; }
+    const m = j.data || {};
+    const mb = m.maxCaptureBytes ? (m.maxCaptureBytes/1024/1024).toFixed(0) + 'MB' : '不限';
+    bar.innerHTML = m.enabled === false
+      ? `⛔ 报文记录<b>全局总开关已关闭</b>（modelgate.payload-log.enabled=false），当前不再产生新记录，下方只能查到历史数据。`
+      : `📨 报文<b>仅对开启了「报文记录」开关的「接入系统 × 模型」授权</b>产生（在接入系统的授权配置里开启）；
+         记录保留 <b>${m.retentionDays} 天</b>，由定时任务 <code>${escHtml(m.cleanupCron||'')}</code> 分批物理删除，
+         超期数据不可找回。单条响应采集上限 ${mb}，超出部分标记为「响应被截」。`;
+  }catch(e){
+    console.warn('[ModelGate] 报文配置获取异常', e);
+    bar.textContent = '📨 报文按保留期定期清理，具体天数以 modelgate.payload-log.retention-days 配置为准。';
+  }
+}
+
+/**
+ * 查询报文列表。
+ * @param resetPage 改了筛选条件必须回第 1 页；翻页时传 false。同 loadAudit。
+ */
+async function loadPayload(resetPage = true){
+  if(resetPage) pageState.payload.pageIndex = 1;
+  const tbody = $('payloadTbody');
+  try{
+    const qs = pageQuery('payload', {
+      appId:          $('pl_app').value,
+      modelId:        $('pl_model').value,
+      traceId:        $('pl_trace').value,
+      isStream:       $('pl_stream').value,
+      upstreamStatus: $('pl_status').value,
+      finishReason:   $('pl_finish').value,
+      truncated:      $('pl_truncated').value,
+      // datetime-local 给出的是 "2026-08-18T10:30"，后端 @DateTimeFormat(ISO.DATE_TIME) 直接可解析
+      startTime:      $('pl_start').value,
+      endTime:        $('pl_end').value,
+      keyword:        $('pl_keyword').value,
+    });
+    const r = await fetch(apiUrl(`/modelgate/payload?${qs}`), {headers:hdrs()});
+    const j = await r.json();
+    if(!isOk(j)){
+      // 关键字缺少收窄条件时后端会拒绝，错误文案本身就是操作指引，原样弹出来
+      toast('查询报文失败: '+errMsg(j),'error');
+      tbody.innerHTML = `<tr class="empty-row"><td colspan="10" style="color:#ef4444">${escHtml(errMsg(j))}</td></tr>`;
+      return;
+    }
+    renderPayload(applyPage('payload', j.data || {}));
+    renderPager('payload', 'payloadPager', 'payload');
+    setStatus(true);
+  }catch(e){
+    console.warn('[ModelGate] 报文查询异常', e);
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="10" style="color:#f59e0b">请求异常: ${escHtml(e.message)}</td></tr>`;
+  }
+}
+
+function payloadGo(p){ pageState.payload.pageIndex = Math.max(1, p); loadPayload(false); }
+function payloadSize(n){ pageState.payload.pageSize = parseInt(n)||20; loadPayload(true); }
+
+/** 清空全部筛选条件。reload=false 时只清不查（供 payloadOfTrace 先清后填再查）。 */
+function resetPayloadFilters(reload = true){
+  ['pl_app','pl_model','pl_trace','pl_stream','pl_status','pl_finish','pl_truncated',
+   'pl_start','pl_end','pl_keyword'].forEach(id => { const el = $(id); if(el) el.value = ''; });
+  if(reload) loadPayload();
+}
+
+/** 填充系统/模型下拉。与审计页同一套数据源，各自只填一次。 */
+let _payloadFiltersFilled = false;
+async function fillPayloadFilters(){
+  if(_payloadFiltersFilled) return;
+  try{
+    const [models, appsResp] = await Promise.all([
+      fetchSelectableModels(),
+      fetch(apiUrl('/modelgate/apps?pageIndex=1&pageSize=200'), {headers:hdrs()}).then(r=>r.json()),
+    ]);
+    const apps = isOk(appsResp) ? (appsResp.data?.items || []) : [];
+    $('pl_model').innerHTML = '<option value="">全部模型</option>'
+      + models.map(m=>`<option value="${escapeHtml(m.modelId)}">${escapeHtml(m.modelName)} (${escapeHtml(m.modelId)})</option>`).join('');
+    $('pl_app').innerHTML = '<option value="">全部系统</option>'
+      + apps.map(a=>`<option value="${escapeHtml(a.appId)}">${escapeHtml(a.appName)} (${escapeHtml(a.appId)})</option>`).join('');
+    _payloadFiltersFilled = true;
+  }catch(e){
+    console.warn('[ModelGate] 报文筛选下拉填充失败', e);
+  }
+}
+
+function renderPayload(data){
+  const tbody = $('payloadTbody');
+  if(!data.length){
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="10">没有符合条件的报文（报文只对开启了记录开关的授权产生，且超过保留期会被清理）</td></tr>';
+    return;
+  }
+  tbody.innerHTML = data.map(p=>`
+    <tr>
+      <td style="font-size:12px;white-space:nowrap">${fmtTime(p.createTime)}</td>
+      <td><code style="font-size:11px" title="${escHtml(p.traceId||'')}">${escHtml((p.traceId||'').slice(0,12))}…</code></td>
+      <td style="font-size:12px">${escHtml(p.appId||'-')}</td>
+      <td style="font-size:12px">${escHtml(p.modelId||'-')}</td>
+      <td>${p.isStream ? '<span class="tag tag-purple">流式</span>' : '<span class="tag tag-gray">非流式</span>'}</td>
+      <td>${statusTag(p.upstreamStatus)}</td>
+      <td>${finishTag(p.finishReason)}</td>
+      <td style="font-size:12px;white-space:nowrap">${fmtLen(p.requestLen)} / ${fmtLen(p.responseRawLen)}${truncTag(p.truncated)}</td>
+      <td style="font-size:12px;color:#475569;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+          title="${escHtml(p.responsePreview||'')}">${escHtml(p.responsePreview||'-')}</td>
+      <td><button class="btn btn-neutral btn-sm" onclick="openPayloadDetail(${p.id})">查看</button></td>
+    </tr>
+  `).join('');
+}
+
+/** length = 回答被 max_tokens 截断，content_filter = 被内容安全拦截，都是要一眼看出来的异常结束 */
+function finishTag(f){
+  if(!f) return '<span style="color:#94a3b8">-</span>';
+  const map = {stop:'tag-green', length:'tag-yellow', tool_calls:'tag-blue', content_filter:'tag-red'};
+  return `<span class="tag ${map[f]||'tag-gray'}">${escHtml(f)}</span>`;
+}
+
+/** truncated≠none 说明报文本身不完整，排查时不能拿它当上游真实返回，必须显式标出 */
+function truncTag(t){
+  if(!t || t==='none') return '';
+  const label = {request:'请求被截', response:'响应被截', both:'均被截'}[t] || t;
+  return ` <span class="tag tag-red" style="font-size:10px">${label}</span>`;
+}
+
+/** 字符数（CHAR_LENGTH，非字节数） */
+function fmtLen(n){
+  if(n == null) return '-';
+  if(n < 1024) return n + '字';
+  return (n/1024).toFixed(1) + 'K字';
+}
+
+// 详情弹窗当前数据与 tab。数据一次取回、本地切 tab，不为切 tab 重复打接口。
+let _payloadDetail = null;
+let _payloadTab = 'request';
+
+async function openPayloadDetail(id){
+  _payloadDetail = null;
+  $('pd_trace').textContent = '';
+  $('pd_meta').textContent = '加载中…';
+  $('pd_body').textContent = '';
+  openModal('payloadDetailModal');
+  try{
+    const r = await fetch(apiUrl(`/modelgate/payload/detail?id=${encodeURIComponent(id)}`), {headers:hdrs()});
+    const j = await r.json();
+    if(!isOk(j)){ $('pd_meta').textContent = '加载失败: ' + errMsg(j); return; }
+    _payloadDetail = j.data || {};
+    $('pd_trace').textContent = _payloadDetail.traceId || '-';
+    $('pd_meta').innerHTML = `
+      <span>${fmtTime(_payloadDetail.createTime)}</span>
+      <span>${escHtml(_payloadDetail.appId||'-')} → ${escHtml(_payloadDetail.modelId||'-')}</span>
+      <span>${_payloadDetail.isStream?'流式 SSE':'非流式'}</span>
+      <span>上游 ${statusTag(_payloadDetail.upstreamStatus)}</span>
+      <span>${finishTag(_payloadDetail.finishReason)}</span>
+      <span>${truncTag(_payloadDetail.truncated) || '<span class="tag tag-green">完整</span>'}</span>
+      <span style="flex:1"></span>
+      <button class="btn btn-neutral btn-sm" onclick="payloadToAudit('${escHtml(_payloadDetail.traceId||'')}')">看审计记录</button>`;
+    setPayloadTab('request');
+  }catch(e){
+    console.warn('[ModelGate] 报文详情异常', e);
+    $('pd_meta').textContent = '请求异常: ' + e.message;
+  }
+}
+
+/** 反向跳转：从报文回到审计，看这次调用的耗时/token/最终状态码 */
+function payloadToAudit(traceId){
+  closeModal('payloadDetailModal');
+  navTo('audit');
+  $('auditApp').value = ''; $('auditModel').value = ''; $('auditStatus').value = '';
+  $('auditTrace').value = traceId || '';
+  loadAudit();
+}
+
+/**
+ * 切换正文 tab。
+ *
+ * 三份内容分别是：
+ *   request — 请求 JSON；响应正文 text — 人可直读的最终回答；
+ *   raw     — 流式时是带 data: 前缀的完整 SSE 分帧原文，用于复现上游到底怎么返回的。
+ * JSON 尝试美化（失败就原样显示，绝不因为格式化失败让人看不到内容）；SSE 原文不动它，
+ * 分帧结构本身就是要看的东西。
+ */
+function setPayloadTab(tab){
+  _payloadTab = tab;
+  ['request','text','raw'].forEach(t=>{
+    const btn = $('pd_tab_'+t);
+    if(btn) btn.className = 'btn btn-sm ' + (t===tab ? 'btn-primary' : 'btn-neutral');
+  });
+  const d = _payloadDetail || {};
+  let content, hint;
+  if(tab==='request'){
+    content = prettyJson(d.requestBody);
+    hint = '请求原文（含用户 prompt）';
+  }else if(tab==='text'){
+    content = d.responseText;
+    hint = d.isStream ? '各帧 delta 拼接后的最终文本' : 'choices[0].message.content';
+  }else{
+    content = d.isStream ? d.responseRaw : prettyJson(d.responseRaw);
+    hint = d.isStream ? '完整 SSE 流（保留 data: 前缀与全部分帧）' : '上游返回的原始 JSON';
+  }
+  $('pd_tabHint').textContent = hint;
+  $('pd_body').textContent = (content == null || content === '') ? '（无内容）' : content;
+}
+
+/** JSON 美化；不是合法 JSON 就原样返回——看到原文永远比看到"解析失败"有用 */
+function prettyJson(s){
+  if(s == null || s === '') return s;
+  try{ return JSON.stringify(JSON.parse(s), null, 2); }catch(e){ return s; }
 }
 
 // ============================================================

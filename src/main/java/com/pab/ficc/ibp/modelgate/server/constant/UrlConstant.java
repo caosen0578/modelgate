@@ -41,6 +41,7 @@ public interface UrlConstant {
     String MG_CONFIG      = BASE + "/config";
     String MG_STATS       = BASE + "/stats";
     String MG_AUDIT       = BASE + "/audit";
+    String MG_PAYLOAD     = BASE + "/payload";
 
     // ===== 通用子路径（method-level）=====
     /** 基础路径本身（等价于省略 value 的 @GetMapping/@PostMapping），用于显式声明"打在类级路径上" */
@@ -63,4 +64,6 @@ public interface UrlConstant {
     /** 管理面对话测试：服务端用库中模型凭证直连上游，密钥不出服务端 */
     String CHAT_TEST    = "/chat/test";
     String USAGE        = "/usage";
+    /** 功能自身的配置回显（如报文记录的保留期/清理时间），供页面展示"数据能查多久" */
+    String META         = "/meta";
 }
