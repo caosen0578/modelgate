@@ -80,13 +80,13 @@ public class PayloadController {
     public Mono<Result<PayloadDetailVO>> detail(
             @Parameter(description = "报文记录主键 id") @RequestParam(name = "id") Long id) {
         return Mono.fromCallable(() -> {
-                    RequestPayloadEntity e = payloadMapper.selectById(id);
-                    if (e == null) {
+                    PayloadDetailVO vo = payloadMapper.selectDetailById(id);
+                    if (vo == null) {
                         // 报文保留期只有几天，查不到多半是已被清理而非 id 写错，提示要说清楚
                         throw new BusinessException(ErrorCode.INVALID_PARAMETER,
                                 "报文不存在或已过保留期被清理: id=" + id);
                     }
-                    return PayloadDetailVO.of(e);
+                    return vo;
                 })
                 .subscribeOn(Schedulers.boundedElastic())
                 .map(Result::success);

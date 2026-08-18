@@ -454,13 +454,14 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
                 <th>类型</th>
                 <th>上游状态</th>
                 <th>结束原因</th>
-                <th>体积（请求/响应）</th>
-                <th>正文预览</th>
+                <th>Tokens（入/出）</th>
+                <th>请求报文</th>
+                <th>响应正文</th>
                 <th>操作</th>
               </tr>
             </thead>
             <tbody id="payloadTbody">
-              <tr class="empty-row"><td colspan="10">暂无报文数据</td></tr>
+              <tr class="empty-row"><td colspan="11">暂无报文数据</td></tr>
             </tbody>
           </table>
           <div id="payloadPager"></div>
@@ -3066,7 +3067,7 @@ async function fillPayloadFilters(){
 function renderPayload(data){
   const tbody = $('payloadTbody');
   if(!data.length){
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="10">没有符合条件的报文（报文只对开启了记录开关的授权产生，且超过保留期会被清理）</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="11">没有符合条件的报文（报文只对开启了记录开关的授权产生，且超过保留期会被清理）</td></tr>';
     return;
   }
   tbody.innerHTML = data.map(p=>`
@@ -3078,9 +3079,11 @@ function renderPayload(data){
       <td>${p.isStream ? '<span class="tag tag-purple">流式</span>' : '<span class="tag tag-gray">非流式</span>'}</td>
       <td>${statusTag(p.upstreamStatus)}</td>
       <td>${finishTag(p.finishReason)}</td>
-      <td style="font-size:12px;white-space:nowrap">${fmtLen(p.requestLen)} / ${fmtLen(p.responseRawLen)}${truncTag(p.truncated)}</td>
-      <td style="font-size:12px;color:#475569;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
-          title="${escHtml(p.responsePreview||'')}">${escHtml(p.responsePreview||'-')}</td>
+      <td style="font-size:12px;white-space:nowrap">${tokenCell(p)}</td>
+      <td style="font-size:12px;color:#475569;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+          title="${escHtml(p.requestPreview||'')}${p.requestLen?`（共 ${fmtLen(p.requestLen)}）`:''}">${escHtml(p.requestPreview||'-')}</td>
+      <td style="font-size:12px;color:#475569;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+          title="${escHtml(p.responsePreview||'')}${p.responseTextLen?`（共 ${fmtLen(p.responseTextLen)}）`:''}">${escHtml(p.responsePreview||'-')}${truncTag(p.truncated)}</td>
       <td><button class="btn btn-neutral btn-sm" onclick="openPayloadDetail(${p.id})">查看</button></td>
     </tr>
   `).join('');
@@ -3100,11 +3103,36 @@ function truncTag(t){
   return ` <span class="tag tag-red" style="font-size:10px">${label}</span>`;
 }
 
-/** 字符数（CHAR_LENGTH，非字节数） */
+/** 字符数（CHAR_LENGTH，非字节数）。只出现在正文预览的 tooltip 里，用于提示报文规模 */
 function fmtLen(n){
   if(n == null) return '-';
   if(n < 1024) return n + '字';
   return (n/1024).toFixed(1) + 'K字';
+}
+
+/**
+ * Token 单元格：输入 / 输出，并标出口径。
+ *
+ * Token 来自 mg_audit_log（报文表按设计不冗余存），所以有两种"没有值"要区分开：
+ *   · null      —— 关联审计记录查不到（审计留 90 天、报文留 7 天，正常不该发生），显示 "-"
+ *   · 0         —— 确实没消耗 token（如请求直接失败），显示 0
+ * 一律按 0 展示会把数据异常伪装成"这次没烧 token"，这正是当初 token 恒为 0 的 bug 之所以
+ * 长期没被发现的原因，不能再犯。
+ *
+ * estimated 口径是本地按字符估算的，不能当账算，必须让人一眼看出来。
+ */
+function tokenCell(p){
+  if(p.inputTokens == null && p.outputTokens == null){
+    return '<span style="color:#94a3b8" title="未找到该 traceId 对应的审计记录">-</span>';
+  }
+  const i = p.inputTokens ?? 0, o = p.outputTokens ?? 0;
+  const src = {
+    usage:     ['tag-green',  '精确', '上游 usage 字段返回，精确值'],
+    estimated: ['tag-yellow', '估算', '上游未返回 usage（如 OpenAI 流式默认不带），按字符本地估算，不可当账算'],
+    none:      ['tag-gray',   '无',   '请求失败或无响应体，无 token'],
+  }[p.tokenSource];
+  const tag = src ? ` <span class="tag ${src[0]}" style="font-size:10px" title="${src[2]}">${src[1]}</span>` : '';
+  return `<b>${i.toLocaleString()}</b> / <b>${o.toLocaleString()}</b>${tag}`;
 }
 
 // 详情弹窗当前数据与 tab。数据一次取回、本地切 tab，不为切 tab 重复打接口。
@@ -3129,6 +3157,7 @@ async function openPayloadDetail(id){
       <span>${_payloadDetail.isStream?'流式 SSE':'非流式'}</span>
       <span>上游 ${statusTag(_payloadDetail.upstreamStatus)}</span>
       <span>${finishTag(_payloadDetail.finishReason)}</span>
+      <span>Token ${tokenCell(_payloadDetail)}</span>
       <span>${truncTag(_payloadDetail.truncated) || '<span class="tag tag-green">完整</span>'}</span>
       <span style="flex:1"></span>
       <button class="btn btn-neutral btn-sm" onclick="payloadToAudit('${escHtml(_payloadDetail.traceId||'')}')">看审计记录</button>`;

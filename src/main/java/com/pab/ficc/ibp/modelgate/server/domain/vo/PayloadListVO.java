@@ -35,12 +35,28 @@ public class PayloadListVO {
     private String        truncated;
     private LocalDateTime createTime;
 
-    /** 请求报文字符数（CHAR_LENGTH，非字节数） */
+    /**
+     * 输入 Token 数。
+     *
+     * <p><b>取自 {@code mg_audit_log}，不是本表的列</b>——报文表按设计不冗余存 Token
+     * （唯一真相在审计表）。为空说明对应审计记录已过保留期或不存在：审计保留 90 天、
+     * 报文保留 7 天，正常情况下报文在、审计必在，查不到即数据异常，
+     * 页面按"-"展示而不是按 0 展示，两者含义完全不同。
+     */
+    private Integer       inputTokens;
+    /** 输出 Token 数，同上取自 mg_audit_log */
+    private Integer       outputTokens;
+    /** Token 口径：usage=上游精确返回 / estimated=本地估算 / none=无。估算值不能当账算，必须标出来 */
+    private String        tokenSource;
+
+    /** 请求报文字符数（CHAR_LENGTH，非字节数），用于在预览的 tooltip 上提示报文规模 */
     private Long          requestLen;
     /** 响应原文字符数 */
     private Long          responseRawLen;
     /** 响应正文字符数 */
     private Long          responseTextLen;
+    /** 请求报文前 160 字，用于在列表上直接看出这次调用问了什么 */
+    private String        requestPreview;
     /** 响应正文前 160 字，用于在列表上快速辨认 */
     private String        responsePreview;
 }
