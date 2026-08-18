@@ -19,8 +19,9 @@ import java.sql.SQLException;
  * 所有环境走同一个 Bean，差异只在 {@code datasource.local.*} 这三个配置值——
  * 部署到不同环境时直接改 application.yml 里的这三行即可，不依赖 Spring Profile 机制。
  *
- * <p>池大小 maxActive=100 是压测优化后按生产评估值配置的（原 HikariCP maxPoolSize=10 硬编码，
- * 压测证实在并发≥10 时连接池打满导致 QPS 断崖式下跌，见 11-变更记录.md 本轮章节）。
+ * <p>池参数（{@code datasource.local.pool.*}）externalize 到 application.yml（2026-08-18 压测优化后，
+ * 便于生产环境直接改配置调整、不用重新编译）。{@code @Value} 里的默认值与 application.yml 当前写的
+ * 生产评估值一致——yml 里删掉某一项不会失效，只是退回这里写的同一个默认值，两处应保持同步。
  */
 @Slf4j
 @Configuration
@@ -32,8 +33,15 @@ public class ServiceConfiguration {
             @Value("${datasource.local.url}") String url,
             @Value("${datasource.local.username}") String username,
             @Value("${datasource.local.password}") String password,
-            @Value("${datasource.local.driver-class-name:com.mysql.cj.jdbc.Driver}") String driver) {
-        log.info("[ServiceConfiguration] 数据源: url={}", url);
+            @Value("${datasource.local.driver-class-name:com.mysql.cj.jdbc.Driver}") String driver,
+            @Value("${datasource.local.pool.init-size:5}") int initSize,
+            @Value("${datasource.local.pool.min-idle:10}") int minIdle,
+            @Value("${datasource.local.pool.max-active:100}") int maxActive,
+            @Value("${datasource.local.pool.max-wait:3000}") int maxWait,
+            @Value("${datasource.local.pool.time-between-eviction-runs-millis:60000}") long timeBetweenEvictionRunsMillis,
+            @Value("${datasource.local.pool.min-evictable-idle-time-millis:300000}") long minEvictableIdleTimeMillis,
+            @Value("${datasource.local.pool.remove-abandoned-timeout:180}") int removeAbandonedTimeout) {
+        log.info("[ServiceConfiguration] 数据源: url={}, maxActive={}", url, maxActive);
         DruidDataSource ds = new DruidDataSource();
         ds.setUrl(url);
         ds.setUsername(username);
@@ -41,24 +49,25 @@ public class ServiceConfiguration {
         ds.setDriverClassName(driver);
         ds.setName("tdsql");
 
-        // 池大小：生产评估值，maxActive=100（2026-08-18 压测优化，原 HikariCP 硬编码 10 已证实偏小）
-        ds.setInitialSize(5);
-        ds.setMinIdle(10);
-        ds.setMaxActive(100);
-        // 拿不到连接时最多等 3s 就抛异常，不无限阻塞请求线程——比默认行为更早暴露池耗尽问题
-        ds.setMaxWait(3000);
+        ds.setInitialSize(initSize);
+        ds.setMinIdle(minIdle);
+        ds.setMaxActive(maxActive);
+        // 拿不到连接时最多等 maxWait 就抛异常，不无限阻塞请求线程——比默认行为更早暴露池耗尽问题
+        ds.setMaxWait(maxWait);
 
-        // 空闲连接健康检查：避免 MySQL 侧空闲超时/网络中断后拿到已失效连接
+        // 空闲连接健康检查：避免 MySQL 侧空闲超时/网络中断后拿到已失效连接。
+        // validationQuery/testOnBorrow/testOnReturn 不 externalize——固定用最佳实践值
+        // （testWhileIdle 校验闲置连接、不占请求路径开销），没有按环境调整的必要。
         ds.setValidationQuery("SELECT 1");
         ds.setTestWhileIdle(true);
         ds.setTestOnBorrow(false);
         ds.setTestOnReturn(false);
-        ds.setTimeBetweenEvictionRunsMillis(60_000);
-        ds.setMinEvictableIdleTimeMillis(300_000);
+        ds.setTimeBetweenEvictionRunsMillis(timeBetweenEvictionRunsMillis);
+        ds.setMinEvictableIdleTimeMillis(minEvictableIdleTimeMillis);
 
-        // 连接泄漏兜底：业务代码没关连接时 180s 后强制回收并打 ERROR 日志，防止池被占满后无法自愈
+        // 连接泄漏兜底：业务代码没关连接时超时强制回收并打 ERROR 日志，防止池被占满后无法自愈
         ds.setRemoveAbandoned(true);
-        ds.setRemoveAbandonedTimeout(180);
+        ds.setRemoveAbandonedTimeout(removeAbandonedTimeout);
         ds.setLogAbandoned(true);
 
         try {

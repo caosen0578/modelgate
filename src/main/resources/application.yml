@@ -7,12 +7,23 @@
 server:
   port: 10811
 
-# ===== 数据源（Druid 直连，见 ServiceConfiguration；池大小见该类注释）=====
+# ===== 数据源（Druid 直连，见 ServiceConfiguration）=====
 datasource:
   local:
     url: jdbc:mysql://47.119.189.29:65522/cbdb?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
     username: root
     password: no1knowS
+    # Druid 连接池参数，生产环境按需直接改这几行，无需改代码重新编译（2026-08-18 压测优化后externalize）。
+    # 当前值是压测后评估的生产值，见 11-变更记录.md §22.1；Java 侧默认值与此处一致，这里删掉某一行
+    # 不会导致该项失效，只是退回代码里写死的同一个值。
+    pool:
+      init-size: 5
+      min-idle: 10
+      max-active: 100
+      max-wait: 3000
+      time-between-eviction-runs-millis: 60000
+      min-evictable-idle-time-millis: 300000
+      remove-abandoned-timeout: 180
 
 spring:
   # ⚠️ 必须留在 application.yml，不能只写在 bootstrap.yml：
@@ -194,3 +205,12 @@ redis:
     host: 127.0.0.1
     port: 6379
     password: admin123456
+    # Jedis 连接池参数，生产环境按需直接改这几行（2026-08-18 压测优化后 externalize）。
+    # 当前值是压测后评估的生产值，见 11-变更记录.md §22.4；Java 侧默认值与此处一致。
+    pool:
+      max-total: 100
+      max-idle: 32
+      min-idle: 10
+      max-wait-millis: 3000
+      time-between-eviction-runs-millis: 60000
+      min-evictable-idle-time-millis: 300000
