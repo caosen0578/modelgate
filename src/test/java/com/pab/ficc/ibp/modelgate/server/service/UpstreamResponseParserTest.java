@@ -88,6 +88,15 @@ public class UpstreamResponseParserTest {
                       + "data: {\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":4}}\n\n"), true, null),
                 9, 4, UpstreamResponseParser.SOURCE_USAGE, null);
 
+        // ⑩ parseUsageOnly 流式无 usage：按响应总字节数估算兜底（不再拼正文再按字符数估算），
+        //    2026-08-18 压测优化——验证新的尾部反向扫描不影响估算兜底路径仍然可用
+        byte[] noUsageStreamBody = bytes(
+                        "data: {\"choices\":[{\"delta\":{\"content\":\"abcd\"}}]}\n\n"
+                      + "data: [DONE]\n\n");
+        check("parseUsageOnly 无 usage→按字节数估算", PARSER.parseUsageOnly(
+                        noUsageStreamBody, true, bytes("12345678")),
+                4, Math.max(1, noUsageStreamBody.length / 2), UpstreamResponseParser.SOURCE_ESTIMATED, null);
+
         System.out.printf("%n通过 %d / %d%n", pass, pass + fail);
         if (fail > 0) {
             System.exit(1);

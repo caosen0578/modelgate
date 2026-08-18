@@ -69,6 +69,19 @@ public class AppService {
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "appId: " + appId));
     }
 
+    /**
+     * {@link #findByAppId} 的缓存版本，供 {@code CredentialAuthFilter} 等请求热路径调用。
+     *
+     * <p><b>2026-08-18 压测优化新增</b>：此前 {@code CredentialAuthFilter} 每个已鉴权请求都调用
+     * 不走缓存的 {@link #findByAppId}，压测证实是并发升高时 MySQL 连接池被打满的主因之一。
+     * 缓存增删改禁用四处均已同步 evict（见 {@link #evictAppScopedCache}），满足 05 §8「App 禁用
+     * 必须立即失效」的要求；相比此前"完全不缓存"，少了一层独立兜底，是本轮明确接受的取舍
+     * （见 GatewayCacheManager.appInfoCache 字段注释）。
+     */
+    public AppInfoEntity findByAppIdCached(String appId) {
+        return cacheManager.getAppInfo(appId, () -> findByAppId(appId));
+    }
+
     public AppInfoEntity create(AppInfoEntity app) {
         boolean exists = appMapper.exists(new LambdaQueryWrapper<AppInfoEntity>().eq(AppInfoEntity::getAppId, app.getAppId()));
         if (exists) {
@@ -134,12 +147,15 @@ public class AppService {
      * disable() 会改变准入状态——违反 05 §7「写操作后必须主动失效缓存」。
      * 后果：删除后 60s（L1 TTL）内重建同名 appId，新系统会继承旧系统的授权与来源白名单。
      *
-     * <p>注：凭证的实际准入还额外受 CredentialAuthFilter 里那次**未走缓存**的
-     * findByAppId 保护，因此不存在"删完还能调用"的鉴权绕过；这里修的是缓存一致性。
+     * <p>注：CredentialAuthFilter 里的准入检查现在走 {@link #findByAppIdCached}（2026-08-18 起，
+     * 此前是不走缓存的 {@link #findByAppId}），因此本方法必须把 {@code appInfoCache} 一起
+     * evict——漏掉的话会出现"删完/禁用后还能在缓存 TTL 内继续调用"的鉴权绕过，
+     * 不再像此前那样有独立于缓存之外的实时兜底。
      */
     private void evictAppScopedCache(String appId) {
         cacheManager.evictCredentialCacheByAppId(appId);
         cacheManager.evictModelAuthCache(appId);
         cacheManager.evictAccessRuleCache(appId);
+        cacheManager.evictAppInfoCache(appId);
     }
 }

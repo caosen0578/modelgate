@@ -46,23 +46,17 @@
         <appender-ref ref="FILE"/>
     </appender>
 
-    <!-- ===== Profile 选择 ===== -->
-    <!-- 本地/开发：控制台 + 文件双写（此前仅挂 CONSOLE，导致 logs/modelgate.log 恒为空，无法回溯排查） -->
-    <springProfile name="dev,local,default">
-        <root level="${LOG_LEVEL}">
-            <appender-ref ref="CONSOLE"/>
-            <appender-ref ref="ASYNC_FILE"/>
-        </root>
-        <!-- 本地调试放开业务包 DEBUG，生产由 root INFO 兜住（03-编码规范 §7：正常业务流程 DEBUG，生产关闭） -->
-        <logger name="com.pab.ficc.ibp.modelgate" level="DEBUG"/>
-    </springProfile>
-
-    <springProfile name="prod">
-        <root level="${LOG_LEVEL}">
-            <appender-ref ref="CONSOLE"/>
-            <appender-ref ref="ASYNC_FILE"/>
-        </root>
-    </springProfile>
+    <!-- ===== 单一固定配置，不使用 Spring Profile 机制 =====
+         2026-08-18 压测优化清理：此前这里按 springProfile 分 dev/local/default 与 prod 两块，
+         与本项目"全项目不使用 Spring Profile"（见 11-变更记录.md §19）的既定方向矛盾——
+         且 default 未显式设置 spring.profiles.active 时，Spring 会把字面量 "default" 视为隐式激活，
+         导致 dev/local/default 那块（业务包 DEBUG）在未设置任何 Profile 的情况下始终生效，
+         每个请求多打若干条 DEBUG 日志，是压测持续负载下长尾延迟的次要贡献因素之一。
+         控制台 + 文件双写（此前仅挂 CONSOLE，导致 logs/modelgate.log 恒为空，无法回溯排查）。 -->
+    <root level="${LOG_LEVEL}">
+        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="ASYNC_FILE"/>
+    </root>
 
     <!-- 降低框架自身 DEBUG 日志噪音 -->
     <logger name="org.springframework.cloud.gateway" level="WARN"/>

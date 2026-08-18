@@ -46,32 +46,26 @@ java -jar target/modelgate-1.0.0-SNAPSHOT.jar
 > 无在线 Swagger UI：内网仓库无 webflux 版 springdoc，且 webmvc 版会带入 spring-webmvc
 > 导致 Spring Cloud Gateway 拒绝启动。接口契约见 [04-接口与数据结构](spec/modelgate/04-接口与数据结构.md)。
 
-## 本地联调（local Profile，脱离 Redis 集群/内网 SDK）
+## 本地联调（用自己的本地 MySQL 替换默认联调库）
 
-> 用于本地起服务、通过 `admin.html` 做增删改联调。只依赖一个本地 MySQL；
-> Redis 集群/Venus 数据源由 `ServiceConfiguration` / `RedisConfig` 里按 `@Profile("local")`
-> 二选一的本地兼容 Bean 替代（HikariCP 直连 MySQL、jedis 直连本地 Redis）+ `com/pab/**` 源码桩。
-> **这些兼容件合入内网时忽略即可。**
->
-> **无需 `application-local.yml`**（该文件已删除）：原内容原样合并进了 `application.yml`
-> 文件末尾的 `spring.config.activate.on-profile: local` 文档块（Spring Boot 官方支持的
-> "profile 专属文档块"写法），效果与独立文件完全等价——**不需要 export 任何环境变量**，
-> 本地 MySQL 地址/账号、本地测试密钥都已在那个文档块里，改配置只需要改这一份文件。
+> `application.yml` 是唯一配置文件、单一固定文档，**没有 Spring Profile、没有环境变量间接层**
+> （2026-08-18 起代码与文档已完全对齐这条规矩，此前描述的 `@Profile("local")` 兼容 Bean 与
+> `spring.config.activate.on-profile: local` 文档块均已随 §19 去 Profile 化改造移除）。
+> 仓库自带的 `datasource.local.*` 指向一个共享联调库，直接能跑；想换成自己本地的 MySQL 时按下面操作。
 
 ```bash
 # 0. 用 JDK 17 构建/运行（注意：本机默认 java 可能是 8，需显式指定 17）
 export JAVA_HOME=/path/to/jdk-17
 
-# 1. 起本地 MySQL 并建库（若要接用仓库自带的联调库地址可跳过此步）
+# 1. 起本地 MySQL 并建库
 mysql -uroot -p 你的库名 < sql/modelgate_schema.sql          # 已有 MySQL
 # docker run --name mg-mysql -e MYSQL_ROOT_PASSWORD=root -e MYSQL_DATABASE=modelgate \
 #   -p 3306:3306 -d mysql:8 && mysql -uroot -proot modelgate < sql/modelgate_schema.sql   # 或用 Docker
 
-# 2. 若要换成自己的库/密钥，直接改 application.yml 文件末尾
-#    `spring.config.activate.on-profile: local` 那个文档块（datasource.local.* / modelgate.crypto.key），
-#    不用碰任何环境变量
+# 2. 直接改 application.yml 里的 datasource.local.{url,username,password}，改完即生效，
+#    不用碰任何环境变量、不用切 Profile
 
-# 3. 构建并以 local Profile 启动（SPRING_PROFILES_ACTIVE 未设时默认就是 local）
+# 3. 构建并启动
 mvn clean package -DskipTests
 java -jar target/modelgate-1.0.0-SNAPSHOT.jar
 

@@ -35,10 +35,22 @@ public class RedisConfig {
         private final JedisPool pool;
 
         JedisCacheProvider(String host, int port, String password) {
+            // 池大小：生产评估值，maxTotal=100（2026-08-18 压测优化，原硬编码 16 已证实偏小）。
+            // maxWaitMillis 此前从未设置，继承 commons-pool2 默认值 -1（无限等待）——
+            // 池耗尽时借连接的线程会永久挂起而不是抛异常，QuotaFilter 的 fail-open 逻辑
+            // （catch Exception 才放行）根本触发不到。显式设 3s，耗尽了就快速失败、走 fail-open。
             JedisPoolConfig config = new JedisPoolConfig();
-            config.setMaxTotal(16);
-            config.setMaxIdle(8);
-            config.setMinIdle(1);
+            config.setMaxTotal(100);
+            config.setMaxIdle(32);
+            config.setMinIdle(10);
+            config.setMaxWaitMillis(3000);
+            // 不用 testOnBorrow——那是每次借连接都多一次 PING 往返，等于把校验开销摊到请求热路径上。
+            // 用 testWhileIdle + 后台淘汰线程，只校验闲置连接，不影响请求延迟（与 Druid 配置同一思路）。
+            config.setTestOnBorrow(false);
+            config.setTestOnReturn(false);
+            config.setTestWhileIdle(true);
+            config.setTimeBetweenEvictionRunsMillis(60_000);
+            config.setMinEvictableIdleTimeMillis(300_000);
             if (password != null && !password.isEmpty()) {
                 this.pool = new JedisPool(config, host, port, 2000, password);
             } else {

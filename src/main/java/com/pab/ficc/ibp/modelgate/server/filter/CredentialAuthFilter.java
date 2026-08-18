@@ -109,10 +109,13 @@ public class CredentialAuthFilter implements GlobalFilter, Ordered {
                         return reject(exchange, HttpStatus.UNAUTHORIZED, ErrorCode.CREDENTIAL_EXPIRED);
                     }
 
-                    // 检查所属 App 是否启用（App 禁用 → 该 App 所有凭证立即失效）
+                    // 检查所属 App 是否启用（App 禁用 → 该 App 所有凭证立即失效）。
+                    // 2026-08-18 压测优化：findByAppId → findByAppIdCached（L1 60s + evict-on-write，
+                    // 见 AppService.findByAppIdCached 注释）——此前每个已鉴权请求都发一次不走缓存的
+                    // 同步 MySQL 查询，压测证实是并发升高时连接池被打满的主因之一。
                     Optional<AppInfoEntity> app;
                     try {
-                        app = Optional.of(appService.findByAppId(cred.getAppId()));
+                        app = Optional.of(appService.findByAppIdCached(cred.getAppId()));
                     } catch (Exception e) {
                         app = Optional.empty();
                     }

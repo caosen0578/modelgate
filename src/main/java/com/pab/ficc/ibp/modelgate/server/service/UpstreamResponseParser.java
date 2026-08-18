@@ -150,15 +150,71 @@ public class UpstreamResponseParser {
     }
 
     /**
-     * 只取 Token、不拼正文的轻量版本。
+     * 只取 Token、不拼正文的轻量版本，供 {@code TraceFilter.doFinally} 在事件循环线程上直接调用。
      *
-     * <p>供审计链路使用：审计对每个请求都要写 token，但不需要正文，
-     * 全量拼接对未开报文开关的请求是纯浪费。
+     * <p><b>2026-08-18 压测优化修复</b>：此前这里直接调用全量 {@link #parse}，流式响应会逐帧
+     * JSON 解析并用 StringBuilder 拼出完整正文，事后却整段丢弃——名不副实，压测证实并发升高、
+     * 响应变长时会显著拖慢事件循环线程，是"并发≥10 QPS 断崖"的主因之一（见 11-变更记录.md）。
+     * 现在流式响应改为从尾部有限帧数内反向扫描，命中 usage+finish_reason 即提前结束，
+     * 不拼正文、不做全量正向遍历。usage 缺失时的估算兜底也不再依赖拼出的正文长度，
+     * 改用响应字节数粗略估算（本身就是 estimated 口径，允许有精度损失）。
      */
     public ParsedResponse parseUsageOnly(byte[] responseBytes, boolean stream, byte[] requestBytes) {
-        ParsedResponse full = parse(responseBytes, stream, requestBytes);
-        return new ParsedResponse(full.inputTokens(), full.outputTokens(), full.tokenSource(),
-                null, full.finishReason());
+        if (responseBytes == null || responseBytes.length == 0) {
+            return ParsedResponse.empty();
+        }
+        if (!stream) {
+            // 非流式本身就是单个 JSON，readTree 一次即可定位 usage，不存在"拼全量正文"的开销，
+            // 直接复用全量解析、只是不透出 text 字段即可，无需特殊处理
+            ParsedResponse full = parse(responseBytes, false, requestBytes);
+            return new ParsedResponse(full.inputTokens(), full.outputTokens(), full.tokenSource(),
+                    null, full.finishReason());
+        }
+        return parseStreamUsageOnly(responseBytes, requestBytes);
+    }
+
+    /** parseUsageOnly 的流式分支：反向扫描，最多看尾部 {@link #TAIL_SCAN_FRAME_LIMIT} 个有效帧 */
+    private static final int TAIL_SCAN_FRAME_LIMIT = 20;
+
+    private ParsedResponse parseStreamUsageOnly(byte[] responseBytes, byte[] requestBytes) {
+        String body = new String(responseBytes, StandardCharsets.UTF_8);
+        String[] lines = body.split("\n");
+
+        int[] usage = null;
+        String finishReason = null;
+        int scanned = 0;
+        for (int i = lines.length - 1; i >= 0 && scanned < TAIL_SCAN_FRAME_LIMIT
+                && (usage == null || finishReason == null); i--) {
+            String frame = lines[i].strip();
+            if (frame.isEmpty() || !frame.startsWith(SSE_DATA_PREFIX)) {
+                continue;   // 帧分隔空行、event:/id: 等字段不计入扫描帧数
+            }
+            String json = frame.substring(SSE_DATA_PREFIX.length()).strip();
+            if (json.isEmpty() || SSE_DONE.equals(json)) {
+                continue;
+            }
+            scanned++;
+            try {
+                JsonNode node = objectMapper.readTree(json);
+                if (usage == null) {
+                    usage = extractUsage(node);
+                }
+                if (finishReason == null) {
+                    finishReason = firstChoiceField(node, "finish_reason");
+                }
+            } catch (Exception e) {
+                log.debug("[ResponseParser] parseUsageOnly 尾部帧解析失败，已跳过: {}", e.getMessage());
+            }
+        }
+
+        if (usage != null) {
+            return new ParsedResponse(usage[0], usage[1], SOURCE_USAGE, null, finishReason);
+        }
+        // 尾部若干帧内没找到 usage（罕见，如 OpenAI 未开 include_usage 且响应超出扫描上限）：
+        // 按响应总字节数粗略估算，不为了估算再做一次全量正向拼正文——那正是本方法要避免的开销
+        return new ParsedResponse(estimateTokens(requestBytes),
+                Math.max(1, responseBytes.length / CHARS_PER_TOKEN_ESTIMATE),
+                SOURCE_ESTIMATED, null, finishReason);
     }
 
     /**

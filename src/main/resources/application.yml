@@ -7,7 +7,7 @@
 server:
   port: 10811
 
-# ===== 数据源（HikariCP 直连，见 ServiceConfiguration）=====
+# ===== 数据源（Druid 直连，见 ServiceConfiguration；池大小见该类注释）=====
 datasource:
   local:
     url: jdbc:mysql://47.119.189.29:65522/cbdb?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
