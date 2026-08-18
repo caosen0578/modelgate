@@ -38,9 +38,10 @@ public class ServiceConfiguration {
             @Value("${datasource.local.pool.min-idle:10}") int minIdle,
             @Value("${datasource.local.pool.max-active:100}") int maxActive,
             @Value("${datasource.local.pool.max-wait:3000}") int maxWait,
-            @Value("${datasource.local.pool.time-between-eviction-runs-millis:60000}") long timeBetweenEvictionRunsMillis,
-            @Value("${datasource.local.pool.min-evictable-idle-time-millis:300000}") long minEvictableIdleTimeMillis,
-            @Value("${datasource.local.pool.remove-abandoned-timeout:180}") int removeAbandonedTimeout) {
+            @Value("${datasource.local.pool.time-between-eviction-runs-millis:30000}") long timeBetweenEvictionRunsMillis,
+            @Value("${datasource.local.pool.min-evictable-idle-time-millis:1800000}") long minEvictableIdleTimeMillis,
+            @Value("${datasource.local.pool.remove-abandoned:false}") boolean removeAbandoned,
+            @Value("${datasource.local.pool.remove-abandoned-timeout-millis:300000}") long removeAbandonedTimeoutMillis) {
         log.info("[ServiceConfiguration] 数据源: url={}, maxActive={}", url, maxActive);
         DruidDataSource ds = new DruidDataSource();
         ds.setUrl(url);
@@ -65,9 +66,13 @@ public class ServiceConfiguration {
         ds.setTimeBetweenEvictionRunsMillis(timeBetweenEvictionRunsMillis);
         ds.setMinEvictableIdleTimeMillis(minEvictableIdleTimeMillis);
 
-        // 连接泄漏兜底：业务代码没关连接时超时强制回收并打 ERROR 日志，防止池被占满后无法自愈
-        ds.setRemoveAbandoned(true);
-        ds.setRemoveAbandonedTimeout(removeAbandonedTimeout);
+        // 连接泄漏兜底：业务代码没关连接时超时强制回收并打 ERROR 日志，防止池被占满后无法自愈。
+        // 默认关闭（remove-abandoned=false，2026-08-18 对齐行内标准默认值）——Druid 官方本就不建议
+        // 生产环境开启：真在跑的慢查询会被误判成"泄漏"强行掐断连接。需要时可在 yml 里打开，
+        // 用 setRemoveAbandonedTimeoutMillis（毫秒版本，行内标准用的是这个而非秒版本的
+        // setRemoveAbandonedTimeout，两者是 Druid 里两个独立方法，别混用）。
+        ds.setRemoveAbandoned(removeAbandoned);
+        ds.setRemoveAbandonedTimeoutMillis(removeAbandonedTimeoutMillis);
         ds.setLogAbandoned(true);
 
         try {
