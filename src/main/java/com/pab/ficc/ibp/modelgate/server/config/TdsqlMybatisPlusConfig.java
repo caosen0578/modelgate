@@ -37,6 +37,13 @@ import javax.sql.DataSource;
 public class TdsqlMybatisPlusConfig {
 
     /**
+     * 全局 JDBC statement 超时（秒）。见下方 setDefaultStatementTimeout 处的说明。
+     * 与 {@code RequestPayloadMapper.QUERY_TIMEOUT_SECONDS} 保持一致；
+     * 那里的 @Options 是显式重申，即便本项被改动，报文查询也仍有自己的上界。
+     */
+    private static final int DEFAULT_STATEMENT_TIMEOUT_SECONDS = 30;
+
+    /**
      * SQL 日志实现，读 {@code mybatis-plus.configuration.log-impl}。
      *
      * <p><b>必须从配置读、不能写死</b>：本类定义了自定义 SqlSessionFactory，
@@ -89,6 +96,18 @@ public class TdsqlMybatisPlusConfig {
         configuration.setMapUnderscoreToCamelCase(true);
         // 生产默认 NoLoggingImpl（高频上报下避免日志噪声）；本地设 MYBATIS_LOG_IMPL 环境变量可切换
         configuration.setLogImpl(resolveLogImpl());
+        // 全局 JDBC statement 超时（秒）。此前<b>三层都没有超时兜底</b>：
+        //   1. JDBC URL 没有 socketTimeout / maxQueryTimeout；
+        //   2. 这里没有 defaultStatementTimeout；
+        //   3. Controller 侧没有 .timeout()。
+        // 结果是一条跑飞的查询没有任何东西能把它掐掉——Reactor 的取消信号对已进入阻塞
+        // JDBC 调用的线程无效，Druid 的 removeAbandoned 又按行内标准关成了 false。
+        // 用户等不及连点 5 次「查询」，就是 5 份完全相同的慢查询同时在跑，代价 5 倍且无上界。
+        //
+        // 设成全局而非只给个别 Mapper 方法：本项目所有正常查询都在百毫秒级
+        // （网关热路径的凭证/授权点查更是亚毫秒），30 秒只会掐掉病态查询，不会误伤。
+        // 它同时给审计/报文的批量 INSERT 与清理任务的分批 DELETE 加了上界，这也是想要的。
+        configuration.setDefaultStatementTimeout(DEFAULT_STATEMENT_TIMEOUT_SECONDS);
         factory.setConfiguration(configuration);
 
         factory.setPlugins(new Interceptor[]{

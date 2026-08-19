@@ -4,6 +4,8 @@ import com.pab.ficc.ibp.modelgate.server.constant.UrlConstant;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.pab.ficc.ibp.domain.base.vo.PageVo;
+import com.pab.ficc.ibp.modelgate.server.common.AdminScheduler;
+import com.pab.ficc.ibp.modelgate.server.common.PageSupport;
 import com.pab.ficc.ibp.modelgate.server.domain.Result;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.pab.ficc.ibp.modelgate.server.domain.bo.AuditQueryBO;
@@ -17,7 +19,6 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
-import reactor.core.scheduler.Schedulers;
 
 /**
  * 审计日志查询接口
@@ -34,8 +35,12 @@ public class AuditLogController {
     @Operation(summary = "分页查询审计日志（pageIndex 从 1 开始，pageSize 上限 200；按时间倒序）")
     @GetMapping
     public Mono<Result<PageVo<AuditLogVO>>> query(AuditQueryBO query) {
+        // mg_audit_log 保留 90 天、是全库增长最快的表，这里的护栏最要紧：
+        // 实测未加护栏时 pageSize=100000 会返回整张表（HTTP 200 / 2.8s / 1.7MB）
+        PageSupport.validate(query, "审计日志");
         return Mono.fromCallable(() -> PageVo.of(doQuery(query), AuditLogVO::of))
-                .subscribeOn(Schedulers.boundedElastic())
+                .subscribeOn(AdminScheduler.get())
+                .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .map(Result::success);
     }
 

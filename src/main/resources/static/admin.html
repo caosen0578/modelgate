@@ -909,7 +909,8 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
         <div class="form-group">
           <label>网关地址</label>
           <input id="ug_base" oninput="renderUsage()" placeholder="http://host:port">
-          <span class="hint">默认取当前页面地址；业务流量若另有入口地址或文根，改这里</span>
+          <span class="hint">默认取「当前域名 + 部署文根」。行内部署走域名时文根是 <code>/backend</code>，
+            业务流量同样要带上它才能到后端；直连应用 IP/端口时为空。若业务流量另有入口地址，改这里</span>
         </div>
       </div>
       <div class="form-group" style="margin-top:12px">
@@ -1270,11 +1271,51 @@ const $  = id => document.getElementById(id);
  *   localhost / 127.0.0.1 / ::1  → ''          本地直连，后端就在根路径
  *   其它任何域名或 IP            → '/backend'   内网部署，统一文根
  */
-const CTX_ROOT = /^(localhost|127\.0\.0\.1|\[?::1\]?)$/i.test(location.hostname) ? '' : '/backend';
+/**
+ * 是否「直连应用端口」访问（而不是走行内域名 + 文根）。
+ *
+ * 判定规则：**主机名是 IP 字面量或 localhost → 直连**，其余一概视为域名 → 带文根。
+ *
+ * 原先只认 localhost / 127.0.0.1 / ::1，漏掉了**本机局域网 IP**这种最常见的直连方式：
+ * 用 http://10.x.x.x:10811/admin.html 打开时会被判成"域名"，于是所有请求都拼上 /backend
+ * 而全部 404——表现是模型测试、报文查询、列表加载统统调不通，而且看不出原因。
+ *
+ * 仍然**按主机名判定，不从页面路径推导**：页面在 static 下的存放层级是前端自己的组织方式，
+ * 与后端接口前缀无关，用 pathname 反推会把静态资源的子目录一起拼到接口地址上。
+ *
+ * location.hostname 不含端口，所以出现冒号只可能是 IPv6，可以直接据此判定。
+ */
+function isDirectHost(h){
+  h = (h || '').toLowerCase().replace(/^\[|\]$/g, '');
+  if (h === 'localhost') return true;
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(h)) return true;   // IPv4：含 127.0.0.1 与任意内网 IP
+  if (h.indexOf(':') >= 0) return true;                 // IPv6：含 ::1
+  return false;                                          // 其余视为行内域名
+}
+
+/**
+ * 部署文根。行内部署时域名后固定挂一段 /backend，用于前后端分离时同域名按文根区分；
+ * 直连应用端口时为空。
+ */
+const CTX_ROOT = isDirectHost(location.hostname) ? '' : '/backend';
 
 /** 所有后端请求的唯一入口：把应用内绝对路径转成带文根的实际地址 */
 function apiUrl(path){
   return CTX_ROOT + path;
+}
+
+/**
+ * 业务流量（/v1/**）的默认入口地址。
+ *
+ * **必须带文根**，这是接入示例与连通性测试此前调不通的直接原因：原先取的是裸
+ * location.origin，于是示例里写的是 https://域名/v1/chat/completions，
+ * 而实际后端在 https://域名/backend/v1/chat/completions —— 给接入方的示例是错的，
+ * 页面上的「测试连通」也永远失败。
+ *
+ * 管理接口走 apiUrl() 早就带上了文根，唯独业务流量这一处漏了，两者必须一致。
+ */
+function defaultGatewayBase(){
+  return location.origin + CTX_ROOT;
 }
 // 页面不再持有任何管理凭据：AdminAuthFilter 已移除，鉴权由内网体系在接口层承担，
 // 浏览器带的是内网鉴权层自己的会话（Cookie / 4A 票据），这里只需声明内容类型。
@@ -2214,7 +2255,7 @@ async function openUsageModal(credId){
     : '<option value="">（该系统暂无可用授权，请先到「模型授权」页授权）</option>';
 
   $('ug_credName').textContent = c.credName || ('#'+credId);
-  $('ug_base').value = location.origin;
+  $('ug_base').value = defaultGatewayBase();
   $('ug_stream').checked = false;
   // 存量凭证（「密钥可查看」启用之前创建的）只有哈希，明文取不回来
   const btn = $('ug_fillBtn');
@@ -2259,7 +2300,7 @@ function usageParts(){
   const opt = sel.selectedOptions[0];
   const modelId   = sel.value || '<模型ID>';
   const modelType = (opt && opt.dataset.type) || 'chat';
-  const base   = ($('ug_base').value || location.origin).trim().replace(/\/+$/,'');
+  const base   = ($('ug_base').value || defaultGatewayBase()).trim().replace(/\/+$/,'');
   const embed  = modelType==='embedding';
   const stream = !embed && $('ug_stream').checked;   // embeddings 没有流式
   const bodyObj = embed

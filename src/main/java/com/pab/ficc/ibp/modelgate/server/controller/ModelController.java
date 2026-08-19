@@ -4,6 +4,8 @@ import com.pab.ficc.ibp.modelgate.server.constant.UrlConstant;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pab.ficc.ibp.domain.base.vo.PageVo;
+import com.pab.ficc.ibp.modelgate.server.common.AdminScheduler;
+import com.pab.ficc.ibp.modelgate.server.common.PageSupport;
 import com.pab.ficc.ibp.modelgate.server.domain.Result;
 import com.pab.ficc.ibp.modelgate.server.common.BusinessException;
 import com.pab.ficc.ibp.modelgate.server.common.ErrorCode;
@@ -25,7 +27,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Mono;
-import reactor.core.scheduler.Schedulers;
 
 import jakarta.validation.Valid;
 
@@ -46,6 +47,8 @@ public class ModelController {
     @Operation(summary = "分页查询模型（pageIndex 从 1 开始，pageSize 上限 200；keyword 模糊匹配 modelId/modelName）")
     @GetMapping(UrlConstant.ROOT)
     public Mono<Result<PageVo<ModelVO>>> page(ModelQueryBO query) {
+        // 分页护栏放在 Mono 外：参数非法应当立刻返回，不必占用管理面线程池的名额
+        PageSupport.validate(query, "模型");
         return Mono.fromCallable(() -> {
                     // 一次性取全部凭证与授权计数再归集，避免逐条查询造成 N+1。
                     // 注意：这两张表整表加载，与分页无关——分页只收敛模型主表的返回行数。
@@ -57,7 +60,8 @@ public class ModelController {
                             page.getPageIndex(), page.getPageSize(), page.getTotal());
                     return page;
                 })
-                .subscribeOn(Schedulers.boundedElastic())
+                .subscribeOn(AdminScheduler.get())
+                .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .map(Result::success);
     }
 
@@ -67,7 +71,8 @@ public class ModelController {
         log.debug("[Model][findOne] modelId={}", modelId);
         return Mono.fromCallable(() -> ModelVO.of(modelService.findByModelId(modelId),
                         modelService.getCredential(modelId).orElse(null)))
-                .subscribeOn(Schedulers.boundedElastic())
+                .subscribeOn(AdminScheduler.get())
+                .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .map(Result::success);
     }
 
@@ -83,7 +88,8 @@ public class ModelController {
                     ModelVO vo = ModelVO.of(modelService.create(model, cred));
                     log.info("[Model][create] 新增成功: modelId={}", vo.getModelId());
                     return vo;
-                }).subscribeOn(Schedulers.boundedElastic())
+                }).subscribeOn(AdminScheduler.get())
+                .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .map(Result::success);
     }
 
@@ -99,7 +105,8 @@ public class ModelController {
                     ModelVO vo = ModelVO.of(updated, modelService.getCredential(modelId).orElse(null));
                     log.info("[Model][update] 更新成功: modelId={}, authType={}", modelId, vo.getAuthType());
                     return vo;
-                }).subscribeOn(Schedulers.boundedElastic())
+                }).subscribeOn(AdminScheduler.get())
+                .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .map(Result::success);
     }
 
@@ -108,7 +115,8 @@ public class ModelController {
     public Mono<Result<Void>> enable(@Parameter(description = "模型 ID") @RequestParam("modelId") String modelId) {
         log.info("[Model][enable] modelId={}", modelId);
         return Mono.fromRunnable(() -> modelService.enable(modelId))
-                .subscribeOn(Schedulers.boundedElastic())
+                .subscribeOn(AdminScheduler.get())
+                .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .then(Mono.just(Result.<Void>success(null)));
     }
 
@@ -117,7 +125,8 @@ public class ModelController {
     public Mono<Result<Void>> disable(@Parameter(description = "模型 ID") @RequestParam("modelId") String modelId) {
         log.info("[Model][disable] modelId={}", modelId);
         return Mono.fromRunnable(() -> modelService.disable(modelId))
-                .subscribeOn(Schedulers.boundedElastic())
+                .subscribeOn(AdminScheduler.get())
+                .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .then(Mono.just(Result.<Void>success(null)));
     }
 
@@ -126,7 +135,8 @@ public class ModelController {
     public Mono<Result<Void>> delete(@Parameter(description = "模型 ID") @RequestParam("modelId") String modelId) {
         log.info("[Model][delete] modelId={}", modelId);
         return Mono.fromRunnable(() -> modelService.delete(modelId))
-                .subscribeOn(Schedulers.boundedElastic())
+                .subscribeOn(AdminScheduler.get())
+                .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .then(Mono.just(Result.<Void>success(null)));
     }
 
@@ -157,7 +167,8 @@ public class ModelController {
                     ModelCredentialEntity cred = modelService.getCredentialDecrypted(modelId);
                     return new ModelWithCredential(model, cred);
                 })
-                .subscribeOn(Schedulers.boundedElastic())
+                .subscribeOn(AdminScheduler.get())
+                .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .flatMap(mc -> connectivityService.probe(mc.model(), mc.credential()))
                 .map(Result::success);
     }
@@ -182,7 +193,8 @@ public class ModelController {
                     ModelCredentialEntity cred = modelService.getCredentialDecrypted(modelId);
                     return new ModelWithCredential(model, cred);
                 })
-                .subscribeOn(Schedulers.boundedElastic())
+                .subscribeOn(AdminScheduler.get())
+                .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .flatMap(mc -> {
                     byte[] raw;
                     try {

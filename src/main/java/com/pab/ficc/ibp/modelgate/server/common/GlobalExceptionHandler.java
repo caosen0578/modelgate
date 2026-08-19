@@ -51,6 +51,15 @@ public class GlobalExceptionHandler implements ErrorWebExceptionHandler {
             // 否则前端只看到一个 400、后端控制台一片空白，无从排查。
             String reason = rse.getReason() != null ? rse.getReason() : ex.getMessage();
             String rootCause = rootCauseMessage(ex);
+            // 参数绑定失败要点名是哪个字段：WebExchangeBindException 的 reason 恒为
+            // "Validation failure"，rootCause 也取不到有用信息，前端只能看到一句无从下手的
+            // "Validation failure"。实测 ?isStream=abc / ?pageSize=abc / ?startTime=乱写
+            // 三种情况返回的文案完全一样，排查时根本不知道该改哪个参数。
+            String fieldDetail = bindFieldDetail(ex);
+            if (fieldDetail != null) {
+                reason = reason + " —— " + fieldDetail;
+                rootCause = null;   // 字段级信息比 rootCause 的异常类名有用得多
+            }
             log.warn("[ModelGate] 请求被拒绝: {} {} -> {} | reason={} | cause={}",
                     method, path, status.value(), reason, rootCause);
             result = Result.fail(String.valueOf(status.value()),
@@ -97,6 +106,27 @@ public class GlobalExceptionHandler implements ErrorWebExceptionHandler {
 
         DataBuffer buffer = exchange.getResponse().bufferFactory().wrap(bytes);
         return exchange.getResponse().writeWith(Mono.just(buffer));
+    }
+
+    /**
+     * 从参数绑定异常里提取"哪个字段、传了什么、期望什么"。
+     *
+     * <p>不是绑定异常时返回 null。只取前 3 个字段：一次请求同时错 3 个以上参数极少见，
+     * 全列出来只会把响应撑长。
+     */
+    private String bindFieldDetail(Throwable ex) {
+        if (!(ex instanceof org.springframework.web.bind.support.WebExchangeBindException be)) {
+            return null;
+        }
+        java.util.List<String> parts = new java.util.ArrayList<>();
+        for (org.springframework.validation.FieldError fe : be.getFieldErrors()) {
+            if (parts.size() >= 3) {
+                break;
+            }
+            Object rejected = fe.getRejectedValue();
+            parts.add(String.format("参数 %s 取值 '%s' 无法解析", fe.getField(), rejected));
+        }
+        return parts.isEmpty() ? null : String.join("; ", parts);
     }
 
     /**

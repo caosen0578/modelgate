@@ -2,6 +2,8 @@ package com.pab.ficc.ibp.modelgate.server.controller;
 import com.pab.ficc.ibp.modelgate.server.constant.UrlConstant;
 
 import com.pab.ficc.ibp.domain.base.vo.PageVo;
+import com.pab.ficc.ibp.modelgate.server.common.AdminScheduler;
+import com.pab.ficc.ibp.modelgate.server.common.PageSupport;
 import com.pab.ficc.ibp.modelgate.server.domain.Result;
 import com.pab.ficc.ibp.modelgate.server.domain.bo.AppQueryBO;
 import com.pab.ficc.ibp.modelgate.server.domain.bo.CreateAppRequestBO;
@@ -16,7 +18,6 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Mono;
-import reactor.core.scheduler.Schedulers;
 
 import jakarta.validation.Valid;
 
@@ -35,6 +36,7 @@ public class AppController {
     @Operation(summary = "分页查询接入系统（pageIndex 从 1 开始，pageSize 上限 200；keyword 模糊匹配 appId/appName/sysCode）")
     @GetMapping(UrlConstant.ROOT)
     public Mono<Result<PageVo<AppVO>>> page(AppQueryBO query) {
+        PageSupport.validate(query, "接入系统");
         return Mono.fromCallable(() -> {
                     // 授权数与凭证数各一次查询后内存聚合，避免逐行 N+1
                     Map<String, Long> authCounts = modelAuthService.countByAppId();
@@ -42,7 +44,8 @@ public class AppController {
                     return PageVo.of(appService.page(query),
                             a -> AppVO.of(a, authCounts.get(a.getAppId()), credCounts.get(a.getAppId())));
                 })
-                .subscribeOn(Schedulers.boundedElastic())
+                .subscribeOn(AdminScheduler.get())
+                .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .map(Result::success);
     }
 
@@ -50,7 +53,8 @@ public class AppController {
     @GetMapping(UrlConstant.DETAIL)
     public Mono<Result<AppVO>> findOne(@Parameter(description = "系统 ID") @RequestParam("appId") String appId) {
         return Mono.fromCallable(() -> AppVO.of(appService.findByAppId(appId)))
-                .subscribeOn(Schedulers.boundedElastic())
+                .subscribeOn(AdminScheduler.get())
+                .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .map(Result::success);
     }
 
@@ -58,7 +62,8 @@ public class AppController {
     @PostMapping
     public Mono<Result<AppVO>> create(@RequestBody @Valid CreateAppRequestBO req) {
         return Mono.fromCallable(() -> AppVO.of(appService.create(req.toEntity())))
-                .subscribeOn(Schedulers.boundedElastic())
+                .subscribeOn(AdminScheduler.get())
+                .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .map(Result::success);
     }
 
@@ -66,7 +71,8 @@ public class AppController {
     @PutMapping(UrlConstant.UPDATE)
     public Mono<Result<AppVO>> update(@RequestBody @Valid UpdateAppRequestBO req) {
         return Mono.fromCallable(() -> AppVO.of(appService.update(req.getAppId(), req.toEntity())))
-                .subscribeOn(Schedulers.boundedElastic())
+                .subscribeOn(AdminScheduler.get())
+                .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .map(Result::success);
     }
 
@@ -74,7 +80,8 @@ public class AppController {
     @PatchMapping(UrlConstant.ENABLE)
     public Mono<Result<Void>> enable(@Parameter(description = "系统 ID") @RequestParam("appId") String appId) {
         return Mono.fromRunnable(() -> appService.enable(appId))
-                .subscribeOn(Schedulers.boundedElastic())
+                .subscribeOn(AdminScheduler.get())
+                .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .then(Mono.just(Result.<Void>success(null)));
     }
 
@@ -82,7 +89,8 @@ public class AppController {
     @PatchMapping(UrlConstant.DISABLE)
     public Mono<Result<Void>> disable(@Parameter(description = "系统 ID") @RequestParam("appId") String appId) {
         return Mono.fromRunnable(() -> appService.disable(appId))
-                .subscribeOn(Schedulers.boundedElastic())
+                .subscribeOn(AdminScheduler.get())
+                .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .then(Mono.just(Result.<Void>success(null)));
     }
 
@@ -90,7 +98,8 @@ public class AppController {
     @DeleteMapping(UrlConstant.DELETE)
     public Mono<Result<Void>> delete(@Parameter(description = "系统 ID") @RequestParam("appId") String appId) {
         return Mono.fromRunnable(() -> appService.delete(appId))
-                .subscribeOn(Schedulers.boundedElastic())
+                .subscribeOn(AdminScheduler.get())
+                .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .then(Mono.just(Result.<Void>success(null)));
     }
 }
