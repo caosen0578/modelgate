@@ -26,8 +26,15 @@ import java.util.concurrent.LinkedBlockingQueue;
  * <p><b>降级策略：</b>
  * <ul>
  *   <li>队列满时（默认容量 200,000）：丢弃新条目并打 WARN 日志，不阻塞主链路（fail-open）。</li>
- *   <li>批量 INSERT 失败：仅打 WARN，本批数据丢失，下一批继续（不重试，避免积压）。</li>
+ *   <li>批量 INSERT 失败：<b>整批进入 {@link PendingWriteBuffer} 等待重试</b>，
+ *       带指数退避与毒药记录隔离；只有"拆到单条仍写不进去"或"重试缓冲区超上限"
+ *       才会真正丢弃，且一律打 ERROR。</li>
  * </ul>
+ *
+ * <p><b>为什么必须重试</b>：原实现是 {@code drainTo} 先把数据取出队列、写失败只打一行 WARN，
+ * 数据已离开队列就<b>永久消失</b>。管理面一个慢查询占满 Druid 连接池，
+ * 就足以让 5000 条审计记录当场蒸发，月底对账对不上且无从补回。
+ * 审计表是计费与合规依据，不能按"尽力而为"对待。
  *
  * <p><b>开关：</b>
  * <ul>
@@ -62,11 +69,28 @@ public class AuditService {
     @Value("${modelgate.audit.buffer-size:200000}")
     private int bufferSize;
 
+    /**
+     * 优雅退出时刷盘的最长耗时。
+     *
+     * <p>取 15 秒：足够把积压写完，又不会长到让容器平台等不及改用强杀
+     * （强杀会连正在处理的 LLM 请求一起断掉，比丢几条审计严重）。
+     */
+    private static final long SHUTDOWN_DRAIN_TIMEOUT_MS = 15_000;
+
     private LinkedBlockingQueue<AuditLogEntity> queue;
+
+    /**
+     * 写库失败后的重试缓冲区。容量与主队列一致：数据库不可用时，
+     * 最坏情况相当于把主队列的内容整体搬到这里，堆占用是可预期的。
+     */
+    private PendingWriteBuffer<AuditLogEntity> retryBuffer;
 
     @PostConstruct
     public void init() {
         queue = new LinkedBlockingQueue<>(bufferSize);
+        retryBuffer = new PendingWriteBuffer<>("AuditService", bufferSize,
+                e -> String.format("traceId=%s appId=%s modelId=%s status=%s time=%s",
+                        e.getTraceId(), e.getAppId(), e.getModelId(), e.getHttpStatus(), e.getCreateTime()));
         log.info("[AuditService] 审计队列就绪, capacity={}", bufferSize);
     }
 
@@ -105,22 +129,89 @@ public class AuditService {
      */
     @Scheduled(fixedDelayString = "${modelgate.audit.flush-interval-ms:2000}")
     public void flush() {
-        if (queue == null || queue.isEmpty()) return;
+        if (queue == null) return;
+
+        // 先重试积压：数据库恢复后新数据源源不断，不优先处理积压的话旧数据永远排不上队。
+        // 重试路径**只做 DB 写入**，绝不再碰月度 Token——见下方 accumulateMonthlyTokens 的说明。
+        if (dbWriteEnabled) {
+            retryBuffer.retryDue(auditLogMapper::batchInsert);
+        }
+
+        if (queue.isEmpty()) return;
         List<AuditLogEntity> batch = new ArrayList<>(5000);
         queue.drainTo(batch, 5000);
         if (batch.isEmpty()) return;
 
-        // DB 写入：dbWriteEnabled=false 时跳过（降级），但月度 Token 累计必须始终执行
-        if (dbWriteEnabled) {
+        // 月度 Token 计数必须在这里、且**只在这里**累加一次：
+        //   · 无论 DB 是否可用都要更新，否则 QuotaFilter 的月度配额会失效；
+        //   · 放在 DB 写入之前，保证"写库失败进重试队列"这条路径不会漏加；
+        //   · 重试时**不再累加**——Redis 的 INCRBY 不是幂等的，重试一次就多算一次 token，
+        //     数据库抖动几轮就能把用户的月度配额凭空吃光，直接误伤线上业务。
+        accumulateMonthlyTokens(batch);
+
+        // DB 写入：dbWriteEnabled=false 时跳过（降级）
+        if (!dbWriteEnabled) return;
+        try {
+            auditLogMapper.batchInsert(batch);
+        } catch (Exception e) {
+            // 不再直接丢弃：整批交给重试缓冲区，由后续 flush 按退避重试
+            log.warn("[AuditService] 批量落库失败，转入重试队列: {} 条, 原因={}", batch.size(), e.getMessage());
+            retryBuffer.offerFailed(batch);
+        }
+    }
+
+    /**
+     * 优雅退出时把内存里未落库的数据尽力写完。
+     *
+     * <p>由容器平台的优雅退出端点调用，也由 {@link #onShutdown()} 兜底。
+     * 内存队列与重试缓冲区里的数据一旦随进程退出就永久消失，
+     * 而这正是"每次发版都悄悄丢一批审计"的来源——发版是最频繁的进程退出场景。
+     *
+     * <p>有<b>时限</b>：数据库不可用时不能无限期卡住退出流程，
+     * 否则平台等不及会强杀，反而比有序退出丢得更多。
+     */
+    public void drainForShutdown() {
+        if (queue == null) return;
+        long deadline = System.currentTimeMillis() + SHUTDOWN_DRAIN_TIMEOUT_MS;
+        int drained = 0;
+
+        // 先把主队列里剩下的全部取出并尝试写入
+        while (!queue.isEmpty() && System.currentTimeMillis() < deadline) {
+            List<AuditLogEntity> batch = new ArrayList<>(5000);
+            queue.drainTo(batch, 5000);
+            if (batch.isEmpty()) break;
+            accumulateMonthlyTokens(batch);
+            if (!dbWriteEnabled) continue;
             try {
                 auditLogMapper.batchInsert(batch);
+                drained += batch.size();
             } catch (Exception e) {
-                log.warn("[AuditService] Batch insert failed size={}: {}", batch.size(), e.getMessage());
+                retryBuffer.offerFailed(batch);
             }
         }
+        // 再把重试缓冲区里的积压尽力写完（忽略退避，退出在即）
+        if (dbWriteEnabled) {
+            drained += retryBuffer.drainAll(auditLogMapper::batchInsert, deadline);
+        }
 
-        // 月度 Token 计数无论 DB 是否可用都要更新，否则 QuotaFilter 的月度配额会失效
-        accumulateMonthlyTokens(batch);
+        int remaining = queue.size() + retryBuffer.pendingRows();
+        if (remaining > 0) {
+            log.error("[AuditService] 优雅退出结束，仍有 {} 条审计未落库，将随进程退出丢失", remaining);
+        } else {
+            log.info("[AuditService] 优雅退出刷盘完成，本次落库 {} 条", drained);
+        }
+    }
+
+    /**
+     * 进程退出兜底。
+     *
+     * <p>与优雅退出端点两处都做：平台调用端点后到 SIGTERM 之间通常有几十秒摘流量窗口，
+     * 那里刷盘最从容；但如果平台没调端点、或直接 SIGTERM（本地重启、异常退出），
+     * 就只剩这里。{@code @PreDestroy} 阶段连接池可能已在关闭，所以它是兜底而非主路径。
+     */
+    @jakarta.annotation.PreDestroy
+    public void onShutdown() {
+        drainForShutdown();
     }
 
     /**

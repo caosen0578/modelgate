@@ -27,7 +27,10 @@ import java.util.concurrent.atomic.AtomicLong;
  *   <li><b>SSE 拼接与 JSON 解析全部在消费端线程</b>（{@code flush} 的定时线程），
  *       采集侧只把原始字节丢进队列。响应体可能很大，在 Netty 事件循环里解析会卡住
  *       该 EventLoop 上的所有连接。</li>
- *   <li><b>批量写库失败只记 WARN</b>，不重试不抛出——DB 抖动不该反压到业务链路。</li>
+ *   <li><b>批量写库失败不再直接丢弃</b>——整批转入 {@link PendingWriteBuffer} 重试
+ *       （指数退避 + 毒药记录隔离）。原先"失败只记 WARN"的写法会让数据在离开队列后
+ *       永久消失，而 DB 抖动恰恰是最常见的情况。重试全部发生在消费端线程上，
+ *       仍然不反压到业务链路。</li>
  * </ul>
  *
  * <p>队列容量、批大小、刷盘间隔、保留期均可配置，见 {@code modelgate.payload-log.*}。
@@ -55,6 +58,12 @@ public class PayloadService {
     private LinkedBlockingQueue<PendingPayload> queue;
     private final AtomicLong droppedTotal = new AtomicLong();
 
+    /** 写库失败后的重试缓冲区，容量与主队列一致 */
+    private PendingWriteBuffer<RequestPayloadEntity> retryBuffer;
+
+    /** 优雅退出刷盘时限，与 AuditService 一致 */
+    private static final long SHUTDOWN_DRAIN_TIMEOUT_MS = 15_000;
+
     /**
      * 待解析的报文。
      *
@@ -68,6 +77,9 @@ public class PayloadService {
     @PostConstruct
     public void init() {
         queue = new LinkedBlockingQueue<>(bufferSize);
+        retryBuffer = new PendingWriteBuffer<>("PayloadService", bufferSize,
+                e -> String.format("traceId=%s appId=%s modelId=%s time=%s",
+                        e.getTraceId(), e.getAppId(), e.getModelId(), e.getCreateTime()));
         log.info("[PayloadService] 报文队列就绪, enabled={}, capacity={}, batchSize={}",
                 enabled, bufferSize, batchSize);
     }
@@ -100,7 +112,13 @@ public class PayloadService {
      */
     @Scheduled(fixedDelayString = "${modelgate.payload-log.flush-interval-ms:2000}")
     public void flush() {
-        if (!enabled || queue == null || queue.isEmpty()) {
+        if (!enabled || queue == null) {
+            return;
+        }
+        // 先重试积压，再处理新数据；否则 DB 恢复后旧数据永远排不上队
+        retryBuffer.retryDue(payloadMapper::batchInsert);
+
+        if (queue.isEmpty()) {
             return;
         }
         List<PendingPayload> batch = new ArrayList<>(batchSize);
@@ -122,13 +140,60 @@ public class PayloadService {
         if (entities.isEmpty()) {
             return;
         }
+        writeOrRetry(entities);
+    }
+
+    /** 写入，失败则转入重试缓冲区而不是丢弃 */
+    private void writeOrRetry(List<RequestPayloadEntity> entities) {
         try {
             payloadMapper.batchInsert(entities);
             log.debug("[PayloadService] 报文落库 {} 条", entities.size());
         } catch (Exception e) {
-            // 不重试：DB 抖动时重试会越堆越多，且报文不是必须可靠投递的数据
-            log.warn("[PayloadService] 报文批量落库失败, size={}: {}", entities.size(), e.getMessage());
+            log.warn("[PayloadService] 报文批量落库失败，转入重试队列: {} 条, 原因={}",
+                    entities.size(), e.getMessage());
+            retryBuffer.offerFailed(entities);
         }
+    }
+
+    /**
+     * 优雅退出时把内存里未落库的报文尽力写完。
+     *
+     * <p>与 {@code AuditService.drainForShutdown} 同一套逻辑与时限。报文的价值低于审计，
+     * 但发版时整队丢弃同样没有道理——尤其排查现场往往就在最近这几分钟的数据里。
+     */
+    public void drainForShutdown() {
+        if (!enabled || queue == null) {
+            return;
+        }
+        long deadline = System.currentTimeMillis() + SHUTDOWN_DRAIN_TIMEOUT_MS;
+        while (!queue.isEmpty() && System.currentTimeMillis() < deadline) {
+            List<PendingPayload> batch = new ArrayList<>(batchSize);
+            queue.drainTo(batch, batchSize);
+            if (batch.isEmpty()) break;
+            List<RequestPayloadEntity> entities = new ArrayList<>(batch.size());
+            for (PendingPayload pending : batch) {
+                try {
+                    entities.add(toEntity(pending));
+                } catch (Exception e) {
+                    log.warn("[PayloadService] 退出刷盘时解析失败，跳过: traceId={}", pending.traceId());
+                }
+            }
+            if (!entities.isEmpty()) {
+                writeOrRetry(entities);
+            }
+        }
+        retryBuffer.drainAll(payloadMapper::batchInsert, deadline);
+
+        int remaining = queue.size() + retryBuffer.pendingRows();
+        if (remaining > 0) {
+            log.error("[PayloadService] 优雅退出结束，仍有约 {} 条报文未落库，将随进程退出丢失", remaining);
+        }
+    }
+
+    /** 进程退出兜底，理由同 AuditService.onShutdown */
+    @jakarta.annotation.PreDestroy
+    public void onShutdown() {
+        drainForShutdown();
     }
 
     /** 解析发生在这里——消费端线程，与业务链路无关。 */

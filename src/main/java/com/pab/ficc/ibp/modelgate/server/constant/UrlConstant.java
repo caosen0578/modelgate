@@ -32,6 +32,26 @@ public interface UrlConstant {
     /** 运维端点前缀，与管理面同等待遇（不走业务过滤器） */
     String ACTUATOR_PREFIX = "/actuator/";
 
+    // ===== 行内容器平台探测端点 =====
+    /**
+     * 容器平台探测基础路径。
+     *
+     * <p>路径由<b>行内容器平台约定</b>，不可更改：平台在不同场景下分别调用
+     * {@link #DETECTION_RUNNING} / {@link #DETECTION_AVAILABLE} / {@link #DETECTION_SHUTDOWN}
+     * 判断应用状态，拿不到 200 就认为应用没起来并反复重启容器。
+     *
+     * <p>放在 {@link #ACTUATOR_PREFIX} 之下是有意的：六个业务过滤器都按该前缀跳过，
+     * 探测请求因此天然不经过凭证鉴权/授权/配额/熔断/路由，不需要为它们单独开白名单。
+     */
+    String MG_DETECTION = "/actuator/detection";
+
+    /** 存活检查：进程还在就返回 200，<b>绝不依赖 DB/Redis</b>（理由见 ContainerDetectionController） */
+    String DETECTION_RUNNING = "/running";
+    /** 流量检查：启动完成且未进入优雅退出流程时返回 200，否则 503 */
+    String DETECTION_AVAILABLE = "/available";
+    /** 优雅退出：置为「不再接流量」并返回 200，随后平台摘流量、再发 SIGTERM */
+    String DETECTION_SHUTDOWN = "/shutdown";
+
     // ===== Controller 基础路径（class-level @RequestMapping）=====
     String MG_MODELS      = BASE + "/models";
     String MG_APPS        = BASE + "/apps";

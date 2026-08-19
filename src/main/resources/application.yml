@@ -6,6 +6,11 @@
 # ============================================================
 server:
   port: 10811
+  # 优雅停机：收到 SIGTERM 后先停止接收新连接，等在途请求处理完再关闭。
+  # 对本网关尤其重要——LLM 请求正常就要跑 30~180 秒，直接切断等于让调用方白等一场，
+  # 而且上游可能已经产生了计费。配合 /actuator/detection/shutdown 的摘流量动作使用：
+  # 平台先调该端点（流量检查转 503、平台摘流量），再发 SIGTERM，此时在途请求已所剩无几。
+  shutdown: graceful
 
 # ===== 数据源（Druid 直连，见 ServiceConfiguration）=====
 datasource:
@@ -36,6 +41,12 @@ spring:
   #    此处的值供 logback 的 APP_NAME（日志文件名与 JSON 字段 app）与启动提示使用。
   application:
     name: modelgate
+  lifecycle:
+    # 优雅停机的等待上限。取 30s 而不是更长：这段时间是"平台已经发了 SIGTERM 之后"的等待，
+    # 正常情况下平台先调 /actuator/detection/shutdown 摘流量，到这一步在途请求已经很少。
+    # 设得太长会拖慢每次发版，太短则会切断在途的长请求，30s 是两者的折中。
+    # 注意这与 AuditService/PayloadService 的 15s 刷盘时限是两回事，后者在此之内完成。
+    timeout-per-shutdown-phase: 30s
   # ===== Spring Cloud Gateway 路由 =====
   # 超时策略：response-timeout 570s < SLB 600s，Gateway 先超时返回 504；SSE 场景开启 tcp-keepalive
   # F5 idle timeout 待运维确认，见 TODO：排查 F5 idle timeout
