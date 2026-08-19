@@ -451,10 +451,10 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
         <!-- 关键字为何有约束：LONGTEXT 上的 LIKE '%x%' 走不了索引，单独使用就是全表扫描。
              后端会直接拒绝这种请求，这里提前把规则说清楚，免得用户点了才吃报错。 -->
         <div class="hint" style="margin-top:8px">
-          正文关键字为模糊匹配，<b>必须</b>与「系统 / 模型 / TraceID（≥8 位）/ 跨度 ≤24 小时的时间范围」
-          中的至少一项同时使用——单独按关键字查会在 LONGTEXT 上全表扫描，后端会拒绝该请求。
-          「类型 / 上游状态码 / 结束原因 / 完整性」<b>不算</b>收窄条件（无索引且区分度过低）；
-          时间范围也必须两端都填，只填一端或跨度过大同样不算。
+          正文关键字为模糊匹配，<b>必须</b>搭配「TraceID（≥8 位）」或「两端齐全且跨度 ≤24 小时的时间范围」——
+          单独按关键字查会在 LONGTEXT 上全表扫描，后端会拒绝该请求。
+          「系统 / 模型」<b>不算</b>收窄条件：主力系统常占全表七成以上，加上它仍是近乎全表扫描；
+          「类型 / 上游状态码 / 结束原因 / 完整性」同样不算（无索引且区分度过低）。
           TraceID 支持前缀匹配，可直接粘贴列表上显示的截断值。
         </div>
       </div>
@@ -3051,10 +3051,13 @@ async function loadPayloadMeta(){
  * isStream / 状态码 / 结束原因 / 截断 都**不算**：它们没索引且区分度极低，加上也还是全表扫。
  */
 function payloadNarrowed(){
-  if($('pl_app').value || $('pl_model').value) return true;
   if($('pl_trace').value.trim().length >= 8) return true;
   // 时间范围要**两端齐全且跨度 ≤24 小时**才算收窄。只判"填了没"是不够的：
   // startTime=1990-01-01 这种一眼假的下界照样能通过，防护就白做了。
+  //
+  // 系统/模型**不算**（这一版收紧了）：它们能定位但不给候选集上界，
+  // 内网通常只接个位数的系统，主力 appId 常占全表七成到十成，
+  // 「关键字 + 主力系统」实际执行的仍然是近乎全表的 LONGTEXT 扫描。
   const s = $('pl_start').value, e = $('pl_end').value;
   if(!s || !e) return false;
   const ms = new Date(e) - new Date(s);
@@ -3097,8 +3100,9 @@ function renderPayloadNeedNarrow(kw){
       <div style="font-size:13px;line-height:1.7">
         关键字是 LONGTEXT 上的模糊匹配，走不了索引，单独使用会全表扫描并把所有报文正文读进内存，
         足以拖垮在线业务的数据库，因此必须搭配
-        <b>系统 / 模型 / TraceID（≥8 位）/ 两端齐全且跨度 ≤24 小时的时间范围</b> 之一。<br>
-        <span style="color:#94a3b8">「类型 / 上游状态码 / 结束原因 / 完整性」不算收窄条件——它们没有索引，区分度也太低。</span>
+        <b>TraceID（≥8 位）</b> 或 <b>两端齐全且跨度 ≤24 小时的时间范围</b>。<br>
+        <span style="color:#94a3b8">「系统 / 模型」不算收窄条件：内网通常只接个位数的系统，主力系统常占全表七成以上，
+        加上它仍然是近乎全表扫描。「类型 / 上游状态码 / 结束原因 / 完整性」同样不算——无索引且区分度太低。</span>
       </div>
       <div class="flex gap-8" style="margin-top:12px">
         <button class="btn btn-primary btn-sm" onclick="payloadUseLast24h()">📅 按最近 24 小时搜</button>
@@ -3249,6 +3253,14 @@ function fmtLen(n){
 function tokenCell(p){
   if(p.inputTokens == null && p.outputTokens == null){
     return '<span style="color:#94a3b8" title="未找到该 traceId 对应的审计记录">-</span>';
+  }
+  // auditMatchCount>1：这个 traceId 被多次调用共用（调用方传了相同的 X-Trace-Id，
+  // TraceWebFilter 会沿用它）。此时 Token 取的是其中 id 最小的那行，未必属于本条报文。
+  // 宁可显示"存疑"，也不能显示一个看起来精确、实际可能属于另一次调用的数字。
+  if(p.auditMatchCount > 1){
+    const t = `该 TraceID 被 ${p.auditMatchCount} 次调用共用（调用方传入了相同的 X-Trace-Id），`
+            + `无法确定哪条审计记录对应本条报文，此处显示的是其中最早一条的 Token，仅供参考`;
+    return `<span class="tag tag-yellow" style="font-size:10px" title="${escHtml(t)}">⚠ Token 存疑</span>`;
   }
   const i = p.inputTokens ?? 0, o = p.outputTokens ?? 0;
   const src = {

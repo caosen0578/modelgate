@@ -38,4 +38,10 @@ public class PayloadDetailVO {
     private Integer       outputTokens;
     /** Token 口径：usage=上游精确返回 / estimated=本地估算 / none=无 */
     private String        tokenSource;
+
+    /**
+     * 同 traceId 在 mg_audit_log 里命中的行数；>1 表示 Token 存疑。
+     * 详见 {@link PayloadListVO#getAuditMatchCount()}。
+     */
+    private Integer       auditMatchCount;
 }

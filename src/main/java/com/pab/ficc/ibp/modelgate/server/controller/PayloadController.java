@@ -23,8 +23,10 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
 
+import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
@@ -72,7 +74,8 @@ public class PayloadController {
         // 校验放在 Mono 外：参数错误应当立刻返回，不必占用 boundedElastic 线程
         validate(q);
         return Mono.fromCallable(() -> toPageVo(doQuery(q)))
-                .subscribeOn(Schedulers.boundedElastic())
+                .subscribeOn(ADMIN_QUERY_SCHEDULER)
+                .timeout(REQUEST_TIMEOUT)
                 .map(Result::success);
     }
 
@@ -89,7 +92,8 @@ public class PayloadController {
                     }
                     return vo;
                 })
-                .subscribeOn(Schedulers.boundedElastic())
+                .subscribeOn(ADMIN_QUERY_SCHEDULER)
+                .timeout(REQUEST_TIMEOUT)
                 .map(Result::success);
     }
 
@@ -104,8 +108,59 @@ public class PayloadController {
         return Mono.just(Result.success(m));
     }
 
-    /** 单页上限。报文行带正文预览与三个跨表子查询，比普通列表贵得多，上限压得比常规更狠。 */
+    /** 单页上限。报文行带正文预览与跨表子查询，比普通列表贵得多，上限压得比常规更狠。 */
     private static final long MAX_PAGE_SIZE = 200;
+
+    /**
+     * 最大可翻到的 OFFSET（= (pageIndex-1) × pageSize）。
+     *
+     * <p>这是本轮审查里最反直觉的一条：所有防护原先都挂在 keyword 分支上，
+     * 但<b>一次不带任何条件的深翻页同样会全表扫描</b>，而且 UI 上就有一个按钮直接触发它——
+     * 分页条的「末页」精确命中最大合法 OFFSET。
+     *
+     * <p>机制：{@code LIMIT n OFFSET N} 里被跳过的 N 行仍然要从聚簇索引读出来；
+     * 而 {@code request_body}/{@code response_text} 因为被 {@code LEFT}/{@code CHAR_LENGTH}
+     * 引用而进了 read_set，InnoDB 会为<b>每一条跳过的行</b>物化行外存储的完整 LONGTEXT
+     * （见 {@code RequestPayloadMapper.selectListPage} 注释）。代价 ≈ N × 单行正文大小。
+     * 保留期 7 天、每天 2 万次调用 → 14 万行，末页 OFFSET≈14 万 × ~20KB ≈ 2.8GB，一次点击。
+     *
+     * <p>5 万这个值：按 pageSize=20 算是第 2500 页。真要翻到那么后面，正确做法是用时间范围
+     * 跳过去，而不是一页页翻——所以超限时的提示直接引导去填时间范围。
+     */
+    private static final long MAX_OFFSET = 50_000;
+
+    /**
+     * 管理面查询专用线程池。
+     *
+     * <p><b>不能用 {@code Schedulers.boundedElastic()}</b>：那是 Reactor 的<b>全局共享单例</b>，
+     * 网关热路径上的 {@code CredentialAuthFilter} / {@code ModelAuthFilter} /
+     * {@code AppAccessControlFilter} / {@code QuotaFilter} / {@code ModelRouteFilter}
+     * 全都在用它做阻塞 DB 调用。它默认 {@code maxThreads = 10 × CPU 核数}
+     * （4 核容器 = 40），比 Druid 的 maxActive=100 更早被打满。
+     *
+     * <p>更要命的是失败模式：Druid 拿不到连接会在 maxWait=3000ms 后 fail-fast 抛异常，
+     * 而 boundedElastic 的队列深度是 100000 且<b>没有超时</b>——线程占满后网关的鉴权任务
+     * 只是安静地排队，不报错、不降级，表现为 {@code /v1/**} 整体延迟抬升而日志干净，
+     * 极难归因。几个人同时在报文页做慢查询就足以触发。
+     *
+     * <p>所以这里单开一个小池子：管理面最多同时跑 {@value #ADMIN_POOL_SIZE} 个查询，
+     * 排队上限 {@value #ADMIN_POOL_QUEUE}，<b>再慢也烧不到网关的线程</b>。
+     * 队列满时直接拒绝（抛 RejectedExecutionException），这正是我们要的——
+     * 管理面查询失败远好过网关转发被拖慢。
+     */
+    private static final int ADMIN_POOL_SIZE = 4;
+    private static final int ADMIN_POOL_QUEUE = 64;
+    private static final Scheduler ADMIN_QUERY_SCHEDULER =
+            Schedulers.newBoundedElastic(ADMIN_POOL_SIZE, ADMIN_POOL_QUEUE, "mg-admin-payload");
+
+    /**
+     * 整个请求的兜底超时。
+     *
+     * <p>比 {@code RequestPayloadMapper.QUERY_TIMEOUT_SECONDS}（30s，JDBC statement 级）
+     * 稍长：正常情况该由 statement 超时先掐掉并给出 SQL 层的错误，
+     * 这一层只兜"连 statement 超时都没生效"的情况（比如卡在拿连接而不是执行）。
+     */
+    private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(35);
 
     /**
      * {@code truncated} 的合法取值。
@@ -139,20 +194,29 @@ public class PayloadController {
         String keyword = q.getKeyword();
         if (keyword != null && !keyword.isBlank() && !q.hasNarrowingFilter()) {
             throw new BusinessException(ErrorCode.INVALID_PARAMETER, String.format(
-                    "正文关键字检索必须同时指定以下之一：接入系统、模型、TraceID（至少 %d 位前缀）、"
+                    "正文关键字检索必须同时指定：TraceID（至少 %d 位前缀），"
                             + "或两端齐全且跨度不超过 %d 小时的时间范围。"
-                            + "（关键字是 LONGTEXT 上的模糊匹配，走不了索引，不收窄会全表扫描拖垮数据库）",
+                            + "（接入系统/模型不足以收窄——单个系统常占全表大半，"
+                            + "关键字是 LONGTEXT 上的模糊匹配走不了索引，候选集不设上界会拖垮数据库）",
                     PayloadQueryBO.tracePrefixMin(), PayloadQueryBO.timeSpanMaxHours()));
         }
 
+        if (q.getPageSize() <= 0 || q.getPageIndex() <= 0) {
+            throw new BusinessException(ErrorCode.INVALID_PARAMETER,
+                    "pageIndex 与 pageSize 必须为正数");
+        }
         if (q.getPageSize() > MAX_PAGE_SIZE) {
             throw new BusinessException(ErrorCode.INVALID_PARAMETER,
                     "pageSize 不能超过 " + MAX_PAGE_SIZE + "，当前传入 " + q.getPageSize()
                             + "（报文行含正文预览与跨表 Token 查询，单页过大会长时间占用数据库连接）");
         }
-        if (q.getPageSize() <= 0 || q.getPageIndex() <= 0) {
-            throw new BusinessException(ErrorCode.INVALID_PARAMETER,
-                    "pageIndex 与 pageSize 必须为正数");
+        // 深翻页与 keyword 无关，是另一条同样能全表扫的路径，且 UI 上的「末页」按钮直接命中
+        long offset = (q.getPageIndex() - 1) * q.getPageSize();
+        if (offset > MAX_OFFSET) {
+            throw new BusinessException(ErrorCode.INVALID_PARAMETER, String.format(
+                    "翻页过深（已跳过 %d 条，上限 %d）。请改用时间范围直接定位到目标时段，"
+                            + "不要一页页翻——被跳过的每一行都要把正文从磁盘读出来，代价与跳过的行数成正比",
+                    offset, MAX_OFFSET));
         }
 
         String truncated = q.getTruncated();
@@ -189,19 +253,20 @@ public class PayloadController {
                 .le(q.getEndTime() != null,        RequestPayloadEntity::getCreateTime,     q.getEndTime());
 
         // traceId 按前缀匹配：列表展示的是截断值（前 12 字符），全等的话用户复制界面上看到的
-        // 内容来筛选永远查不到。likeRight 在 idx_trace_id 上是范围扫描，索引仍然生效。
+        // 内容来筛选永远查不到。前缀匹配在 idx_trace_id 上是范围扫描，索引仍然生效。
         if (notBlank(traceId)) {
-            w.likeRight(RequestPayloadEntity::getTraceId, escapeLike(traceId.trim()));
+            w.apply("trace_id LIKE {0} ESCAPE '" + LIKE_ESCAPE + "'",
+                    escapeLike(traceId.trim()) + "%");
         }
 
         if (notBlank(keyword)) {
             // 请求与响应都匹配：排查既可能从"用户问了什么"入手，也可能从"模型答了什么"入手。
             // 只搜 response_text 不搜 response_raw —— raw 是 SSE 分帧原文，同一句话被切碎在多帧里，
             // LIKE 匹配不到完整词，搜它只会给出误导性的空结果。
-            String kw = escapeLike(keyword.trim());
-            w.and(x -> x.like(RequestPayloadEntity::getRequestBody,  kw)
+            String kw = "%" + escapeLike(keyword.trim()) + "%";
+            w.and(x -> x.apply("request_body LIKE {0} ESCAPE '"  + LIKE_ESCAPE + "'", kw)
                         .or()
-                        .like(RequestPayloadEntity::getResponseText, kw));
+                        .apply("response_text LIKE {0} ESCAPE '" + LIKE_ESCAPE + "'", kw));
         }
 
         w.orderByDesc(RequestPayloadEntity::getCreateTime)
@@ -220,18 +285,34 @@ public class PayloadController {
     }
 
     /**
+     * LIKE 的转义字符。
+     *
+     * <p><b>刻意不用反斜杠。</b>反斜杠在 MySQL 里是"默认"转义符，但这个默认<b>可以被关掉</b>：
+     * {@code sql_mode} 含 {@code NO_BACKSLASH_ESCAPES} 时（对齐 ANSI 兼容时很常见）
+     * 根本不存在默认转义符，此前写的 {@code \%} 会退化成"字面反斜杠 + 通配符"，
+     * 两个方向的失效都很难察觉：正常关键字（如 {@code 100%}、{@code user_id}）匹配不到任何行
+     * 而返回空列表（看起来像"没有这条报文"），单个 {@code %} 又变回大范围匹配。
+     * 而本项目的 JDBC URL 没有用 {@code sessionVariables} 固定 {@code sql_mode}，
+     * 服务端配什么就是什么，代码这边没有任何保障。
+     *
+     * <p>改用 {@code !} 并<b>显式写 {@code ESCAPE '!'}</b> 子句，语义与 {@code sql_mode} 完全无关。
+     */
+    private static final String LIKE_ESCAPE = "!";
+
+    /**
      * 转义 LIKE 的通配符。
      *
-     * <p>MyBatis-Plus 的 {@code like()} 只负责把值包成 {@code %值%}，<b>不转义</b>值里的
-     * {@code %} 和 {@code _}。不处理的话，关键字填一个 {@code %} 就变成 {@code LIKE '%%%'}
-     * ——匹配全部行，把"必须先收窄"的防护整个绕过去，等于一次点击换一轮全表扫 LONGTEXT。
-     * 这不是 SQL 注入（值仍是绑定参数），是通配符被当成语法解释。
+     * <p>为什么必须转义：MyBatis-Plus 的 {@code like()} 只负责把值包成 {@code %值%}，
+     * <b>不转义</b>值里的 {@code %} 和 {@code _}。不处理的话，关键字填一个 {@code %}
+     * 就变成 {@code LIKE '%%%'}——匹配全部行，把"必须先收窄"的防护整个绕过去，
+     * 等于一次点击换一轮全表扫 LONGTEXT（实测曾返回全表 2735 条）。
+     * 这不是 SQL 注入（值始终是绑定参数），是通配符被当成语法解释。
      *
-     * <p>用反斜杠转义，不加 {@code ESCAPE} 子句：MySQL 的 LIKE 默认转义符就是反斜杠。
+     * <p>转义符本身要先转义，否则关键字里的 {@code !} 会把后一个字符吃掉。
      */
     private static String escapeLike(String s) {
-        return s.replace("\\", "\\\\")
-                .replace("%", "\\%")
-                .replace("_", "\\_");
+        return s.replace(LIKE_ESCAPE, LIKE_ESCAPE + LIKE_ESCAPE)
+                .replace("%", LIKE_ESCAPE + "%")
+                .replace("_", LIKE_ESCAPE + "_");
     }
 }

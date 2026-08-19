@@ -69,13 +69,19 @@ public class PayloadQueryBO extends BaseBo {
     private static final long TIME_SPAN_MAX_HOURS = 24;
 
     /**
-     * 是否给出了能收窄候选集的条件——keyword 检索的前置条件。
+     * 是否给出了能<b>给候选集设上界</b>的条件——keyword 检索的前置条件。
      *
-     * <p><b>只认这几个</b>：appId / modelId 走 {@code idx_app_model_time}，
-     * 有界时间范围走 {@code idx_create_time}，traceId 前缀走 {@code idx_trace_id}。
-     * {@code isStream} / {@code upstreamStatus} / {@code finishReason} / {@code truncated}
-     * <b>刻意不算</b>：它们没有索引且区分度极低（{@code upstream_status=200} 能占九成以上），
-     * 加上它们照样是全表扫描 LONGTEXT，只会让人误以为已经收窄了。
+     * <p><b>只认两个</b>：足够长的 traceId 前缀（近乎唯一），或有界的时间范围。
+     *
+     * <p><b>appId / modelId 刻意不算</b>（这一版收紧了）。它们能走 {@code idx_app_model_time}
+     * 做<b>定位</b>，但不给候选集任何<b>上界</b>：内网网关通常只接个位数的系统，
+     * 主力 appId 往往占全表七成到十成——{@code keyword=xxx&appId=主力系统} 通过校验后，
+     * 实际执行的仍然是近乎全表的 LONGTEXT 扫描。在"能不能收窄"这件事上，
+     * 单独的 appId 和被显式拒绝的 {@code upstreamStatus=200} 是同一档，不该区别对待。
+     * 它们仍然是有用的<b>过滤条件</b>，只是不能单独充当 keyword 的准入券。
+     *
+     * <p>{@code isStream} / {@code upstreamStatus} / {@code finishReason} / {@code truncated}
+     * 同样不算：无索引且区分度极低。
      *
      * <p>traceId 要求至少 {@value #TRACE_PREFIX_MIN} 位：前缀匹配下 1 位十六进制只能滤掉
      * 15/16 的行，用它当"收窄条件"等于没有。
@@ -85,9 +91,14 @@ public class PayloadQueryBO extends BaseBo {
      * 也算"已收窄"——实测 {@code keyword=hello&startTime=1990-01-01} 直接放行，
      * 等于防护形同虚设。只给单端同理：只有 startTime 就是"从某时刻到现在"，
      * 在保留期只有 7 天的表上几乎等于全表。
+     *
+     * <p>顺带解决排序问题：有了 ≤24h 的窗口，MySQL 可以用 {@code idx_create_time} 做范围扫描，
+     * {@code ORDER BY create_time DESC} 由索引反向扫描直接满足；否则只给 appId 时索引内是
+     * {@code (model_id, create_time)} 序，排序落到 filesort，而 filesort 要为<b>每一条候选行</b>
+     * 算出 {@code CHAR_LENGTH}/{@code LEFT}，也就是把三个 LONGTEXT 全读出来。
      */
     public boolean hasNarrowingFilter() {
-        return notBlank(appId) || notBlank(modelId) || hasTraceNarrow() || hasBoundedTimeRange();
+        return hasTraceNarrow() || hasBoundedTimeRange();
     }
 
     /** traceId 前缀是否长到足以收窄 */

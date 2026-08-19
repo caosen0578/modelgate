@@ -49,6 +49,16 @@ public class PayloadListVO {
     /** Token 口径：usage=上游精确返回 / estimated=本地估算 / none=无。估算值不能当账算，必须标出来 */
     private String        tokenSource;
 
+    /**
+     * 同 traceId 在 mg_audit_log 里命中的行数。
+     *
+     * <p>正常是 1。大于 1 说明<b>这个 traceId 被多次调用共用</b>——
+     * {@code TraceWebFilter.resolveTraceId} 优先沿用调用方传入的 {@code X-Trace-Id}，
+     * 一次上游事务扇出成多次模型调用时就会这样。此时上面三个 Token 字段取的是其中
+     * id 最小的那一行，<b>未必属于当前这条报文</b>，前端必须把它标成存疑而不是照直显示。
+     */
+    private Integer       auditMatchCount;
+
     /** 请求报文字符数（CHAR_LENGTH，非字节数），用于在预览的 tooltip 上提示报文规模 */
     private Long          requestLen;
     /** 响应原文字符数 */
