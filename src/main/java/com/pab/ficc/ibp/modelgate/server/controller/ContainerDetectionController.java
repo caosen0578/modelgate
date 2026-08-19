@@ -8,6 +8,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -25,7 +26,7 @@ import reactor.core.publisher.Mono;
  *   <caption>三个端点的语义</caption>
  *   <tr><th>场景</th><th>路径</th><th>返回 200 的条件</th></tr>
  *   <tr><td>存活检查</td><td>{@code /actuator/detection/running}</td><td><b>进程还活着就永远 200</b></td></tr>
- *   <tr><td>流量检查</td><td>{@code /actuator/detection/available}</td><td>启动完成 且 未在优雅退出中</td></tr>
+ *   <tr><td>流量检查</td><td>{@code /actuator/detection/available}</td><td><b>默认恒 200</b>，状态见响应体（可配置）</td></tr>
  *   <tr><td>优雅退出</td><td>{@code /actuator/detection/shutdown}</td><td>总是 200（幂等）</td></tr>
  * </table>
  *
@@ -78,20 +79,47 @@ public class ContainerDetectionController {
     }
 
     /**
+     * 是否让流量检查<b>恒返回 200</b>。默认 true。
+     *
+     * <p>标准语义下，流量检查返回 503 = "暂时别给我发流量"，平台应当把实例从负载均衡摘掉，
+     * <b>而不是</b>重启它。但各家容器平台对这个语义的实现不一定一致：
+     * 有的平台把流量检查失败也当作不健康而触发重启，那就会在优雅退出、
+     * 甚至启动稍慢的时候把容器重启掉，反而制造出本次要解决的那个问题。
+     *
+     * <p>在摸清平台的确切行为之前，<b>取保守值 true</b>：恒 200 最坏结果是
+     * "退出期间平台没能及时摘流量"，而误判重启的代价大得多。
+     *
+     * <p>真实状态并没有丢——响应体仍然是 {@code available}/{@code starting}/{@code draining}，
+     * curl 一下就能看出实例到底在什么阶段，只是不再用状态码去表达。
+     *
+     * <p><b>确认平台"流量检查失败只摘流量、不重启"之后，把这项改成 false</b>，
+     * 即可恢复标准语义，让优雅退出期间平台能自动停止派发新流量。
+     */
+    @Value("${modelgate.detection.available-always-200:true}")
+    private boolean availableAlways200;
+
+    /**
      * 流量检查。
      *
-     * <p>启动完成且未进入退出流程 → 200；否则 503。
-     * 503 的含义是"暂时别给我发流量"，平台据此把实例从负载均衡里摘掉，<b>不是</b>让它重启。
+     * <p>行为取决于 {@link #availableAlways200}：
+     * <ul>
+     *   <li>true（默认）——恒 200，状态只体现在响应体里；</li>
+     *   <li>false ——标准语义：启动完成且未退出中才 200，否则 503。</li>
+     * </ul>
      */
-    @Operation(summary = "流量检查：启动完成且未在优雅退出中返回 200，否则 503")
+    @Operation(summary = "流量检查：默认恒返回 200（状态见响应体）；配置 available-always-200=false 可恢复 503 语义")
     @RequestMapping(value = UrlConstant.DETECTION_AVAILABLE,
                     method = {RequestMethod.GET, RequestMethod.POST})
     public Mono<ResponseEntity<String>> available() {
         if (serviceState.isAvailable()) {
             return Mono.just(ResponseEntity.ok("available"));
         }
-        String reason = serviceState.isDraining() ? "draining" : "starting";
-        return Mono.just(ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(reason));
+        String state = serviceState.isDraining() ? "draining" : "starting";
+        if (availableAlways200) {
+            // 恒 200：避免平台把"流量检查失败"误当成"不健康"而重启容器
+            return Mono.just(ResponseEntity.ok(state));
+        }
+        return Mono.just(ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(state));
     }
 
     /**

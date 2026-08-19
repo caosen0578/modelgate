@@ -27,6 +27,15 @@ public class AppModelAuthVO {
     private Boolean       payloadLogEnabled;
     private LocalDateTime expiresAt;
     private LocalDateTime createTime;
+    /**
+     * 更新时间。
+     *
+     * <p>DB 与 Entity 一直都有 {@code update_time}，唯独 VO 漏了它，接口因此从不返回——
+     * 页面上的「更新时间」永远是空的，看起来像<b>数据库里没存值</b>，实际值一直都在。
+     * 与 {@code AuditLogVO} 早先漏掉 {@code requestPath} 是同一类问题：
+     * <b>字段缺失发生在 VO 层，症状却表现为「数据没保存」，极易误判。</b>
+     */
+    private LocalDateTime updateTime;
 
     public static AppModelAuthVO of(AppModelAuthEntity e) {
         AppModelAuthVO vo = new AppModelAuthVO();
@@ -39,6 +48,7 @@ public class AppModelAuthVO {
         vo.payloadLogEnabled = Boolean.TRUE.equals(e.getPayloadLogEnabled());
         vo.expiresAt     = e.getExpiresAt();
         vo.createTime     = e.getCreateTime();
+        vo.updateTime = e.getUpdateTime();
         return vo;
     }
 
