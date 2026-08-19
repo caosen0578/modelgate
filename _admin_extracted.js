@@ -1,0 +1,2527 @@
+
+// ============================================================
+// 全局状态
+// ============================================================
+let allModels = [];
+let allApps   = [];
+let currentApp = null;    // 当前打开 drawer 的 app
+let currentAccessRules = [];
+let editingModelId = null; // null=新增, string=编辑
+let currentStep = 1;
+
+const PAGE_TITLES = {models:'模型管理', apps:'接入系统', audit:'审计日志', payload:'报文记录', settings:'网关配置'};
+
+// ============================================================
+// 工具函数
+// ============================================================
+const $  = id => document.getElementById(id);
+
+// ============================================================
+// 部署文根（context root）自适应
+// ============================================================
+/**
+ * 内网部署时域名后固定挂一段文根 `/backend`，如 https://host/backend/modelgate/models。
+ * 页面里写死的 `/modelgate/...` 会被解析成 https://host/modelgate/... —— 丢掉文根，全部 404。
+ *
+ * **按域名判定，不从页面路径推导**：页面在 static 下的存放层级是前端自己的组织方式，
+ * 与后端接口前缀无关；用 pathname 反推会把静态资源的子目录一起拼到接口地址上。
+ *
+ *   localhost / 127.0.0.1 / ::1  → ''          本地直连，后端就在根路径
+ *   其它任何域名或 IP            → '/backend'   内网部署，统一文根
+ */
+const CTX_ROOT = /^(localhost|127\.0\.0\.1|\[?::1\]?)$/i.test(location.hostname) ? '' : '/backend';
+
+/** 所有后端请求的唯一入口：把应用内绝对路径转成带文根的实际地址 */
+function apiUrl(path){
+  return CTX_ROOT + path;
+}
+// 页面不再持有任何管理凭据：AdminAuthFilter 已移除，鉴权由内网体系在接口层承担，
+// 浏览器带的是内网鉴权层自己的会话（Cookie / 4A 票据），这里只需声明内容类型。
+const hdrs = () => ({'Content-Type':'application/json'});
+// 后端统一返回行内标准 Result：{resultCode:"00000000", resultMessage, data, requestId, logTraceId}
+// 早期页面按 {code:0, message} 读，导致成功也走失败分支、错误提示恒为 "失败: undefined"。
+// 以下两个函数是读取返回结构的唯一入口，兼容旧 code/message 字段。
+const RESULT_OK = '00000000';
+function isOk(j){ return j && (j.resultCode === RESULT_OK || j.code === 0); }
+function errMsg(j){
+  if(!j) return '无响应';
+  return j.resultMessage || j.message || `未知错误(resultCode=${j.resultCode ?? j.code ?? '空'})`;
+}
+// ============================================================
+// 分页（服务端分页，对齐行内 PageVo 契约）
+// 后端返回 {items, total, pageIndex, pageSize, pages}
+// ============================================================
+const PAGE_SIZES = [10, 20, 50, 100];
+// 每个列表各自的分页状态；pageSize 默认与后端 BaseBo 一致（20）
+const pageState = {
+  models: {pageIndex:1, pageSize:20, total:0, pages:0},
+  apps:   {pageIndex:1, pageSize:20, total:0, pages:0},
+  audit:  {pageIndex:1, pageSize:20, total:0, pages:0},
+  // 报文行含正文预览，默认每页比其它列表小一档，避免一屏塞太多长文本
+  payload:{pageIndex:1, pageSize:20, total:0, pages:0},
+};
+
+/** 把 PageVo 的元信息回填到本地状态，返回 items 供渲染 */
+function applyPage(key, pv){
+  const st = pageState[key];
+  st.total     = pv.total ?? 0;
+  st.pageIndex = pv.pageIndex ?? 1;
+  st.pageSize  = pv.pageSize ?? st.pageSize;   // 服务端可能把越界 pageSize 收敛，以返回值为准
+  st.pages     = pv.pages ?? 0;
+  return pv.items || [];
+}
+
+/**
+ * 渲染分页条。
+ * 空数据时也要渲染（显示"共 0 条"），否则用户分不清是"没数据"还是"没加载"。
+ */
+function renderPager(key, containerId, reloadFn){
+  const st = pageState[key];
+  const el = $(containerId);
+  if(!el) return;
+  const from = st.total === 0 ? 0 : (st.pageIndex - 1) * st.pageSize + 1;
+  const to   = Math.min(st.pageIndex * st.pageSize, st.total);
+  el.innerHTML = `
+    <div style="display:flex;align-items:center;gap:10px;justify-content:flex-end;
+                padding:10px 2px;font-size:13px;color:#475569;flex-wrap:wrap">
+      <span>共 <b>${st.total}</b> 条${st.total?`，当前 ${from}-${to}`:''}</span>
+      <span>每页
+        <select onchange="${reloadFn}Size(this.value)" style="padding:3px 6px">
+          ${PAGE_SIZES.map(n=>`<option value="${n}" ${n===st.pageSize?'selected':''}>${n}</option>`).join('')}
+        </select> 条
+      </span>
+      <button class="btn btn-neutral btn-sm" ${st.pageIndex<=1?'disabled':''}
+              onclick="${reloadFn}Go(1)">首页</button>
+      <button class="btn btn-neutral btn-sm" ${st.pageIndex<=1?'disabled':''}
+              onclick="${reloadFn}Go(${st.pageIndex-1})">上一页</button>
+      <span>${st.pageIndex} / ${st.pages||1}</span>
+      <button class="btn btn-neutral btn-sm" ${st.pageIndex>=st.pages?'disabled':''}
+              onclick="${reloadFn}Go(${st.pageIndex+1})">下一页</button>
+      <button class="btn btn-neutral btn-sm" ${st.pageIndex>=st.pages?'disabled':''}
+              onclick="${reloadFn}Go(${st.pages})">末页</button>
+    </div>`;
+}
+
+/** 拼分页与过滤查询串，空值不带上去（后端按 null 判断是否参与过滤） */
+function pageQuery(key, extra){
+  const st = pageState[key];
+  const p = new URLSearchParams({pageIndex: st.pageIndex, pageSize: st.pageSize});
+  Object.entries(extra||{}).forEach(([k,v])=>{
+    if(v !== undefined && v !== null && String(v).trim() !== '') p.set(k, String(v).trim());
+  });
+  return p.toString();
+}
+
+/** 输入框防抖：每敲一个字就打一次后端查询会打爆接口 */
+function debounce(fn, ms=300){
+  let t; return (...a)=>{ clearTimeout(t); t = setTimeout(()=>fn(...a), ms); };
+}
+
+/**
+ * 取"可选模型"全量列表，供各处下拉框使用。
+ *
+ * 列表页改服务端分页后 allModels 只剩当前页，下拉框若继续用它，
+ * **第 2 页之后的模型在授权/测试弹窗里会消失**——这是分页最容易漏掉的连带影响。
+ * 这里按 pageSize 上限（200，PageSupport.MAX_PAGE_SIZE）单独拉一次，只取启用中的。
+ * 模型数量级远小于 200，够用；真超了要改成下拉搜索。
+ */
+async function fetchSelectableModels(){
+  try{
+    const r = await fetch(apiUrl('/modelgate/models?pageIndex=1&pageSize=200'), {headers:hdrs()});
+    const j = await r.json();
+    if(!isOk(j)) return [];
+    return (j.data?.items || []).filter(m => m.enabled !== false);
+  }catch(e){
+    console.warn('[ModelGate] 取模型下拉数据失败', e);
+    return (allModels||[]).filter(m => m.enabled !== false);   // 退化到当前页，总比空好
+  }
+}
+
+function fmt(v){ return v == null ? '不限' : (v===0?'不限':v.toLocaleString()); }
+function fmtTime(t){ if(!t) return '-'; try{ return new Date(t).toLocaleString('zh-CN',{hour12:false}); }catch(e){return t;} }
+
+function toast(msg, type='success'){
+  const el = $('toast');
+  el.textContent = msg;
+  el.className = `toast toast-${type}`;
+  el.style.display = 'block';
+  clearTimeout(el._t);
+  el._t = setTimeout(()=>el.style.display='none', 3200);
+}
+
+// 连接状态指示灯与「连接 / 刷新」按钮已移除，这里只保留顶栏的同步时间。
+// 函数名与既有调用点保持一致，避免改动散落在各 load* 里的十余处调用。
+function setStatus(ok){
+  if(ok) $('syncTime').textContent = '最后同步: ' + new Date().toLocaleTimeString('zh-CN');
+}
+
+// ============================================================
+// 导航
+// ============================================================
+function navTo(page, skipLoad = false){
+  document.querySelectorAll('.nav-item').forEach(el=>{
+    el.classList.toggle('active', el.dataset.page===page);
+  });
+  document.querySelectorAll('.panel').forEach(el=>{
+    el.classList.toggle('active', el.id==='page-'+page);
+  });
+  $('topbarTitle').textContent = PAGE_TITLES[page] || page;
+  // 原先这里都带 `&& connected` 门禁——没先点「连接」页面就是空的。
+  // 连接按钮已移除，切到哪页就直接加载哪页的数据。
+  //
+  // skipLoad：带条件跳转（如审计行「📨 报文」）时必须传 true。
+  // 否则 navTo 先发一次**无条件**查询，调用方随后再发一次带条件的查询——
+  // 两个请求并发在途，无条件那个数据量大、返回慢，往往后到并把带条件的结果盖掉。
+  // 表现是「筛选框里明明填着 traceId，列表却是全量」；更糟的是第二次点不同审计行时，
+  // 两个请求带的是**不同的 traceId**，谁赢不确定，赢的若是旧的，页面会安静地显示
+  // 另一次调用的报文，而输入框显示的是新 traceId——完全看不出错。
+  // 过滤器下拉填充与保留期提示不受影响，它们与查询条件无关，照常执行。
+  if(skipLoad){
+    if(page==='audit')   fillAuditFilters();
+    if(page==='payload'){ fillPayloadFilters(); loadPayloadMeta(); }
+    return;
+  }
+  if(page==='models')   loadModels();
+  if(page==='apps')     loadApps();
+  if(page==='audit')  { fillAuditFilters(); loadStats(); loadAudit(); }
+  if(page==='payload'){ fillPayloadFilters(); loadPayloadMeta(); loadPayload(); }
+  if(page==='settings') loadConfig();
+}
+
+// ============================================================
+// 模型管理
+// ============================================================
+async function loadModels(){
+  try{
+    const qs = pageQuery('models', {keyword: $('modelSearch')?.value});
+    const r = await fetch(apiUrl(`/modelgate/models?${qs}`), {headers:hdrs()});
+    if(r.status===401 || r.status===403){ toast(`无权访问模型列表(HTTP ${r.status})，请检查内网鉴权配置`,'error'); return; }
+    const j = await r.json();
+    if(!isOk(j)){ toast('加载模型列表失败: '+errMsg(j),'error'); return; }
+    // allModels 只保存**当前页**——其它地方（测试弹窗下拉、授权计数回填）都从这里取，
+    // 服务端分页后它不再是全量，相关处已改为按需查询或明确只作用于当前页。
+    allModels = applyPage('models', j.data || {});
+    $('modelCount').textContent = pageState.models.total;
+    renderModels(allModels);
+    renderPager('models', 'modelsPager', 'models');
+    setStatus(true);
+  }catch(e){
+    console.warn('[ModelGate] 模型列表加载异常', e);
+    // Demo 模式：使用本地假数据
+    allModels = DEMO_MODELS;
+    pageState.models = {pageIndex:1, pageSize:DEMO_MODELS.length||20, total:DEMO_MODELS.length, pages:1};
+    $('modelCount').textContent = allModels.length;
+    renderModels(allModels);
+    renderPager('models', 'modelsPager', 'models');
+    setStatus(true);
+    $('syncTime').textContent = '演示模式（未连接后端）';
+  }
+}
+
+// 翻页 / 改每页条数 / 搜索：都走服务端重查
+function modelsGo(p){ pageState.models.pageIndex = Math.max(1, p); loadModels(); }
+function modelsSize(n){ pageState.models.pageSize = parseInt(n)||20; pageState.models.pageIndex = 1; loadModels(); }
+// 搜索必须回到第 1 页：留在第 5 页搜一个只有 2 条结果的词，会得到空列表
+const searchModels = debounce(()=>{ pageState.models.pageIndex = 1; loadModels(); }, 300);
+
+function renderModels(data){
+  const tbody = $('modelsTbody');
+  if(!data.length){ tbody.innerHTML='<tr class="empty-row"><td colspan="9">暂无模型</td></tr>'; return; }
+  tbody.innerHTML = data.map(m=>`
+    <tr>
+      <td><code>${m.modelId}</code> <span onclick="copyText('${m.modelId}')" style="cursor:pointer;color:#6366f1;font-size:11px">复制</span></td>
+      <td><strong>${m.modelName}</strong></td>
+      <td>${providerTag(m.provider)}</td>
+      <td><span class="tag tag-gray">${m.modelType||'chat'}</span></td>
+      <td><span class="tag tag-blue">${m.apiSpec||'openai'}</span></td>
+      <td style="font-size:12px;color:#64748b;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${m.upstreamUrl||''}">${m.upstreamUrl||'-'}</td>
+      <td>${(m.authorizedAppCount||0) > 0
+            ? `<a href="javascript:void(0)" onclick="viewModelAuthApps('${m.modelId}','${escapeHtml(m.modelName||m.modelId)}')"
+                  style="color:#6366f1;font-weight:600">${m.authorizedAppCount} 个</a>`
+            : '<span style="color:#94a3b8">无</span>'}</td>
+      <td>${m.enabled!==false?'<span class="tag tag-green">启用</span>':'<span class="tag tag-red">禁用</span>'}</td>
+      <td>
+        <div class="flex gap-8">
+          <button class="btn btn-neutral btn-sm" title="GET /modelgate/models/detail?modelId=${m.modelId}" onclick="viewModel('${m.modelId}')">查看</button>
+          <button class="btn btn-neutral btn-sm" title="GET /modelgate/models/detail?modelId=${m.modelId}" onclick="openModelModal('${m.modelId}')">编辑</button>
+          <button class="btn btn-info btn-sm" onclick="openModelTestModal('${m.modelId}')">🧪 测试</button>
+          <button class="btn ${m.enabled!==false?'btn-warning':'btn-success'} btn-sm" title="${m.enabled!==false?'PATCH /modelgate/models/disable':'PATCH /modelgate/models/enable'}?modelId=${m.modelId}" onclick="toggleModel('${m.modelId}',${m.enabled!==false})">${m.enabled!==false?'禁用':'启用'}</button>
+          <button class="btn btn-danger btn-sm" title="DELETE /modelgate/models/delete?modelId=${m.modelId}" onclick="deleteModel('${m.modelId}')">删除</button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+}
+
+// 原 filterModels 在前端数组上过滤。服务端分页后前端只持有当前页，
+// 本地过滤会退化成「只能搜到当前页」，故改为服务端 keyword 查询（见 searchModels）。
+
+function providerTag(p){
+  const map = {openai:'tag-green',azure_openai:'tag-blue',anthropic:'tag-purple',private:'tag-yellow',custom:'tag-gray'};
+  const label = {openai:'OpenAI',azure_openai:'Azure',anthropic:'Anthropic',private:'私有',custom:'自定义'};
+  return `<span class="tag ${map[p]||'tag-gray'}">${label[p]||p}</span>`;
+}
+
+// 反查某模型被哪些接入系统授权。列表页只显示数量（随 /modelgate/models 一次性带回，
+// 不逐行查询），点数字才拉明细。
+async function viewModelAuthApps(modelId, modelName){
+  $('authAppsModelName').textContent = modelName || modelId;
+  $('authAppsTbody').innerHTML = '<tr class="empty-row"><td colspan="8">加载中…</td></tr>';
+  openModal('modelAuthAppsModal');
+  try{
+    const r = await fetch(apiUrl(`/modelgate/auth/apps?modelId=${encodeURIComponent(modelId)}`), {headers:hdrs()});
+    const j = await r.json();
+    if(!isOk(j)){
+      $('authAppsTbody').innerHTML =
+        `<tr class="empty-row"><td colspan="8" style="color:#ef4444">加载失败(HTTP ${r.status}): ${escapeHtml(errMsg(j))}</td></tr>`;
+      return;
+    }
+    renderModelAuthApps(j.data||[]);
+  }catch(e){
+    console.warn('[ModelGate] 授权应用查询异常', e);
+    $('authAppsTbody').innerHTML =
+      `<tr class="empty-row"><td colspan="8" style="color:#f59e0b">请求异常: ${escapeHtml(e.message)}</td></tr>`;
+  }
+}
+
+function renderModelAuthApps(data){
+  const tbody = $('authAppsTbody');
+  if(!data.length){
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="8">暂无系统被授权访问该模型</td></tr>';
+    return;
+  }
+  tbody.innerHTML = data.map(a=>`
+    <tr>
+      <td><strong>${escapeHtml(a.appName||'-')}</strong>
+          <div style="font-size:11px;color:#94a3b8"><code>${escapeHtml(a.appId)}</code></div></td>
+      <td>${escapeHtml(a.sysCode||'-')}</td>
+      <td>${escapeHtml(a.owner||'-')}</td>
+      <td>${a.effective
+            ? '<span class="tag tag-green">生效</span>'
+            : `<span class="tag tag-red">不生效</span>
+               <div style="font-size:11px;color:#ef4444">${escapeHtml(a.ineffectiveReason||'')}</div>`}</td>
+      <td>${fmt(a.qpsLimit)}</td>
+      <td>${fmt(a.dailyLimit)}</td>
+      <td>${fmt(a.monthlyTokens)}</td>
+      <td style="font-size:12px;color:#64748b">${a.expiresAt?fmtTime(a.expiresAt):'永久'}</td>
+    </tr>
+  `).join('');
+}
+
+// 查看详情：直接打 detail 接口取库中最新数据，不读 allModels 缓存——
+// 这样看到的就是数据库里真实存的值，可用于确认保存是否真的落库。
+const AUTH_TYPE_LABEL = {api_key:'api_key（Bearer Token）', ak_sk:'ak_sk（HMAC 签名）',
+                         azure:'azure（api-key Header）', none:'none（不鉴权）'};
+
+function escapeHtml(s){
+  return String(s??'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function viewRow(label, value, mono){
+  const v = (value===null||value===undefined||value==='') ? '<span style="color:#94a3b8">-</span>'
+          : (mono ? `<code>${escapeHtml(value)}</code>` : escapeHtml(value));
+  return `<tr><td style="padding:6px 12px 6px 0;color:#64748b;white-space:nowrap;vertical-align:top">${label}</td>
+              <td style="padding:6px 0;word-break:break-all">${v}</td></tr>`;
+}
+
+async function viewModel(modelId){
+  $('viewToEditBtn').onclick = ()=>{ closeModal('modelViewModal'); openModelModal(modelId); };
+  $('modelViewBody').innerHTML = '加载中...';
+  openModal('modelViewModal');
+
+  let m = null;
+  try{
+    const r = await fetch(apiUrl(`/modelgate/models/detail?modelId=${encodeURIComponent(modelId)}`), {headers:hdrs()});
+    const j = await r.json();
+    console.info('[ModelGate] 模型详情', r.status, j);
+    if(!isOk(j)){
+      $('modelViewBody').innerHTML = `<div style="color:#ef4444">加载失败(HTTP ${r.status}): ${escapeHtml(errMsg(j))}</div>`;
+      return;
+    }
+    m = j.data||{};
+  }catch(e){
+    console.warn('[ModelGate] 详情请求异常', e);
+    $('modelViewBody').innerHTML = `<div style="color:#f59e0b">请求异常: ${escapeHtml(e.message)}</div>`;
+    return;
+  }
+
+  const secretDesc = m.authType==='none' ? '不鉴权，无需密钥'
+                   : m.secretKeyConfigured ? '已配置（出于安全不回显）' : '未配置';
+
+  $('modelViewBody').innerHTML = `
+    <h4 style="margin:0 0 8px">基础信息</h4>
+    <table style="width:100%;border-collapse:collapse">
+      ${viewRow('模型 ID', m.modelId, true)}
+      ${viewRow('展示名称', m.modelName)}
+      ${viewRow('提供商', m.provider)}
+      ${viewRow('模型类型', m.modelType)}
+      ${viewRow('状态', m.enabled!==false?'启用':'禁用')}
+      ${viewRow('描述', m.description)}
+    </table>
+    <h4 style="margin:16px 0 8px">连接配置</h4>
+    <table style="width:100%;border-collapse:collapse">
+      ${viewRow('上游地址', m.upstreamUrl, true)}
+      ${viewRow('上游接口路径', m.upstreamPath
+          ? m.upstreamPath
+          : (m.apiSpec==='azure_openai'
+              ? '（azure_openai 不使用此字段）'
+              : `默认 ${upstreamPathDefault(m.apiSpec, m.modelType)}`), !!m.upstreamPath)}
+      ${viewRow('API 规范', m.apiSpec)}
+      ${viewRow('超时时间', m.timeoutMs!=null?`${m.timeoutMs} ms`:'')}
+      ${viewRow('上游鉴权类型', AUTH_TYPE_LABEL[m.authType] || m.authType)}
+      ${viewRow('Access Key', m.accessKey, true)}
+      ${viewRow('Secret Key', secretDesc)}
+    </table>
+    <h4 style="margin:16px 0 8px">参数配置</h4>
+    <table style="width:100%;border-collapse:collapse">
+      ${viewRow('默认参数', m.defaultParams, true)}
+      ${viewRow('强制参数', m.forceParams, true)}
+      ${viewRow('字段映射', m.paramMapping, true)}
+    </table>
+    <h4 style="margin:16px 0 8px">时间</h4>
+    <table style="width:100%;border-collapse:collapse">
+      ${viewRow('创建时间', m.createTime)}
+      ${viewRow('更新时间', m.updateTime)}
+    </table>`;
+
+  // detail 接口不含授权计数（那是列表页的聚合字段），这里从列表缓存里取
+  const listed = allModels.find(x => x.modelId === modelId);
+  const cnt = listed?.authorizedAppCount || 0;
+  if(cnt > 0){
+    $('modelViewBody').innerHTML += `
+      <h4 style="margin:16px 0 8px">授权应用</h4>
+      <div style="font-size:13px">
+        共 ${cnt} 个系统被授权 ·
+        <a href="javascript:void(0)" style="color:#6366f1"
+           onclick="closeModal('modelViewModal');viewModelAuthApps('${modelId}','${escapeHtml(m.modelName||modelId)}')">查看明细</a>
+      </div>`;
+  }
+}
+
+/**
+ * 设置「上游密钥是否已配置」的可见状态。
+ *
+ * 原先这个状态是塞在 input 的 placeholder 里的（"已配置密钥，留空则沿用原密钥"），
+ * 而 placeholder 是框内灰字、视觉上与"空输入框"毫无区别，
+ * 结果编辑一个已配好密钥的模型时，乍看像是没配置。
+ * 现改为：状态用带颜色的标签放在 label 旁（框外），placeholder 只留操作指引。
+ */
+function setSecretKeyState(configured){
+  const groups = [
+    {state:'skState_apiKey', tip:'skTip_apiKey', input:'m_secretKey',    ph:'sk-...'},
+    {state:'skState_aksk',   tip:'skTip_aksk',   input:'m_secretKeySk',  ph:'SK...'},
+    {state:'skState_azure',  tip:'skTip_azure',  input:'m_azureApiKey',  ph:'输入 Azure API Key'},
+  ];
+  groups.forEach(g=>{
+    const st=$(g.state), tip=$(g.tip), input=$(g.input);
+    if(!st||!tip||!input) return;
+    if(configured){
+      st.className = 'tag tag-green';
+      st.textContent = '🔑 已配置';
+      tip.textContent = '留空 = 沿用原密钥；填写 = 覆盖为新密钥';
+      input.placeholder = '留空则不修改';
+    }else{
+      st.className = 'tag tag-gray';
+      st.textContent = '未配置';
+      tip.textContent = '';
+      input.placeholder = g.ph;
+    }
+  });
+}
+
+function openModelModal(modelId=null){
+  editingModelId = modelId;
+  currentStep = 1;
+  $('modelModalTitle').textContent = modelId ? '编辑模型' : '新增模型';
+  $('m_modelId').disabled = !!modelId;
+
+  if(modelId){
+    const m = allModels.find(x=>x.modelId===modelId) || {};
+    $('m_modelId').value = m.modelId||'';
+    $('m_modelName').value = m.modelName||'';
+    $('m_provider').value = m.provider||'openai';
+    $('m_modelType').value = m.modelType||'chat';
+    $('m_description').value = m.description||'';
+    $('m_upstreamUrl').value = m.upstreamUrl||'';
+    $('m_upstreamPath').value = m.upstreamPath||'';
+    $('m_apiSpec').value = m.apiSpec||'openai';
+    $('m_timeoutMs').value = m.timeoutMs||30000;
+    $('m_authType').value = m.authType||'api_key';
+    $('m_defaultParams').value = m.defaultParams||'';
+    $('m_forceParams').value = m.forceParams||'';
+    $('m_paramMapping').value = m.paramMapping||'';
+    // AK 非机密可回显；SK 属机密后端不下发，留空即表示"沿用库中原密钥"
+    $('m_accessKey').value = m.accessKey||'';
+    $('m_secretKey').value = '';
+    $('m_secretKeySk').value = '';
+    $('m_azureApiKey').value = '';
+    setSecretKeyState(!!m.secretKeyConfigured);
+  } else {
+    ['m_modelId','m_modelName','m_description','m_upstreamUrl','m_upstreamPath','m_accessKey','m_secretKey','m_secretKeySk',
+     'm_azureApiKey','m_azureResource','m_azureDeploy','m_azureVersion','m_defaultParams','m_forceParams','m_paramMapping'].forEach(id=>$( id).value='');
+    $('m_timeoutMs').value = 30000;
+    $('m_provider').value = 'openai';
+    $('m_modelType').value = 'chat';
+    $('m_apiSpec').value = 'openai';
+    $('m_authType').value = 'api_key';
+    // 复位密钥状态，避免沿用上一次编辑弹窗留下的"已配置"标记
+    setSecretKeyState(false);
+  }
+  goStep(1);
+  onAuthTypeChange();
+  onApiSpecChange();
+  openModal('modelModal');
+}
+
+async function submitModel(){
+  const body = {
+    modelId:       $('m_modelId').value.trim(),
+    modelName:     $('m_modelName').value.trim(),
+    provider:      $('m_provider').value,
+    modelType:     $('m_modelType').value,
+    apiSpec:       $('m_apiSpec').value,
+    upstreamUrl:   $('m_upstreamUrl').value.trim(),
+    upstreamPath:  $('m_upstreamPath').value.trim(),
+    timeoutMs:     parseInt($('m_timeoutMs').value)||30000,
+    defaultParams: $('m_defaultParams').value.trim(),
+    forceParams:   $('m_forceParams').value.trim(),
+    paramMapping:  $('m_paramMapping').value.trim(),
+    description:   $('m_description').value.trim(),
+    credential:{
+      authType:   $('m_authType').value,
+      accessKey:  $('m_accessKey').value.trim()||$('m_azureResource').value.trim(),
+      secretKey:  $('m_secretKey').value.trim()||$('m_secretKeySk').value.trim()||$('m_azureApiKey').value.trim(),
+    }
+  };
+  if(!body.modelId||!body.modelName||!body.upstreamUrl){ toast('模型 ID、名称、上游地址不能为空','error'); return; }
+
+  try{
+    const method = editingModelId ? 'PUT' : 'POST';
+    const url    = apiUrl(editingModelId ? '/modelgate/models/update' : '/modelgate/models');
+    console.info('[ModelGate] 提交模型', method, url, body);
+    const r = await fetch(url, {method, headers:hdrs(), body:JSON.stringify(body)});
+    const j = await r.json();
+    console.info('[ModelGate] 响应', r.status, j);
+    if(isOk(j)){ toast(editingModelId?'模型已更新':'模型已创建'); closeModal('modelModal'); loadModels(); }
+    // HTTP 非 2xx 时把状态码一起带出来，便于对照后端日志中的同一条 traceId
+    else toast(`失败(HTTP ${r.status}): ` + errMsg(j) + (j.logTraceId?` [trace=${j.logTraceId}]`:''), 'error');
+  }catch(e){
+    console.warn('[ModelGate] 请求异常，回落演示模式', e);
+    // Demo 模式
+    if(editingModelId){
+      const idx = allModels.findIndex(x=>x.modelId===editingModelId);
+      if(idx>=0) allModels[idx] = {...allModels[idx], ...body};
+    } else {
+      allModels.push({...body, enabled:true, createTime:new Date().toISOString()});
+    }
+    $('modelCount').textContent = allModels.length;
+    renderModels(allModels);
+    toast(editingModelId?'模型已更新（演示）':'模型已创建（演示）');
+    closeModal('modelModal');
+  }
+}
+
+async function toggleModel(modelId, currentEnabled){
+  const action = currentEnabled ? 'disable' : 'enable';
+  try{
+    await fetch(apiUrl(`/modelgate/models/${action}?modelId=${modelId}`), {method:'PATCH', headers:hdrs()});
+  }catch(e){}
+  // 服务端分页后不能只改本地数组：过滤条件可能让这一行不再属于当前页，
+  // 且 total / 页数都要重算。统一重新加载当前页。
+  await loadModels();
+  toast(`模型已${currentEnabled?'禁用':'启用'}`);
+}
+
+async function deleteModel(modelId){
+  if(!confirm(`确认删除模型 ${modelId}？`)) return;
+  try{
+    const r = await fetch(apiUrl(`/modelgate/models/delete?modelId=${modelId}`), {method:'DELETE', headers:hdrs()});
+    const j = await r.json();
+    if(!isOk(j)){ toast('删除失败: '+errMsg(j),'error'); return; }
+  }catch(e){}
+  // 删掉最后一页的最后一条时会停在一个空页，回退一页
+  if(allModels.length === 1 && pageState.models.pageIndex > 1) pageState.models.pageIndex--;
+  await loadModels();
+  toast('模型已删除');
+}
+
+// 列表页对已保存模型的测试：无 body，后端按 modelId 查库
+async function testModelConnById(modelId){
+  toast('测试中...','info');
+  try{
+    const r = await fetch(apiUrl(`/modelgate/models/test?modelId=${encodeURIComponent(modelId)}`),
+                          {method:'POST', headers:hdrs()});
+    const j = await r.json();
+    if(!isOk(j)){ toast('连通测试请求失败: '+errMsg(j),'error'); return; }
+    const d = j.data||{};
+    toast(d.success ? `连通成功，延迟 ${d.latencyMs}ms` : `连通失败: ${d.message}`, d.success?'success':'error');
+  }catch(e){
+    console.warn('[ModelGate] 连通测试异常', e);
+    toast('连通测试请求异常: '+e.message,'error');
+  }
+}
+
+// 弹窗内的测试：把当前表单配置作为草稿一起提交，新增流程中模型尚未入库也能测真实上游
+function buildDraftConfig(){
+  return {
+    modelId:      $('m_modelId').value.trim(),
+    modelType:    $('m_modelType').value,
+    apiSpec:      $('m_apiSpec').value,
+    upstreamUrl:  $('m_upstreamUrl').value.trim(),
+    upstreamPath: $('m_upstreamPath').value.trim(),
+    timeoutMs:    parseInt($('m_timeoutMs').value)||30000,
+    paramMapping: $('m_paramMapping').value.trim(),
+    credential:{
+      authType:  $('m_authType').value,
+      accessKey: $('m_accessKey').value.trim()||$('m_azureResource').value.trim(),
+      secretKey: $('m_secretKey').value.trim()||$('m_secretKeySk').value.trim()||$('m_azureApiKey').value.trim(),
+    }
+  };
+}
+
+async function testModelConn(){
+  const el = $('testResult');
+  el.textContent = '测试中...';
+  el.style.color = '#64748b';
+  el.title = '';
+
+  const draft = buildDraftConfig();
+  if(!draft.upstreamUrl){
+    el.textContent = '请先在「② 连接配置」填写上游地址';
+    el.style.color = '#f59e0b';
+    return;
+  }
+  // 编辑已保存模型且未重新输入密钥时，草稿里的 secretKey 为空——此时不传 body，
+  // 让后端用库里已加密的凭证解密后探测，避免"没填密钥所以测不通"的误报。
+  const useDraft = !editingModelId || !!draft.credential.secretKey;
+  const modelId = editingModelId || draft.modelId;
+
+  try{
+    const url = apiUrl(`/modelgate/models/test${modelId?`?modelId=${encodeURIComponent(modelId)}`:''}`);
+    const opt = useDraft
+      ? {method:'POST', headers:hdrs(), body:JSON.stringify(draft)}
+      : {method:'POST', headers:hdrs()};
+    console.info('[ModelGate] 连通性测试', url, useDraft?'草稿模式':'查库模式', useDraft?draft:null);
+    const r = await fetch(url, opt);
+    const j = await r.json();
+    console.info('[ModelGate] 连通性测试响应', r.status, j);
+
+    if(!isOk(j)){
+      el.textContent = `❌ 请求失败(HTTP ${r.status}): ${errMsg(j)}`;
+      el.style.color = '#ef4444';
+      return;
+    }
+    const d = j.data||{};
+    if(d.success){
+      el.textContent = `✅ 连通成功，延迟 ${d.latencyMs}ms`;
+      el.style.color = '#10b981';
+    }else{
+      // 失败仅提示，不阻断保存：配置可以先存下来再慢慢调
+      el.textContent = `❌ ${d.message||'未知失败'}（HTTP ${d.httpStatus??'无响应'}，${d.latencyMs}ms）· 仍可保存`;
+      el.style.color = '#ef4444';
+    }
+    // 上游原文与实际请求地址放到 title，鼠标悬停可见，避免撑爆布局
+    el.title = [d.upstreamUri?`上游地址: ${d.upstreamUri}`:'', d.upstreamBody?`上游响应: ${d.upstreamBody}`:'']
+                 .filter(Boolean).join('\n');
+  }catch(e){
+    console.warn('[ModelGate] 连通测试异常', e);
+    el.textContent = '⚠️ 请求异常: '+e.message;
+    el.style.color = '#f59e0b';
+  }
+}
+
+// Step 导航
+function goStep(n){
+  currentStep = n;
+  for(let i=1;i<=3;i++){
+    $('step'+i).style.display = i===n ? '' : 'none';
+    const s = $('modelSteps').children[i-1];
+    s.className = 'step ' + (i<n?'done':i===n?'active':'');
+  }
+  $('prevStepBtn').style.display = n>1 ? '' : 'none';
+  $('nextStepBtn').style.display = n<3 ? '' : 'none';
+  $('submitModelBtn').style.display = n===3 ? '' : 'none';
+}
+function nextStep(){ if(currentStep<3) goStep(currentStep+1); }
+function prevStep(){ if(currentStep>1) goStep(currentStep-1); }
+
+function onProviderChange(){
+  const defaultUrls = {openai:'https://api.openai.com',azure_openai:'https://{resource}.openai.azure.com',anthropic:'https://api.anthropic.com',private:'',custom:''};
+  $('m_upstreamUrl').placeholder = defaultUrls[$('m_provider').value]||'';
+}
+function onAuthTypeChange(){
+  const t = $('m_authType').value;
+  $('credGroup_apiKey').style.display = t==='api_key' ? '' : 'none';
+  $('credGroup_aksk').style.display   = t==='ak_sk'   ? '' : 'none';
+  $('credGroup_azure').style.display  = t==='azure'   ? '' : 'none';
+}
+function onApiSpecChange(){
+  $('customMappingGroup').style.display = $('m_apiSpec').value==='custom' ? '' : 'none';
+  onUpstreamPathContextChange();
+}
+
+// 上游接口路径的默认值/是否可用，取决于 API 规范和模型类型——与后端各 ProviderAdapter
+// 的 resolvePath 回落逻辑保持一致，避免页面提示和实际转发对不上。
+function upstreamPathDefault(apiSpec, modelType){
+  if(apiSpec==='anthropic') return '/v1/messages';
+  if(modelType==='embedding') return '/v1/embeddings';
+  return '/v1/chat/completions';
+}
+
+function onUpstreamPathContextChange(){
+  const spec = $('m_apiSpec').value;
+  const input = $('m_upstreamPath');
+  const hint  = $('m_upstreamPathHint');
+  if(!input || !hint) return;
+
+  if(spec==='azure_openai'){
+    // Azure 的上游地址本身就是含路径与 api-version 的完整部署 URL，
+    // 再拼一段路径只会破坏它，后端适配器有意忽略本字段
+    input.disabled = true;
+    input.value = '';
+    input.placeholder = '（azure_openai 不使用此字段）';
+    hint.textContent = 'azure_openai 规范下上游地址即完整部署 URL（含路径与 api-version），本字段不生效。';
+    hint.style.color = '#f59e0b';
+    return;
+  }
+  input.disabled = false;
+  const def = upstreamPathDefault(spec, $('m_modelType').value);
+  input.placeholder = def;
+  hint.textContent = `留空则使用默认 ${def}；上游若是自定义端点（如 /api/generate）请在此填写。`;
+  hint.style.color = '#94a3b8';
+}
+
+// ============================================================
+// 接入系统
+// ============================================================
+async function loadApps(){
+  try{
+    const qs = pageQuery('apps', {keyword: $('appSearch')?.value});
+    const r = await fetch(apiUrl(`/modelgate/apps?${qs}`), {headers:hdrs()});
+    const j = await r.json();
+    if(!isOk(j)){ toast('加载接入系统失败: '+errMsg(j),'error'); return; }
+    allApps = applyPage('apps', j.data || {});   // 同 allModels：只是当前页
+    $('appCount').textContent = pageState.apps.total;
+    renderApps(allApps);
+    renderPager('apps', 'appsPager', 'apps');
+    setStatus(true);
+  }catch(e){
+    console.warn('[ModelGate] 接入系统加载异常', e);
+    allApps = DEMO_APPS;
+    pageState.apps = {pageIndex:1, pageSize:DEMO_APPS.length||20, total:DEMO_APPS.length, pages:1};
+    $('appCount').textContent = allApps.length;
+    renderApps(allApps);
+    renderPager('apps', 'appsPager', 'apps');
+  }
+}
+
+function appsGo(p){ pageState.apps.pageIndex = Math.max(1, p); loadApps(); }
+function appsSize(n){ pageState.apps.pageSize = parseInt(n)||20; pageState.apps.pageIndex = 1; loadApps(); }
+const searchApps = debounce(()=>{ pageState.apps.pageIndex = 1; loadApps(); }, 300);
+
+function renderApps(data){
+  const tbody = $('appsTbody');
+  if(!data.length){ tbody.innerHTML=`<tr class="empty-row"><td colspan="9">暂无接入系统</td></tr>`; return; }
+  tbody.innerHTML = data.map(a=>`
+    <tr>
+      <td><strong>${a.appName}</strong></td>
+      <td><span class="tag tag-blue">${a.sysCode||'-'}</span></td>
+      <td><code>${a.appId}</code> <span onclick="copyText('${a.appId}')" style="cursor:pointer;color:#6366f1;font-size:11px">复制</span></td>
+      <td><span class="tag tag-gray">${a.appCode||'-'}</span></td>
+      <td>${a.owner}</td>
+      <td><span style="cursor:pointer;color:#6366f1;text-decoration:underline" onclick="openDrawer('${a.appId}','auth')">${a.authCount||0} 个</span></td>
+      <td><span style="cursor:pointer;color:#6366f1;text-decoration:underline" onclick="openDrawer('${a.appId}','creds')">${a.credCount||0} 个</span></td>
+      <td>${a.enabled!==false?'<span class="tag tag-green">启用</span>':'<span class="tag tag-red">禁用</span>'}</td>
+      <td>
+        <div class="flex gap-8">
+          <button class="btn btn-neutral btn-sm" title="GET /modelgate/apps/detail?appId=${a.appId}" onclick="openDrawer('${a.appId}','info')">详情</button>
+          <button class="btn ${a.enabled!==false?'btn-warning':'btn-success'} btn-sm" title="${a.enabled!==false?'PATCH /modelgate/apps/disable':'PATCH /modelgate/apps/enable'}?appId=${a.appId}" onclick="toggleApp('${a.appId}',${a.enabled!==false})">${a.enabled!==false?'禁用':'启用'}</button>
+          <button class="btn btn-danger btn-sm" title="DELETE /modelgate/apps/delete?appId=${a.appId}" onclick="deleteAppById('${a.appId}')">删除</button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+}
+
+// 原 filterApps 已由服务端 keyword 查询取代，理由同 searchModels。
+
+function openAppModal(){
+  ['a_appName','a_sysCode','a_appId','a_appCode','a_owner','a_remark'].forEach(id=>$(id).value='');
+  openModal('appModal');
+}
+
+async function submitApp(){
+  const body = {
+    appName: $('a_appName').value.trim(),
+    sysCode: $('a_sysCode').value.trim(),
+    appId:   $('a_appId').value.trim(),
+    appCode: $('a_appCode').value.trim(),
+    owner:   $('a_owner').value.trim(),
+    remark:  $('a_remark').value.trim(),
+  };
+  if(!body.appName||!body.sysCode||!body.appId||!body.appCode||!body.owner){ toast('系统名称、系统编码、应用 appId、应用编码、负责人均不能为空','error'); return; }
+  try{
+    const r = await fetch(apiUrl('/modelgate/apps'), {method:'POST', headers:hdrs(), body:JSON.stringify(body)});
+    const j = await r.json();
+    if(isOk(j)){ toast('系统已创建'); closeModal('appModal'); loadApps(); }
+    else toast('失败: '+errMsg(j),'error');
+  }catch(e){
+    allApps.push({...body, enabled:true, authCount:0, credCount:0, createTime:new Date().toISOString()});
+    $('appCount').textContent = allApps.length;
+    renderApps(allApps);
+    toast('系统已创建（演示）');
+    closeModal('appModal');
+  }
+}
+
+async function toggleApp(appId, currentEnabled){
+  const action = currentEnabled?'disable':'enable';
+  try{ await fetch(apiUrl(`/modelgate/apps/${action}?appId=${appId}`), {method:'PATCH', headers:hdrs()}); }catch(e){}
+  await loadApps();   // 理由同 toggleModel：分页后需重算当前页与 total
+  toast(`系统已${currentEnabled?'禁用':'启用'}`);
+  if(currentApp&&currentApp.appId===appId){
+    $('di_enabled').value = String(!currentEnabled);
+    $('drawerAppStatus').innerHTML = !currentEnabled ? '<span class="tag tag-green">启用</span>' : '<span class="tag tag-red">禁用</span>';
+  }
+}
+
+async function deleteAppById(appId){
+  if(!confirm(`确认删除系统 ${appId}？将级联删除所有凭证、授权、访问规则！`)) return;
+  try{
+    const r = await fetch(apiUrl(`/modelgate/apps/delete?appId=${appId}`), {method:'DELETE', headers:hdrs()});
+    const j = await r.json();
+    if(!isOk(j)){ toast('失败: '+errMsg(j),'error'); return; }
+  }catch(e){}
+  if(allApps.length === 1 && pageState.apps.pageIndex > 1) pageState.apps.pageIndex--;
+  await loadApps();
+  toast('系统已删除');
+}
+
+// ============================================================
+// Drawer
+// ============================================================
+function openDrawer(appId, tab='info'){
+  currentApp = allApps.find(a=>a.appId===appId) || {appId};
+  $('drawerAppName').textContent = currentApp.appName || appId;
+  $('drawerAppId').textContent = 'app_id: ' + appId;
+  $('drawerAppStatus').innerHTML = currentApp.enabled!==false
+    ? '<span class="tag tag-green">启用</span>'
+    : '<span class="tag tag-red">禁用</span>';
+
+  // 填写系统信息
+  $('di_appName').value    = currentApp.appName||'';
+  $('di_sysCode').value    = currentApp.sysCode||'';
+  $('di_appId').value      = currentApp.appId||'';
+  $('di_appCode').value    = currentApp.appCode||'';
+  $('di_owner').value      = currentApp.owner||'';
+  $('di_remark').value     = currentApp.remark||'';
+  $('di_enabled').value    = String(currentApp.enabled!==false);
+  $('di_createTime').value  = fmtTime(currentApp.createTime);
+  $('di_sysCodeLabel').textContent = currentApp.sysCode||'-';
+  $('di_appIdLabel').textContent   = currentApp.appId||'-';
+
+  switchSubtab(tab);
+  $('drawerBackdrop').classList.add('open');
+  $('appDrawer').classList.add('open');
+}
+
+function closeDrawer(){
+  $('drawerBackdrop').classList.remove('open');
+  $('appDrawer').classList.remove('open');
+  currentApp = null;
+}
+
+function switchSubtab(tab){
+  document.querySelectorAll('.subtab').forEach((el,i)=>{
+    const tabs = ['info','creds','auth','access'];
+    el.classList.toggle('active', tabs[i]===tab);
+  });
+  document.querySelectorAll('.subpanel').forEach(el=>{
+    el.classList.toggle('active', el.id==='sub-'+tab);
+  });
+  if(tab==='creds')  loadCreds();
+  if(tab==='auth')   loadAuths();
+  if(tab==='access') loadAccess();
+}
+
+async function saveAppInfo(){
+  if(!currentApp) return;
+  const body = {
+    appName: $('di_appName').value.trim(),
+    sysCode: $('di_sysCode').value.trim(),
+    appCode: $('di_appCode').value.trim(),
+    owner:   $('di_owner').value.trim(),
+    remark:  $('di_remark').value.trim(),
+    enabled: $('di_enabled').value === 'true',
+  };
+  try{
+    const r = await fetch(apiUrl('/modelgate/apps/update'), {method:'PUT', headers:hdrs(), body:JSON.stringify({...body, appId:currentApp.appId})});
+    const j = await r.json();
+    if(!isOk(j)){ toast('保存失败: '+errMsg(j),'error'); return; }
+  }catch(e){}
+  Object.assign(currentApp, body);
+  renderApps(allApps);
+  toast('系统信息已保存');
+}
+
+function deleteApp(){
+  if(!currentApp) return;
+  closeDrawer();
+  deleteAppById(currentApp.appId);
+}
+
+// ============================================================
+// 凭证管理
+// ============================================================
+// 当前系统的凭证列表缓存：接入示例弹窗要按 credId 回查凭证类型/AK/是否可取明文，
+// 避免把这些值全塞进 onclick 参数（凭证名含引号时会直接把 HTML 拼坏）
+let currentCreds = [];
+
+async function loadCreds(){
+  if(!currentApp) return;
+  try{
+    const r = await fetch(apiUrl(`/modelgate/credentials/list?appId=${currentApp.appId}`), {headers:hdrs()});
+    const j = await r.json();
+    currentCreds = j.data||[];
+    renderCreds(currentCreds);
+  }catch(e){
+    currentCreds = DEMO_CREDS[currentApp.appId]||[];
+    renderCreds(currentCreds);
+  }
+}
+
+function renderCreds(data){
+  const tbody = $('credsTbody');
+  if(!data.length){ tbody.innerHTML='<tr class="empty-row"><td colspan="6">暂无凭证</td></tr>'; return; }
+  tbody.innerHTML = data.map(c=>`
+    <tr>
+      <td><strong>${c.credName}</strong></td>
+      <td><span class="tag ${c.credType==='api_key'?'tag-blue':'tag-purple'}">${c.credType}</span></td>
+      <td><code>${c.accessKey||'****...'+c.credType}</code></td>
+      <td>${c.enabled!==false?'<span class="tag tag-green">启用</span>':'<span class="tag tag-red">禁用</span>'}</td>
+      <td>${c.expiresAt?fmtTime(c.expiresAt):'永久'}</td>
+      <td>
+        <div class="flex gap-8">
+          <button class="btn btn-neutral btn-sm" title="生成可直接粘贴运行的调用示例（curl / HTTP / Python）"
+                  onclick="openUsageModal(${c.id})">📋 接入示例</button>
+          <button class="btn btn-neutral btn-sm" ${c.secretRetrievable===false?'disabled':''}
+                  title="${c.secretRetrievable===false?'该凭证创建于「密钥可查看」启用之前，仅存哈希无法找回，需重新生成':'GET /modelgate/credentials/secret?appId='+currentApp?.appId+'&credId='+c.id}"
+                  onclick="revealCredSecret(${c.id},'${c.credName}')">🔑 查看密钥</button>
+          <button class="btn ${c.enabled!==false?'btn-warning':'btn-success'} btn-sm" title="${c.enabled!==false?'PATCH /modelgate/credentials/disable':'PATCH /modelgate/credentials/enable'}?appId=${currentApp?.appId}&id=${c.id}" onclick="toggleCred(${c.id},${c.enabled!==false})">${c.enabled!==false?'禁用':'启用'}</button>
+          <button class="btn btn-danger btn-sm" title="DELETE /modelgate/credentials/delete?appId=${currentApp?.appId}&id=${c.id}" onclick="deleteCred(${c.id})">删除</button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+}
+
+// 明文按需向后端单条索取，不随列表下发；取到后只放进剪贴板/临时展示，不写入任何前端缓存
+async function revealCredSecret(credId, credName){
+  if(!currentApp) return;
+  try{
+    const url = apiUrl(`/modelgate/credentials/secret?appId=${encodeURIComponent(currentApp.appId)}&credId=${credId}`);
+    const r = await fetch(url, {headers:hdrs()});
+    const j = await r.json();
+    if(!isOk(j)){ toast('查看失败: '+errMsg(j),'error'); return; }
+    const secret = j.data||'';
+    if(!secret){ toast('后端未返回密钥','error'); return; }
+    $('secretViewName').textContent = credName || ('#'+credId);
+    $('secretViewValue').textContent = secret;
+    openModal('secretViewModal');
+  }catch(e){
+    console.warn('[ModelGate] 查看密钥异常', e);
+    toast('查看密钥异常: '+e.message,'error');
+  }
+}
+
+function copySecretValue(){
+  copyText($('secretViewValue').textContent);
+}
+
+// 关闭即清空 DOM 中的明文，避免留在页面上被他人看到
+function closeSecretView(){
+  $('secretViewValue').textContent = '';
+  closeModal('secretViewModal');
+}
+
+// ============================================================
+// 接入示例（请求报文）
+// ============================================================
+// 弹窗上下文；secret 只在用户显式点「填入真实密钥」后才有值，关窗即清空，不进任何缓存
+let usageCtx = null;
+
+// 授权是否真的可用：拿禁用/过期的授权去生成示例，接入方照抄必然 403
+function isAuthUsable(a){
+  if(a.enabled===false) return false;
+  if(!a.expiresAt) return true;
+  const t = new Date(String(a.expiresAt).replace(' ','T'));  // Safari 不认 "yyyy-MM-dd HH:mm:ss"
+  return isNaN(t.getTime()) ? true : t > new Date();
+}
+
+async function openUsageModal(credId){
+  if(!currentApp) return;
+  const c = (currentCreds||[]).find(x=>x.id===credId);
+  if(!c){ toast('凭证不存在，请刷新列表','error'); return; }
+  // 授权列表只在切到「模型授权」子页时才加载；从凭证页直接开会拿到空下拉，故主动拉一次
+  await loadAuths();
+  usageCtx = {cred:c, secret:null, fmt:'curl'};
+
+  const usable = (currentAuths||[]).filter(isAuthUsable);
+  const sel = $('ug_model');
+  sel.innerHTML = usable.length
+    ? usable.map(a=>`<option value="${a.modelId}" data-type="${a.modelType||'chat'}">${a.modelName||a.modelId}（${a.modelId}）</option>`).join('')
+    : '<option value="">（该系统暂无可用授权，请先到「模型授权」页授权）</option>';
+
+  $('ug_credName').textContent = c.credName || ('#'+credId);
+  $('ug_base').value = location.origin;
+  $('ug_stream').checked = false;
+  // 存量凭证（「密钥可查看」启用之前创建的）只有哈希，明文取不回来
+  const btn = $('ug_fillBtn');
+  btn.disabled = c.secretRetrievable===false;
+  btn.title = c.secretRetrievable===false ? '该凭证仅存哈希，明文无法找回，只能重新生成' : '';
+  $('ug_secretHint').firstElementChild.textContent = '示例中的密钥默认是占位符，避免误发到公共渠道。';
+  $('ug_testWrap').style.display = 'none';
+  setUsageFmt('curl');
+  openModal('usageModal');
+}
+
+function setUsageFmt(f){
+  if(usageCtx) usageCtx.fmt = f;
+  ['curl','http','python'].forEach(k=>{
+    $('ug_tab_'+k).className = 'btn btn-sm ' + (k===f ? 'btn-primary' : 'btn-neutral');
+  });
+  renderUsage();
+}
+
+// 明文按需单条索取，与「查看密钥」同一个接口（后端会打 INFO 日志留痕）
+async function fillUsageSecret(){
+  if(!usageCtx || !currentApp) return;
+  try{
+    const url = apiUrl(`/modelgate/credentials/secret?appId=${encodeURIComponent(currentApp.appId)}&credId=${usageCtx.cred.id}`);
+    const r = await fetch(url, {headers:hdrs()});
+    const j = await r.json();
+    if(!isOk(j)){ toast('取密钥失败: '+errMsg(j),'error'); return; }
+    if(!j.data){ toast('后端未返回密钥','error'); return; }
+    usageCtx.secret = j.data;
+    $('ug_secretHint').firstElementChild.innerHTML =
+      '⚠️ 示例中已含<b>真实密钥明文</b>，只发给该接入系统的负责人；关闭本弹窗即从页面清除。';
+    $('ug_fillBtn').disabled = true;
+    renderUsage();
+  }catch(e){
+    toast('取密钥异常: '+e.message,'error');
+  }
+}
+
+// 组装示例所需的各段：路径与请求体按模型类型切换，给错路径的示例比不给还坑
+function usageParts(){
+  const sel = $('ug_model');
+  const opt = sel.selectedOptions[0];
+  const modelId   = sel.value || '<模型ID>';
+  const modelType = (opt && opt.dataset.type) || 'chat';
+  const base   = ($('ug_base').value || location.origin).trim().replace(/\/+$/,'');
+  const embed  = modelType==='embedding';
+  const stream = !embed && $('ug_stream').checked;   // embeddings 没有流式
+  const bodyObj = embed
+    ? {model:modelId, input:'需要向量化的文本'}
+    : Object.assign({model:modelId, messages:[{role:'user', content:'你好'}]}, stream?{stream:true}:{});
+  return {modelId, modelType, base, embed, stream,
+          path: embed ? '/v1/embeddings' : '/v1/chat/completions',
+          body: JSON.stringify(bodyObj, null, 2)};
+}
+
+function usageCurl(p){
+  const c = usageCtx.cred;
+  if(c.credType==='ak_sk'){
+    return '# AKSK 签名每次请求都要按当前时间戳重算，不能写死\n'
+      + 'AK="' + (c.accessKey||'<AccessKey>') + '"\n'
+      + 'SK="' + (usageCtx.secret||'<在此填入 SecretKey>') + '"\n'
+      + 'TS=$(date +%s%3N)          # 毫秒时间戳；macOS 用 $(($(date +%s)*1000))\n'
+      + 'SIGN=$(printf "%s:%s" "$AK" "$TS" | openssl dgst -sha256 -hmac "$SK" -binary | base64)\n\n'
+      + 'curl -X POST "' + p.base + p.path + '" \\\n'
+      + '  -H "Content-Type: application/json" \\\n'
+      + '  -H "Authorization: AKSK $AK:$TS:$SIGN" \\\n'
+      + (p.stream ? '  -N \\\n' : '')
+      + "  -d '" + p.body + "'";
+  }
+  return 'curl -X POST "' + p.base + p.path + '" \\\n'
+    + '  -H "Content-Type: application/json" \\\n'
+    + '  -H "Authorization: Bearer ' + (usageCtx.secret||'<在此填入 API Key>') + '" \\\n'
+    + (p.stream ? '  -N \\\n' : '')
+    + "  -d '" + p.body + "'";
+}
+
+function usageHttp(p){
+  const c = usageCtx.cred;
+  const host = p.base.replace(/^https?:\/\//,'');
+  const auth = c.credType==='ak_sk'
+    ? 'AKSK ' + (c.accessKey||'<AccessKey>') + ':{13位毫秒时间戳}:{Base64(HMAC-SHA256(SK, AK+":"+时间戳))}'
+    : 'Bearer ' + (usageCtx.secret||'<在此填入 API Key>');
+  const oneLine = JSON.stringify(JSON.parse(p.body));
+  return 'POST ' + p.path + ' HTTP/1.1\n'
+    + 'Host: ' + host + '\n'
+    + 'Content-Type: application/json\n'
+    + 'Authorization: ' + auth + '\n'
+    + 'Content-Length: ' + new TextEncoder().encode(oneLine).length + '\n\n'
+    + oneLine;
+}
+
+function usagePython(p){
+  const c = usageCtx.cred;
+  if(c.credType==='ak_sk'){
+    // AKSK 每请求都要重新签名，OpenAI SDK 塞不进这种动态头，只能用 requests 手写
+    // 压成单行：多行 JSON 直接嵌进 json= 会缩进错位，不像能直接跑的代码
+    const pyBody = JSON.stringify(JSON.parse(p.body))
+        .replace(/\btrue\b/g,'True').replace(/\bfalse\b/g,'False').replace(/\bnull\b/g,'None');
+    return 'import base64, hashlib, hmac, time, requests\n\n'
+      + 'AK = "' + (c.accessKey||'<AccessKey>') + '"\n'
+      + 'SK = "' + (usageCtx.secret||'<在此填入 SecretKey>') + '"\n'
+      + 'ts = str(int(time.time() * 1000))          # 毫秒时间戳，服务端校验 ±5 分钟\n'
+      + 'sign = base64.b64encode(\n'
+      + '    hmac.new(SK.encode(), f"{AK}:{ts}".encode(), hashlib.sha256).digest()\n'
+      + ').decode()\n\n'
+      + 'resp = requests.post(\n'
+      + '    "' + p.base + p.path + '",\n'
+      + '    headers={"Content-Type": "application/json",\n'
+      + '             "Authorization": f"AKSK {AK}:{ts}:{sign}"},\n'
+      + '    json=' + pyBody + ',\n'
+      + ')\n'
+      + 'print(resp.status_code, resp.text)';
+  }
+  // api_key 是 OpenAI 兼容的，直接用官方 SDK 最省事；base_url 必须带 /v1
+  const head = '# pip install openai\nfrom openai import OpenAI\n\n'
+    + 'client = OpenAI(\n'
+    + '    api_key="' + (usageCtx.secret||'<在此填入 API Key>') + '",\n'
+    + '    base_url="' + p.base + '/v1",\n'
+    + ')\n\n';
+  if(p.embed){
+    return head
+      + 'resp = client.embeddings.create(\n'
+      + '    model="' + p.modelId + '",\n'
+      + '    input="需要向量化的文本",\n'
+      + ')\n'
+      + 'print(resp.data[0].embedding[:8])';
+  }
+  if(p.stream){
+    return head
+      + 'resp = client.chat.completions.create(\n'
+      + '    model="' + p.modelId + '",\n'
+      + '    messages=[{"role": "user", "content": "你好"}],\n'
+      + '    stream=True,\n'
+      + ')\n'
+      + 'for chunk in resp:\n'
+      + '    print(chunk.choices[0].delta.content or "", end="")';
+  }
+  return head
+    + 'resp = client.chat.completions.create(\n'
+    + '    model="' + p.modelId + '",\n'
+    + '    messages=[{"role": "user", "content": "你好"}],\n'
+    + ')\n'
+    + 'print(resp.choices[0].message.content)';
+}
+
+function renderUsage(){
+  if(!usageCtx) return;
+  const p = usageParts();
+  const fn = usageCtx.fmt==='http' ? usageHttp : (usageCtx.fmt==='python' ? usagePython : usageCurl);
+  // 用 textContent 而非 innerHTML：示例里的尖括号占位符不能被当成标签
+  $('ug_code').textContent = fn(p);
+
+  const notes = [];
+  notes.push('model 字段必须与「模型管理」录入的 model_id 完全一致（区分大小写），网关按它查库定路由。');
+  if(usageCtx.cred.credType==='ak_sk'){
+    notes.push('AKSK 签名与时间戳绑定、服务端校验 ±5 分钟，Authorization 头无法写死，只能按示例在调用时现算。');
+  }
+  if(p.embed){
+    notes.push('该模型类型为 embedding，示例已切到 /v1/embeddings。');
+  }else if(p.modelType!=='chat'){
+    // 不能对 image/audio 假装给出"能直接跑"的 chat 示例——那是误导
+    notes.push('⚠️ 该模型类型为 '+p.modelType+'，OpenAI 兼容规范下没有统一的请求格式，'
+             + '示例仅用于演示鉴权与路由写法，请求路径与请求体请按上游实际接口调整。');
+  }
+  $('ug_note').textContent = notes.join(' ');
+}
+
+// ============================================================
+// 接入示例 · 连通性测试
+// ============================================================
+// 与「模型管理 → 🧪 测试」的区别（别混淆）：
+//   那个走 POST /modelgate/models/chat/test，是**服务端**直连上游，
+//   跳过凭证鉴权/访问控制/模型授权/配额，只验证"上游本身配置对不对"。
+//   本测试是**浏览器按接入方身份**打真实的 /v1/** 全链路，
+//   凭证、授权、白名单、配额任一没配好都会在这里暴露 —— 这才是接入方视角的"通不通"。
+
+/** 取密钥明文用于签名/鉴权；用完即弃，不写入任何全局状态。 */
+async function fetchSecretForTest(){
+  if(usageCtx.secret) return usageCtx.secret;          // 用户已点过「填入真实密钥」
+  const url = apiUrl(`/modelgate/credentials/secret?appId=${encodeURIComponent(currentApp.appId)}&credId=${usageCtx.cred.id}`);
+  const r = await fetch(url, {headers:hdrs()});
+  const j = await r.json();
+  if(!isOk(j) || !j.data) throw new Error(errMsg(j)||'后端未返回密钥');
+  return j.data;
+}
+
+/** AKSK 签名：Base64(HMAC-SHA256(SK, AK + ":" + 毫秒时间戳))，与 CredentialAuthFilter 逐字节一致。 */
+async function signAksk(ak, sk, ts){
+  if(!window.crypto || !window.crypto.subtle){
+    // crypto.subtle 只在安全上下文（https 或 localhost）可用；内网 http 页面拿不到
+    throw new Error('SUBTLE_UNAVAILABLE');
+  }
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey('raw', enc.encode(sk), {name:'HMAC', hash:'SHA-256'}, false, ['sign']);
+  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(ak + ':' + ts));
+  return btoa(String.fromCharCode(...new Uint8Array(sig)));
+}
+
+/** 按状态码给出可操作的定位话术——只说"失败了"没有用。 */
+function diagnoseUsageTest(status){
+  if(status === 401) return '401：凭证无效/已禁用/已过期，或 Authorization 头格式不对（AKSK 还要看时间戳是否在 ±5 分钟内）。';
+  if(status === 403) return '403：三种可能——该系统未获此模型授权、授权已禁用或过期、来源 IP/域名不在访问规则白名单内；也可能是接入系统本身被禁用。';
+  if(status === 404) return '404：model 字段的值在「模型管理」里不存在（区分大小写），或该模型 api_spec 没有对应适配器。';
+  if(status === 429) return '429：触发配额限制（QPS / 日调用量 / 月 Token 三者之一），见该授权的配额设置。';
+  if(status === 502 || status === 503) return '502/503：网关到上游不通或上游熔断，与接入侧配置无关，请到「模型管理 → 🧪 测试」验证上游。';
+  if(status === 504) return '504：上游响应超时（网关 response-timeout 570s）。';
+  if(status >= 500) return '5xx：网关内部错误，请拿下方 traceId 到后端日志检索。';
+  if(status >= 400) return '4xx：请求本身被拒，展开响应体看具体 message。';
+  return '';
+}
+
+/**
+ * 从上游响应里抽出「模型实际回答的文字」。
+ *
+ * 与后端 UpstreamResponseParser 同一套规则，兼容四种形态：
+ *   OpenAI 非流式  choices[0].message.content
+ *   OpenAI 流式    逐帧 choices[0].delta.content 拼接
+ *   Anthropic 非流 content[0].text
+ *   Anthropic 流式 逐帧 delta.text 拼接
+ * 抽不出来返回 null，调用方回落展示原始报文。
+ */
+function extractModelAnswer(text){
+  if(!text) return null;
+  try{
+    const j = JSON.parse(text);
+    const c = j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
+    if(typeof c === 'string') return c;
+    const a = j && j.content && j.content[0] && j.content[0].text;
+    if(typeof a === 'string') return a;
+  }catch(_){}
+  if(text.indexOf('data:') >= 0){
+    let out = '';
+    text.split(String.fromCharCode(10)).forEach(function(line){
+      const f = line.trim();
+      if(f.indexOf('data:') !== 0) return;
+      const payload = f.slice(5).trim();
+      if(!payload || payload === '[DONE]') return;
+      try{
+        const n = JSON.parse(payload);
+        let d = n && n.choices && n.choices[0] && n.choices[0].delta && n.choices[0].delta.content;
+        if(typeof d !== 'string') d = n && n.delta && n.delta.text;
+        if(typeof d === 'string') out += d;
+      }catch(_){}
+    });
+    if(out) return out;
+  }
+  return null;
+}
+
+/** 提取 usage 用于结果栏显示 token 消耗；OpenAI 与 Anthropic 两种字段名都认。 */
+function extractUsageLabel(text){
+  try{
+    const u = JSON.parse(text).usage;
+    if(!u) return '';
+    if(u.prompt_tokens != null) return ' · tokens ' + u.prompt_tokens + '+' + (u.completion_tokens||0);
+    if(u.input_tokens != null)  return ' · tokens ' + u.input_tokens + '+' + (u.output_tokens||0);
+  }catch(_){}
+  return '';
+}
+
+async function runUsageTest(){
+  if(!usageCtx || !currentApp) return;
+  const p = usageParts();
+  if(!p.modelId || p.modelId === '<模型ID>'){ toast('请先选择要测试的模型','error'); return; }
+
+  const btn = $('ug_testBtn');
+  btn.disabled = true; btn.textContent = '测试中…';
+  $('ug_testWrap').style.display = 'block';
+  $('ug_testVerdict').innerHTML = '<span class="tag tag-gray">请求中…</span>';
+  $('ug_testMeta').textContent = '-';
+  $('ug_testBody').innerHTML = '<span class="rph">// 正在按接入方身份发起真实调用…</span>';
+  $('ug_testDiag').textContent = '';
+
+  const started = Date.now();
+  try{
+    const secret = await fetchSecretForTest();
+    let auth;
+    if(usageCtx.cred.credType === 'ak_sk'){
+      const ak = usageCtx.cred.accessKey, ts = String(Date.now());
+      auth = `AKSK ${ak}:${ts}:${await signAksk(ak, secret, ts)}`;
+    }else{
+      auth = 'Bearer ' + secret;
+    }
+
+    const resp = await fetch(p.base + p.path, {
+      method:'POST',
+      headers:{'Content-Type':'application/json', 'Authorization':auth},
+      body:p.body,
+    });
+    const cost = Date.now() - started;
+    const text = await resp.text();
+
+    // 响应体里的 code 比 HTTP 状态更精确（网关 Filter 的错误结构为 {code,message,traceId}），
+    // 优先用它做诊断；解析不出来再回落到 HTTP 状态
+    let bodyCode = null, bodyMsg = null;
+    try{ const j = JSON.parse(text); bodyCode = j.code; bodyMsg = j.message; }catch(_){}
+
+    // 2xx 但没有响应体 ≠ 连通：上游地址格式非法（如漏写 //）时网关会返回 200 空响应，
+    // 直接判绿会给出假阳性——测试功能最不该做的就是把"没通"说成"通了"
+    const ok = resp.ok && !!(text && text.trim());
+    const emptyOk = resp.ok && !(text && text.trim());
+    $('ug_testVerdict').innerHTML = ok
+      ? '<span class="tag tag-green">✅ 连通</span>'
+      : emptyOk
+        ? '<span class="tag tag-orange">⚠ 可疑：上游无响应体</span>'
+        : `<span class="tag tag-red">❌ 失败 ${resp.status}</span>`;
+    // traceId 直接摆出来：后端日志与 mg_audit_log 都能用它精确定位这一次调用
+    const traceId = resp.headers.get('X-Trace-Id') || '-';
+    $('ug_testMeta').textContent = `${resp.status} · ${cost}ms${extractUsageLabel(text)} · traceId=${traceId}`;
+    // 连通时把模型回答抽出来置顶——接入方点"测试"最想确认的就是"模型真的答了"，
+    // 而不是自己去 JSON 里翻 choices[0].message.content。原始报文完整保留在下方，**不截断**。
+    const answer = ok ? extractModelAnswer(text) : null;
+    if(!text){
+      $('ug_testBody').textContent = '(空响应体)';
+    }else{
+      let raw;
+      try { raw = _jsonHL(JSON.stringify(JSON.parse(text), null, 2)); }
+      catch(e) { raw = escapeHtml(text); }
+      $('ug_testBody').innerHTML = (answer
+          ? '<span style="color:#86efac">// 模型回答（完整）</span>' + String.fromCharCode(10) + escapeHtml(answer) + String.fromCharCode(10) + String.fromCharCode(10)
+            + '<span class="rph">// ── 原始响应报文 ──</span>' + String.fromCharCode(10)
+          : '') + raw;
+    }
+    $('ug_testDiag').textContent = ok
+      ? '全链路通过：凭证鉴权 → 访问控制 → 模型授权 → 配额 → 路由 → 上游，均已放行。'
+      : emptyOk
+        ? 'HTTP ' + resp.status + ' 但响应体为空，模型并未真正返回内容。'
+          + '最常见原因是该模型的「上游地址」格式不合法（例如写成 http:127.0.0.1:8080，漏了 //），'
+          + '网关无法真正建连却仍返回 2xx。请到「模型管理」检查 upstreamUrl 是否为 http:// 或 https:// 开头。'
+        : (bodyMsg ? `上游/网关返回：${bodyMsg}。` : '') + diagnoseUsageTest(bodyCode || resp.status);
+  }catch(e){
+    const cost = Date.now() - started;
+    $('ug_testVerdict').innerHTML = '<span class="tag tag-red">❌ 请求未发出</span>';
+    $('ug_testMeta').textContent = `${cost}ms`;
+    if(e && e.message === 'SUBTLE_UNAVAILABLE'){
+      $('ug_testBody').textContent = '浏览器无法计算 HMAC 签名。';
+      $('ug_testDiag').textContent = 'crypto.subtle 仅在安全上下文（https 或 localhost）可用，当前页面是普通 http。'
+        + ' ak_sk 凭证请改用示例里的 curl / Python 脚本测试；api_key 凭证不受此限制。';
+    }else{
+      $('ug_testBody').textContent = String(e && e.message || e);
+      $('ug_testDiag').textContent = '请求没能发出去：多为「网关地址」填错或不可达，也可能是跨域被拦。'
+        + ' 地址应指向业务流量入口（/v1/** 所在的 host:port），不一定与管理页同址。';
+    }
+  }finally{
+    btn.disabled = false; btn.textContent = '▶ 测试连通';
+  }
+}
+
+function copyUsage(){
+  copyText($('ug_code').textContent);
+}
+
+// 关闭即清掉明文：ctx 里的密钥和已渲染进 DOM 的示例都要清
+function closeUsageModal(){
+  if(usageCtx) usageCtx.secret = null;
+  usageCtx = null;
+  $('ug_code').textContent = '';
+  // 测试结果里含真实响应内容，一并清掉
+  $('ug_testWrap').style.display = 'none';
+  $('ug_testBody').textContent = '';
+  $('ug_testDiag').textContent = '';
+  closeModal('usageModal');
+}
+
+function openCredModal(){
+  $('cr_name').value=''; $('cr_expiresAt').value=''; $('cr_remark').value='';
+  document.querySelector('input[name=crType][value=api_key]').checked = true;
+  openModal('credModal');
+}
+
+function onCredTypeChange(){}
+
+async function submitCred(){
+  if(!currentApp) return;
+  const credType = document.querySelector('input[name=crType]:checked').value;
+  const body = {
+    credName:  $('cr_name').value.trim(),
+    credType,
+    // 必须经 toExpiresAt 规整：直接传输入框原值（含 T、缺秒）后端反序列化会失败返回 400
+    expiresAt: toExpiresAt($('cr_expiresAt').value),
+    remark:    $('cr_remark').value.trim(),
+  };
+  if(!body.credName){ toast('凭证名称不能为空','error'); return; }
+  try{
+    const r = await fetch(apiUrl('/modelgate/credentials/create'), {method:'POST', headers:hdrs(), body:JSON.stringify({...body, appId:currentApp.appId})});
+    const j = await r.json();
+    if(!isOk(j)){ toast('失败: '+errMsg(j),'error'); return; }
+    showCredResult(j.data);
+  }catch(e){
+    // Demo
+    const demoData = credType==='api_key'
+      ? {credType:'api_key', apiKey:`mg-${currentApp.appId}-sk_live_${Math.random().toString(36).slice(2,14)}`}
+      : {credType:'ak_sk', accessKey:`AK_${currentApp.appId}_${Math.random().toString(36).slice(2,8)}`, secretKey:`SK_${Math.random().toString(36).slice(2,24)}`};
+    showCredResult(demoData);
+  }
+  closeModal('credModal');
+  loadCreds();
+}
+
+function showCredResult(data){
+  let html = '<div class="warn-box">此凭证只显示一次，关闭后无法再次查看</div>';
+  if(data.credType==='api_key'||data.apiKey){
+    html += `<div style="margin-top:12px;font-size:12px;color:#374151;margin-bottom:6px">API Key</div>
+    <div class="secret-box"><span class="val">${data.apiKey}</span>
+    <button class="copy-btn" onclick="copyText('${data.apiKey}')">复制</button></div>`;
+  } else {
+    html += `<div style="margin-top:12px;font-size:12px;color:#374151;margin-bottom:6px">Access Key</div>
+    <div class="secret-box"><span class="val">${data.accessKey}</span>
+    <button class="copy-btn" onclick="copyText('${data.accessKey}')">复制</button></div>
+    <div style="margin-top:8px;font-size:12px;color:#374151;margin-bottom:6px">Secret Key</div>
+    <div class="secret-box"><span class="val">${data.secretKey}</span>
+    <button class="copy-btn" onclick="copyText('${data.secretKey}')">复制</button></div>`;
+  }
+  $('credShowBody').innerHTML = html;
+  openModal('credShowModal');
+}
+
+async function toggleCred(id, currentEnabled){
+  const action = currentEnabled?'disable':'enable';
+  try{ await fetch(apiUrl(`/modelgate/credentials/${action}?appId=${currentApp.appId}&id=${id}`), {method:'PATCH', headers:hdrs()}); }catch(e){}
+  toast(`凭证已${currentEnabled?'禁用':'启用'}`);
+  loadCreds();
+}
+
+async function deleteCred(id){
+  if(!confirm('确认删除凭证？凭证立即失效！')) return;
+  try{ await fetch(apiUrl(`/modelgate/credentials/delete?appId=${currentApp.appId}&id=${id}`), {method:'DELETE', headers:hdrs()}); }catch(e){}
+  toast('凭证已删除');
+  loadCreds();
+}
+
+// ============================================================
+// 模型授权
+// ============================================================
+// 当前系统的授权列表；编辑弹窗要按 modelId 回填配额，需要留一份
+let currentAuths = [];
+
+async function loadAuths(){
+  if(!currentApp) return;
+  try{
+    const r = await fetch(apiUrl(`/modelgate/auth/list?appId=${encodeURIComponent(currentApp.appId)}`), {headers:hdrs()});
+    const j = await r.json();
+    if(!isOk(j)){ toast('加载授权列表失败: '+errMsg(j),'error'); return; }
+    currentAuths = j.data||[];
+    renderAuths(currentAuths);
+  }catch(e){
+    console.warn('[ModelGate] 授权列表加载异常', e);
+    currentAuths = DEMO_AUTHS[currentApp.appId]||[];
+    renderAuths(currentAuths);
+  }
+}
+
+function renderAuths(data){
+  const tbody = $('authTbody');
+  if(!data.length){ tbody.innerHTML='<tr class="empty-row"><td colspan="8">暂无授权</td></tr>'; return; }
+  tbody.innerHTML = data.map(a=>`
+    <tr>
+      <td><strong>${a.modelName||a.modelId}</strong></td>
+      <td><code>${a.modelId}</code></td>
+      <td>${a.enabled!==false?'<span class="tag tag-green">✅ 启用</span>':'<span class="tag tag-red">禁用</span>'}</td>
+      <td>${fmt(a.qpsLimit)}/s</td>
+      <td>${fmt(a.dailyLimit)}</td>
+      <td>${a.monthlyTokens?Math.round(a.monthlyTokens/10000)+'万':'不限'}</td>
+      <td>${a.payloadLogEnabled?'<span class="tag tag-blue">已开启</span>':'<span class="tag tag-gray">关闭</span>'}</td>
+      <td>${a.expiresAt?fmtTime(a.expiresAt):'永久'}</td>
+      <td>
+        <div class="flex gap-8">
+          <button class="btn btn-neutral btn-sm" title="PUT /modelgate/auth/update" onclick="openAuthEditModal('${a.modelId}')">编辑</button>
+          <button class="btn ${a.enabled!==false?'btn-warning':'btn-success'} btn-sm" title="${a.enabled!==false?'PATCH /modelgate/auth/disable':'PATCH /modelgate/auth/enable'}?appId=${currentApp?.appId}&modelId=${a.modelId}" onclick="toggleAuth('${a.modelId}',${a.enabled!==false})">${a.enabled!==false?'禁用':'启用'}</button>
+          <button class="btn btn-danger btn-sm" title="DELETE /modelgate/auth/revoke?appId=${currentApp?.appId}&modelId=${a.modelId}" onclick="revokeAuth('${a.modelId}')">撤销</button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+}
+
+// null = 新增授权；非空 = 正在编辑该 modelId 的授权
+let editingAuthModelId = null;
+
+async function openAuthModal(){
+  editingAuthModelId = null;
+  $('authModalTitle').textContent = '授权新模型';
+  $('authSubmitBtn').textContent = '确认授权';
+  $('au_modelHint').style.display = 'none';
+  $('au_qps').value='0'; $('au_daily').value='0'; $('au_monthly').value='0'; $('au_expires').value='';
+  $('au_payloadLog').value='false';
+  const sel = $('au_modelId');
+  sel.disabled = false;
+  sel.innerHTML = '<option value="">加载中…</option>';
+  openModal('authModal');
+  // 单独取全量：不能用 allModels，那只是模型列表页的当前页
+  const models = await fetchSelectableModels();
+  sel.innerHTML = '<option value="">-- 请选择模型 --</option>'
+    + models.map(m=>`<option value="${escapeHtml(m.modelId)}">${escapeHtml(m.modelName)} (${escapeHtml(m.modelId)})</option>`).join('');
+}
+
+/**
+ * 打开编辑弹窗，回填当前授权的配额与有效期。
+ * 模型本身不可改：唯一键是 (app_id, model_id)，换模型等于换一条授权。
+ */
+function openAuthEditModal(modelId){
+  const a = (currentAuths||[]).find(x=>x.modelId===modelId);
+  if(!a){ toast('未找到该授权记录','error'); return; }
+
+  editingAuthModelId = modelId;
+  $('authModalTitle').textContent = '编辑授权 · ' + (a.modelName || modelId);
+  $('authSubmitBtn').textContent = '保存修改';
+  $('au_modelHint').style.display = '';
+
+  const sel = $('au_modelId');
+  sel.innerHTML = `<option value="${escapeHtml(modelId)}">${escapeHtml(a.modelName||modelId)} (${escapeHtml(modelId)})</option>`;
+  sel.disabled = true;
+
+  $('au_qps').value     = a.qpsLimit ?? 0;
+  $('au_daily').value   = a.dailyLimit ?? 0;
+  // 月 Token 在界面上以「万」为单位，与提交时的 ×10000 对应
+  $('au_monthly').value = a.monthlyTokens ? Math.round(a.monthlyTokens/10000) : 0;
+  $('au_expires').value = fromExpiresAt(a.expiresAt);
+  $('au_payloadLog').value = a.payloadLogEnabled ? 'true' : 'false';
+
+  openModal('authModal');
+}
+
+/**
+ * datetime-local 值 → 后端 LocalDateTime 字符串。
+ *
+ * 后端由 JacksonConfig 把 LocalDateTime 绑定为 "yyyy-MM-dd HH:mm:ss"，格式不符会反序列化失败返回 400。
+ * datetime-local 给出的是 "yyyy-MM-ddTHH:mm" 或 "yyyy-MM-ddTHH:mm:ss"（取决于是否动过秒），
+ * 少数浏览器还会带毫秒。这里统一规整成 "yyyy-MM-dd HH:mm:ss"。
+ *
+ * 只给到日期（历史数据或手工输入）时补 23:59:59 —— "有效期至某天"语义上指当天结束。
+ */
+function toExpiresAt(v){
+  if(!v) return null;
+  let s = String(v).trim().replace('T', ' ');
+  if(s.includes('.')) s = s.slice(0, s.indexOf('.'));   // 去掉毫秒
+  const parts = s.split(' ');
+  if(parts.length === 1) return `${parts[0]} 23:59:59`;  // 只有日期
+  const t = parts[1].split(':');
+  while(t.length < 3) t.push('00');                      // 补足到秒
+  return `${parts[0]} ${t.slice(0,3).map(x=>String(x).padStart(2,'0')).join(':')}`;
+}
+
+/** 后端 "yyyy-MM-dd HH:mm:ss" → datetime-local 需要的 "yyyy-MM-ddTHH:mm:ss" */
+function fromExpiresAt(v){
+  if(!v) return '';
+  let s = String(v).trim().replace(' ', 'T');
+  if(s.includes('.')) s = s.slice(0, s.indexOf('.'));
+  // 只有日期时补零点，否则 datetime-local 认不出来会显示为空
+  return s.includes('T') ? s : `${s}T00:00:00`;
+}
+
+async function submitAuth(){
+  if(!currentApp) return;
+  const modelId = $('au_modelId').value;
+  if(!modelId){ toast('请选择模型','error'); return; }
+
+  const quota = {
+    qpsLimit:      parseInt($('au_qps').value)||0,
+    dailyLimit:    parseInt($('au_daily').value)||0,
+    monthlyTokens: (parseInt($('au_monthly').value)||0)*10000,
+    expiresAt:     toExpiresAt($('au_expires').value),
+    payloadLogEnabled: $('au_payloadLog').value === 'true',
+  };
+  const editing = !!editingAuthModelId;
+  const url    = apiUrl(editing ? '/modelgate/auth/update' : '/modelgate/auth/add');
+  const method = editing ? 'PUT' : 'POST';
+  // 新增走批量接口（modelIds 数组），编辑走单条更新（modelId）
+  const body = editing
+    ? {appId: currentApp.appId, modelId, ...quota}
+    : {appId: currentApp.appId, modelIds: [modelId], ...quota};
+
+  try{
+    console.info('[ModelGate] 提交授权', method, url, body);
+    const r = await fetch(url, {method, headers:hdrs(), body:JSON.stringify(body)});
+    const j = await r.json();
+    if(!isOk(j)){ toast(`失败(HTTP ${r.status}): `+errMsg(j),'error'); return; }
+  }catch(e){
+    console.warn('[ModelGate] 提交授权异常', e);
+    toast('请求异常: '+e.message,'error');
+    return;
+  }
+  toast(editing ? '授权已更新' : '授权已添加');
+  closeModal('authModal');
+  loadAuths();
+}
+
+async function toggleAuth(modelId, currentEnabled){
+  const action = currentEnabled?'disable':'enable';
+  try{ await fetch(apiUrl(`/modelgate/auth/${action}?appId=${currentApp.appId}&modelId=${modelId}`), {method:'PATCH', headers:hdrs()}); }catch(e){}
+  toast(`授权已${currentEnabled?'禁用':'启用'}`);
+  loadAuths();
+}
+
+async function revokeAuth(modelId){
+  if(!confirm(`确认撤销 ${modelId} 的授权？`)) return;
+  try{ await fetch(apiUrl(`/modelgate/auth/revoke?appId=${currentApp.appId}&modelId=${modelId}`), {method:'DELETE', headers:hdrs()}); }catch(e){}
+  toast('授权已撤销');
+  loadAuths();
+}
+
+// ============================================================
+// 访问控制
+// ============================================================
+async function loadAccess(){
+  if(!currentApp) return;
+  try{
+    const r = await fetch(apiUrl(`/modelgate/access/list?appId=${currentApp.appId}`), {headers:hdrs()});
+    const j = await r.json();
+    currentAccessRules = j.data||[];
+  }catch(e){
+    currentAccessRules = DEMO_ACCESS[currentApp.appId]||[];
+  }
+  renderAccess();
+}
+
+function renderAccess(){
+  const ipTypes   = ['ip','cidr'];
+  const domTypes  = ['domain','domain_wildcard'];
+  const ipRules   = currentAccessRules.filter(r=>ipTypes.includes(r.ruleType));
+  const domRules  = currentAccessRules.filter(r=>domTypes.includes(r.ruleType));
+
+  $('ipRules').innerHTML = ipRules.length
+    ? ipRules.map(r=>`<span class="rule-tag"><span>${r.ruleValue}</span><button title="DELETE /modelgate/access/delete?appId=${currentApp?.appId}&id=${r.id}" onclick="deleteAccessRule(${r.id})">×</button></span>`).join('')
+    : '<span style="font-size:12px;color:#94a3b8">空（不限制 IP）</span>';
+
+  $('domainRules').innerHTML = domRules.length
+    ? domRules.map(r=>`<span class="rule-tag"><span>${r.ruleValue}</span><button title="DELETE /modelgate/access/delete?appId=${currentApp?.appId}&id=${r.id}" onclick="deleteAccessRule(${r.id})">×</button></span>`).join('')
+    : '<span style="font-size:12px;color:#94a3b8">空（不限制域名）</span>';
+}
+
+async function addAccessRule(kind){
+  if(!currentApp) return;
+  const inputId = kind==='ip' ? 'newIpRule' : 'newDomainRule';
+  const val = $(inputId).value.trim();
+  if(!val){ toast('请输入规则值','error'); return; }
+  const ruleType = kind==='ip'
+    ? (val.includes('/')? 'cidr' : 'ip')
+    : (val.startsWith('*.')? 'domain_wildcard' : 'domain');
+  const body = {ruleType, ruleValue:val};
+  try{
+    const r = await fetch(apiUrl('/modelgate/access/add'), {method:'POST', headers:hdrs(), body:JSON.stringify({...body, appId:currentApp.appId})});
+    const j = await r.json();
+    if(!isOk(j)){ toast('失败: '+errMsg(j),'error'); return; }
+    $(inputId).value='';
+    loadAccess();
+    toast('规则已添加');
+  }catch(e){
+    currentAccessRules.push({id:Date.now(), ruleType, ruleValue:val});
+    $(inputId).value='';
+    renderAccess();
+    toast('规则已添加（演示）');
+  }
+}
+
+async function deleteAccessRule(id){
+  if(!currentApp) return;
+  try{ await fetch(apiUrl(`/modelgate/access/delete?appId=${currentApp.appId}&id=${id}`), {method:'DELETE', headers:hdrs()}); }catch(e){}
+  currentAccessRules = currentAccessRules.filter(r=>r.id!==id);
+  renderAccess();
+  toast('规则已删除');
+}
+
+// ============================================================
+// 审计日志 & 统计摘要
+// ============================================================
+
+/** 加载统计摘要卡片 — GET /modelgate/stats/usage */
+async function loadStats(appId, modelId){
+  try{
+    const params = new URLSearchParams();
+    if(appId)   params.set('appId',   appId);
+    if(modelId) params.set('modelId', modelId);
+    const r = await fetch(apiUrl('/modelgate/stats/usage?')+params, {headers:hdrs()});
+    const j = await r.json();
+    if(!isOk(j)) return;
+    const d = j.data;
+    $('statTotal').textContent   = fmtNum(d.totalRequests);
+    $('statTokens').textContent  = fmtNum((d.totalInputTokens||0)+(d.totalOutputTokens||0));
+    $('statLatency').textContent = d.avgLatencyMs!=null ? Math.round(d.avgLatencyMs)+'ms' : '-';
+    $('statSuccess').textContent = d.successRate!=null  ? (d.successRate*100).toFixed(1)+'%' : '-';
+    $('statRange').textContent   = '近30天';
+  }catch(e){
+    // 后端未连接时显示演示数据
+    $('statTotal').textContent   = '12,480';
+    $('statTokens').textContent  = '3,204,560';
+    $('statLatency').textContent = '287ms';
+    $('statSuccess').textContent = '98.2%';
+    $('statRange').textContent   = '近30天（演示）';
+  }
+}
+
+function fmtNum(n){
+  if(n==null||n===0) return '0';
+  if(n>=1000000) return (n/1000000).toFixed(1)+'M';
+  if(n>=1000)    return (n/1000).toFixed(1)+'K';
+  return String(n);
+}
+
+/**
+ * 查询审计明细。
+ * @param resetPage 由「查询」按钮触发时为 true —— 改了筛选条件必须回到第 1 页，
+ *                  否则在第 5 页改条件会查到一个多半为空的页。翻页时传 false。
+ */
+async function loadAudit(resetPage = true){
+  if(resetPage) pageState.audit.pageIndex = 1;
+  // 查询时同步刷新统计摘要（按当前筛选条件）
+  loadStats($('auditApp').value, $('auditModel').value);
+  try{
+    const qs = pageQuery('audit', {
+      appId:   $('auditApp').value,
+      modelId: $('auditModel').value,
+      status:  $('auditStatus').value,
+      traceId: $('auditTrace').value,
+    });
+    const r = await fetch(apiUrl(`/modelgate/audit?${qs}`), {headers:hdrs()});
+    const j = await r.json();
+    if(!isOk(j)){ toast('查询审计日志失败: '+errMsg(j),'error'); return; }
+    renderAudit(applyPage('audit', j.data || {}));
+    renderPager('audit', 'auditPager', 'audit');
+  }catch(e){
+    console.warn('[ModelGate] 审计查询异常', e);
+    pageState.audit = {pageIndex:1, pageSize:DEMO_AUDIT.length||20, total:DEMO_AUDIT.length, pages:1};
+    renderAudit(DEMO_AUDIT);
+    renderPager('audit', 'auditPager', 'audit');
+  }
+}
+
+function auditGo(p){ pageState.audit.pageIndex = Math.max(1, p); loadAudit(false); }
+function auditSize(n){ pageState.audit.pageSize = parseInt(n)||20; loadAudit(true); }
+
+/**
+ * 填充审计页的「系统 / 模型」筛选下拉。
+ *
+ * 这两个 select 此前只有一个"全部"选项、**从未被填充过**，等于筛选功能一直是摆设。
+ * 单独拉全量（不用 allModels/allApps，那是各自列表页的当前页）。只填一次。
+ */
+let _auditFiltersFilled = false;
+async function fillAuditFilters(){
+  if(_auditFiltersFilled) return;
+  try{
+    const [models, appsResp] = await Promise.all([
+      fetchSelectableModels(),
+      fetch(apiUrl('/modelgate/apps?pageIndex=1&pageSize=200'), {headers:hdrs()}).then(r=>r.json()),
+    ]);
+    const apps = isOk(appsResp) ? (appsResp.data?.items || []) : [];
+    $('auditModel').innerHTML = '<option value="">全部模型</option>'
+      + models.map(m=>`<option value="${escapeHtml(m.modelId)}">${escapeHtml(m.modelName)} (${escapeHtml(m.modelId)})</option>`).join('');
+    $('auditApp').innerHTML = '<option value="">全部系统</option>'
+      + apps.map(a=>`<option value="${escapeHtml(a.appId)}">${escapeHtml(a.appName)} (${escapeHtml(a.appId)})</option>`).join('');
+    _auditFiltersFilled = true;
+  }catch(e){
+    console.warn('[ModelGate] 审计筛选下拉填充失败', e);
+  }
+}
+
+function renderAudit(data){
+  const tbody = $('auditTbody');
+  if(!data.length){ tbody.innerHTML='<tr class="empty-row"><td colspan="9">暂无审计数据</td></tr>'; return; }
+  tbody.innerHTML = data.map(a=>`
+    <tr>
+      <td style="font-size:12px;white-space:nowrap">${fmtTime(a.createTime)}</td>
+      <td><code style="font-size:11px" title="${escHtml(a.traceId||'')}">${(a.traceId||'').slice(0,12)}...</code></td>
+      <td>${a.appId||'-'}</td>
+      <td>${a.modelId||'-'}</td>
+      <td style="font-size:12px">${a.clientIp||'-'}</td>
+      <td>${statusTag(a.httpStatus)}</td>
+      <td>${a.latencyMs!=null?a.latencyMs+'ms':'-'}</td>
+      <td>${(a.inputTokens||0)+(a.outputTokens||0)||'-'}</td>
+      <td><button class="btn btn-neutral btn-sm" title="按 traceId 查这次调用的请求/响应报文"
+                  onclick="payloadOfTrace('${escHtml(a.traceId||'')}')">📨 报文</button></td>
+    </tr>
+  `).join('');
+}
+
+function statusTag(s){
+  if(s>=200&&s<300) return `<span class="tag tag-green">${s}</span>`;
+  if(s===429) return `<span class="tag tag-yellow">${s}</span>`;
+  if(s>=400&&s<500) return `<span class="tag tag-red">${s}</span>`;
+  if(s>=500) return `<span class="tag tag-red">${s}</span>`;
+  return `<span class="tag tag-gray">${s||'-'}</span>`;
+}
+
+/**
+ * 从审计行跳到报文页并按 traceId 定位。审计看到一条异常调用，下一步必然是看它的报文。
+ *
+ * navTo 传 skipLoad=true：不这么做会先发一次无条件查询，与随后带 traceId 的查询并发，
+ * 无条件那次更慢、往往后到并把结果盖掉（详见 navTo 注释）。这里只发一次请求。
+ */
+function payloadOfTrace(traceId){
+  navTo('payload', true);
+  resetPayloadFilters(false);
+  $('pl_trace').value = traceId || '';
+  loadPayload();
+}
+
+// ============================================================
+// 报文记录
+// ============================================================
+
+/**
+ * 报文保留期回显。
+ *
+ * 报文按保留期物理删除（默认 7 天，远短于审计的 90 天），用户不知道这一点时
+ * 会把"查不到上周的报文"当成功能坏了。数值一律从后端取，不在页面写死——
+ * 保留期是 application.yml 里的配置，写死必然与实际部署漂移。
+ */
+async function loadPayloadMeta(){
+  const bar = $('payloadMetaBar');
+  try{
+    const r = await fetch(apiUrl('/modelgate/payload/meta'), {headers:hdrs()});
+    const j = await r.json();
+    if(!isOk(j)){ bar.textContent = '保留期信息获取失败：' + errMsg(j); return; }
+    const m = j.data || {};
+    const mb = m.maxCaptureBytes ? (m.maxCaptureBytes/1024/1024).toFixed(0) + 'MB' : '不限';
+    bar.innerHTML = m.enabled === false
+      ? `⛔ 报文记录<b>全局总开关已关闭</b>（modelgate.payload-log.enabled=false），当前不再产生新记录，下方只能查到历史数据。`
+      : `📨 报文<b>仅对开启了「报文记录」开关的「接入系统 × 模型」授权</b>产生（在接入系统的授权配置里开启）；
+         记录保留 <b>${m.retentionDays} 天</b>，由定时任务 <code>${escHtml(m.cleanupCron||'')}</code> 分批物理删除，
+         超期数据不可找回。单条响应采集上限 ${mb}，超出部分标记为「响应被截」。`;
+  }catch(e){
+    console.warn('[ModelGate] 报文配置获取异常', e);
+    bar.textContent = '📨 报文按保留期定期清理，具体天数以 modelgate.payload-log.retention-days 配置为准。';
+  }
+}
+
+/**
+ * 查询报文列表。
+ * @param resetPage 改了筛选条件必须回第 1 页；翻页时传 false。同 loadAudit。
+ */
+/**
+ * 关键字是否已被"能走索引的条件"收窄。规则必须与后端 PayloadQueryBO.hasNarrowingFilter 一致，
+ * 否则前端放行、后端拒绝，用户拿到的还是一个光秃秃的 400。
+ * isStream / 状态码 / 结束原因 / 截断 都**不算**：它们没索引且区分度极低，加上也还是全表扫。
+ */
+function payloadNarrowed(){
+  if($('pl_app').value || $('pl_model').value) return true;
+  if($('pl_trace').value.trim().length >= 8) return true;
+  // 时间范围要**两端齐全且跨度 ≤24 小时**才算收窄。只判"填了没"是不够的：
+  // startTime=1990-01-01 这种一眼假的下界照样能通过，防护就白做了。
+  const s = $('pl_start').value, e = $('pl_end').value;
+  if(!s || !e) return false;
+  const ms = new Date(e) - new Date(s);
+  return ms >= 0 && ms <= 24*3600*1000;
+}
+
+/** Date → datetime-local 控件要的 "YYYY-MM-DDTHH:mm"（本地时区，不能用 toISOString，那是 UTC） */
+function toLocalInput(d){
+  const p = n => String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+/** 一键补上最近 24 小时，然后重查 */
+function payloadUseLast24h(){
+  const now = new Date();
+  $('pl_start').value = toLocalInput(new Date(now.getTime() - 24*3600*1000));
+  $('pl_end').value   = toLocalInput(now);
+  loadPayload();
+}
+
+/** 一键把关键字挪到 TraceID 框（前缀匹配），然后重查 */
+function payloadKeywordAsTrace(){
+  $('pl_trace').value = $('pl_keyword').value.trim();
+  $('pl_keyword').value = '';
+  loadPayload();
+}
+
+/**
+ * 关键字缺少收窄条件时的引导面板。
+ *
+ * 不直接把请求发出去等后端返回 400：那样用户只能看到一句"必须同时指定…"，
+ * 还得自己回去猜该填哪个框。这里直接把两条出路做成按钮——
+ * 尤其是"当 TraceID 搜"，因为从列表复制 traceId 粘到关键字框是最容易走错的一步。
+ */
+function renderPayloadNeedNarrow(kw){
+  const looksLikeTrace = /^[0-9a-fA-F]{8,64}$/.test(kw);
+  $('payloadTbody').innerHTML = `
+    <tr><td colspan="11" style="padding:22px;text-align:left;color:#475569">
+      <div style="font-weight:600;color:#b45309;margin-bottom:6px">⚠️ 正文关键字需要先收窄查询范围</div>
+      <div style="font-size:13px;line-height:1.7">
+        关键字是 LONGTEXT 上的模糊匹配，走不了索引，单独使用会全表扫描并把所有报文正文读进内存，
+        足以拖垮在线业务的数据库，因此必须搭配
+        <b>系统 / 模型 / TraceID（≥8 位）/ 两端齐全且跨度 ≤24 小时的时间范围</b> 之一。<br>
+        <span style="color:#94a3b8">「类型 / 上游状态码 / 结束原因 / 完整性」不算收窄条件——它们没有索引，区分度也太低。</span>
+      </div>
+      <div class="flex gap-8" style="margin-top:12px">
+        <button class="btn btn-primary btn-sm" onclick="payloadUseLast24h()">📅 按最近 24 小时搜</button>
+        ${looksLikeTrace
+          ? `<button class="btn btn-info btn-sm" onclick="payloadKeywordAsTrace()">🔗 「${escHtml(kw)}」当 TraceID 搜</button>`
+          : ''}
+        <button class="btn btn-neutral btn-sm" onclick="$('pl_keyword').value='';loadPayload()">清空关键字</button>
+      </div>
+    </td></tr>`;
+  $('payloadPager').innerHTML = '';
+}
+
+async function loadPayload(resetPage = true){
+  if(resetPage) pageState.payload.pageIndex = 1;
+  const tbody = $('payloadTbody');
+  // 前置拦截：条件不合法就不发请求，直接给出可点击的补救路径
+  const kw = $('pl_keyword').value.trim();
+  if(kw && !payloadNarrowed()){ renderPayloadNeedNarrow(kw); return; }
+  try{
+    const qs = pageQuery('payload', {
+      appId:          $('pl_app').value,
+      modelId:        $('pl_model').value,
+      traceId:        $('pl_trace').value,
+      isStream:       $('pl_stream').value,
+      upstreamStatus: $('pl_status').value,
+      finishReason:   $('pl_finish').value,
+      truncated:      $('pl_truncated').value,
+      // datetime-local 给出的是 "2026-08-18T10:30"，后端 @DateTimeFormat(ISO.DATE_TIME) 直接可解析
+      startTime:      $('pl_start').value,
+      endTime:        $('pl_end').value,
+      keyword:        $('pl_keyword').value,
+    });
+    const r = await fetch(apiUrl(`/modelgate/payload?${qs}`), {headers:hdrs()});
+    const j = await r.json();
+    if(!isOk(j)){
+      // 关键字缺少收窄条件时后端会拒绝，错误文案本身就是操作指引，原样弹出来
+      toast('查询报文失败: '+errMsg(j),'error');
+      // colspan 必须跟表头列数（11）一致，否则错误提示横不满、最右列空一格；
+      // 分页条也要清掉，否则停留在上一次成功查询的「共 2727 条」，点下一页会基于错误页码继续发请求
+      tbody.innerHTML = `<tr class="empty-row"><td colspan="11" style="color:#ef4444">${escHtml(errMsg(j))}</td></tr>`;
+      $('payloadPager').innerHTML = '';
+      return;
+    }
+    renderPayload(applyPage('payload', j.data || {}));
+    renderPager('payload', 'payloadPager', 'payload');
+    setStatus(true);
+  }catch(e){
+    console.warn('[ModelGate] 报文查询异常', e);
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="11" style="color:#f59e0b">请求异常: ${escHtml(e.message)}</td></tr>`;
+    $('payloadPager').innerHTML = '';
+  }
+}
+
+function payloadGo(p){ pageState.payload.pageIndex = Math.max(1, p); loadPayload(false); }
+function payloadSize(n){ pageState.payload.pageSize = parseInt(n)||20; loadPayload(true); }
+
+/** 清空全部筛选条件。reload=false 时只清不查（供 payloadOfTrace 先清后填再查）。 */
+function resetPayloadFilters(reload = true){
+  ['pl_app','pl_model','pl_trace','pl_stream','pl_status','pl_finish','pl_truncated',
+   'pl_start','pl_end','pl_keyword'].forEach(id => { const el = $(id); if(el) el.value = ''; });
+  if(reload) loadPayload();
+}
+
+/** 填充系统/模型下拉。与审计页同一套数据源，各自只填一次。 */
+let _payloadFiltersFilled = false;
+async function fillPayloadFilters(){
+  if(_payloadFiltersFilled) return;
+  try{
+    const [models, appsResp] = await Promise.all([
+      fetchSelectableModels(),
+      fetch(apiUrl('/modelgate/apps?pageIndex=1&pageSize=200'), {headers:hdrs()}).then(r=>r.json()),
+    ]);
+    const apps = isOk(appsResp) ? (appsResp.data?.items || []) : [];
+    $('pl_model').innerHTML = '<option value="">全部模型</option>'
+      + models.map(m=>`<option value="${escapeHtml(m.modelId)}">${escapeHtml(m.modelName)} (${escapeHtml(m.modelId)})</option>`).join('');
+    $('pl_app').innerHTML = '<option value="">全部系统</option>'
+      + apps.map(a=>`<option value="${escapeHtml(a.appId)}">${escapeHtml(a.appName)} (${escapeHtml(a.appId)})</option>`).join('');
+    _payloadFiltersFilled = true;
+  }catch(e){
+    console.warn('[ModelGate] 报文筛选下拉填充失败', e);
+  }
+}
+
+function renderPayload(data){
+  const tbody = $('payloadTbody');
+  if(!data.length){
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="11">没有符合条件的报文（报文只对开启了记录开关的授权产生，且超过保留期会被清理）</td></tr>';
+    return;
+  }
+  tbody.innerHTML = data.map(p=>`
+    <tr>
+      <td style="font-size:12px;white-space:nowrap">${fmtTime(p.createTime)}</td>
+      <td><code style="font-size:11px" title="${escHtml(p.traceId||'')}">${escHtml((p.traceId||'').slice(0,12))}…</code>
+          <span onclick="copyText('${escHtml(p.traceId||'')}')" style="cursor:pointer;color:#6366f1;font-size:11px"
+                title="复制完整 TraceID">复制</span></td>
+      <td style="font-size:12px">${escHtml(p.appId||'-')}</td>
+      <td style="font-size:12px">${escHtml(p.modelId||'-')}</td>
+      <td>${p.isStream ? '<span class="tag tag-purple">流式</span>' : '<span class="tag tag-gray">非流式</span>'}</td>
+      <td>${statusTag(p.upstreamStatus)}</td>
+      <td>${finishTag(p.finishReason)}</td>
+      <td style="font-size:12px;white-space:nowrap">${tokenCell(p)}</td>
+      <td style="font-size:12px;color:#475569;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+          title="${escHtml(p.requestPreview||'')}${p.requestLen?`（共 ${fmtLen(p.requestLen)}）`:''}">${escHtml(p.requestPreview||'-')}</td>
+      <td style="font-size:12px;color:#475569;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+          title="${escHtml(p.responsePreview||'')}${p.responseTextLen?`（共 ${fmtLen(p.responseTextLen)}）`:''}">${escHtml(p.responsePreview||'-')}${truncTag(p.truncated)}</td>
+      <td><button class="btn btn-neutral btn-sm" onclick="openPayloadDetail(${p.id})">查看</button></td>
+    </tr>
+  `).join('');
+}
+
+/** length = 回答被 max_tokens 截断，content_filter = 被内容安全拦截，都是要一眼看出来的异常结束 */
+function finishTag(f){
+  if(!f) return '<span style="color:#94a3b8">-</span>';
+  const map = {stop:'tag-green', length:'tag-yellow', tool_calls:'tag-blue', content_filter:'tag-red'};
+  return `<span class="tag ${map[f]||'tag-gray'}">${escHtml(f)}</span>`;
+}
+
+/**
+ * truncated≠none 说明报文本身不完整，排查时不能拿它当上游真实返回，必须显式标出。
+ *
+ * 保留 request/both 的映射只是为了「万一以后请求侧也加了截断机制」时不显示成裸值，
+ * 当前后端只会写 none / response —— 见筛选下拉处的说明。
+ */
+function truncTag(t){
+  if(!t || t==='none') return '';
+  const label = {request:'请求被截', response:'响应被截', both:'均被截'}[t] || t;
+  return ` <span class="tag tag-red" style="font-size:10px">${escHtml(label)}</span>`;
+}
+
+/** 字符数（CHAR_LENGTH，非字节数）。只出现在正文预览的 tooltip 里，用于提示报文规模 */
+function fmtLen(n){
+  if(n == null) return '-';
+  if(n < 1024) return n + '字';
+  return (n/1024).toFixed(1) + 'K字';
+}
+
+/**
+ * Token 单元格：输入 / 输出，并标出口径。
+ *
+ * Token 来自 mg_audit_log（报文表按设计不冗余存），所以有两种"没有值"要区分开：
+ *   · null      —— 关联审计记录查不到（审计留 90 天、报文留 7 天，正常不该发生），显示 "-"
+ *   · 0         —— 确实没消耗 token（如请求直接失败），显示 0
+ * 一律按 0 展示会把数据异常伪装成"这次没烧 token"，这正是当初 token 恒为 0 的 bug 之所以
+ * 长期没被发现的原因，不能再犯。
+ *
+ * estimated 口径是本地按字符估算的，不能当账算，必须让人一眼看出来。
+ */
+function tokenCell(p){
+  if(p.inputTokens == null && p.outputTokens == null){
+    return '<span style="color:#94a3b8" title="未找到该 traceId 对应的审计记录">-</span>';
+  }
+  const i = p.inputTokens ?? 0, o = p.outputTokens ?? 0;
+  const src = {
+    usage:     ['tag-green',  '精确', '上游 usage 字段返回，精确值'],
+    estimated: ['tag-yellow', '估算', '上游未返回 usage（如 OpenAI 流式默认不带），按字符本地估算，不可当账算'],
+    none:      ['tag-gray',   '无',   '请求失败或无响应体，无 token'],
+  }[p.tokenSource];
+  const tag = src ? ` <span class="tag ${src[0]}" style="font-size:10px" title="${src[2]}">${src[1]}</span>` : '';
+  return `<b>${i.toLocaleString()}</b> / <b>${o.toLocaleString()}</b>${tag}`;
+}
+
+// 详情弹窗当前数据与 tab。数据一次取回、本地切 tab，不为切 tab 重复打接口。
+let _payloadDetail = null;
+let _payloadTab = 'request';
+
+async function openPayloadDetail(id){
+  _payloadDetail = null;
+  $('pd_trace').textContent = '';
+  $('pd_meta').textContent = '加载中…';
+  $('pd_body').textContent = '';
+  openModal('payloadDetailModal');
+  try{
+    const r = await fetch(apiUrl(`/modelgate/payload/detail?id=${encodeURIComponent(id)}`), {headers:hdrs()});
+    const j = await r.json();
+    if(!isOk(j)){ $('pd_meta').textContent = '加载失败: ' + errMsg(j); return; }
+    _payloadDetail = j.data || {};
+    $('pd_trace').textContent = _payloadDetail.traceId || '-';
+    $('pd_meta').innerHTML = `
+      <span>${fmtTime(_payloadDetail.createTime)}</span>
+      <span>${escHtml(_payloadDetail.appId||'-')} → ${escHtml(_payloadDetail.modelId||'-')}</span>
+      <span>${_payloadDetail.isStream?'流式 SSE':'非流式'}</span>
+      <span>上游 ${statusTag(_payloadDetail.upstreamStatus)}</span>
+      <span>${finishTag(_payloadDetail.finishReason)}</span>
+      <span>Token ${tokenCell(_payloadDetail)}</span>
+      <span>${truncTag(_payloadDetail.truncated) || '<span class="tag tag-green">完整</span>'}</span>
+      <span style="flex:1"></span>
+      <button class="btn btn-neutral btn-sm" onclick="payloadToAudit('${escHtml(_payloadDetail.traceId||'')}')">看审计记录</button>`;
+    setPayloadTab('request');
+  }catch(e){
+    console.warn('[ModelGate] 报文详情异常', e);
+    $('pd_meta').textContent = '请求异常: ' + e.message;
+  }
+}
+
+/**
+ * 反向跳转：从报文回到审计，看这次调用的耗时/token/最终状态码。
+ *
+ * 同样传 skipLoad=true。原先这条路径会并发发出四个请求：
+ * navTo 的 loadStats + loadAudit，加上这里的 loadAudit 又内部再调一次 loadStats。
+ * 现在只剩 loadAudit 一次（它内部自带 loadStats）。
+ */
+function payloadToAudit(traceId){
+  closeModal('payloadDetailModal');
+  navTo('audit', true);
+  $('auditApp').value = ''; $('auditModel').value = ''; $('auditStatus').value = '';
+  $('auditTrace').value = traceId || '';
+  loadAudit();
+}
+
+/**
+ * 切换正文 tab。
+ *
+ * 三份内容分别是：
+ *   request — 请求 JSON；响应正文 text — 人可直读的最终回答；
+ *   raw     — 流式时是带 data: 前缀的完整 SSE 分帧原文，用于复现上游到底怎么返回的。
+ * JSON 尝试美化（失败就原样显示，绝不因为格式化失败让人看不到内容）；SSE 原文不动它，
+ * 分帧结构本身就是要看的东西。
+ */
+function setPayloadTab(tab){
+  _payloadTab = tab;
+  ['request','text','raw'].forEach(t=>{
+    const btn = $('pd_tab_'+t);
+    if(btn) btn.className = 'btn btn-sm ' + (t===tab ? 'btn-primary' : 'btn-neutral');
+  });
+  const d = _payloadDetail || {};
+  let content, hint;
+  if(tab==='request'){
+    content = prettyJson(d.requestBody);
+    hint = '请求原文（含用户 prompt）';
+  }else if(tab==='text'){
+    content = d.responseText;
+    hint = d.isStream ? '各帧 delta 拼接后的最终文本' : 'choices[0].message.content';
+  }else{
+    content = d.isStream ? d.responseRaw : prettyJson(d.responseRaw);
+    hint = d.isStream ? '完整 SSE 流（保留 data: 前缀与全部分帧）' : '上游返回的原始 JSON';
+  }
+  $('pd_tabHint').textContent = hint;
+  const empty = (content == null || content === '');
+  $('pd_body').textContent = empty ? '（无内容）' : content;
+  // 底部显示当前这份内容的规模：报文有大有小，滚动条长度并不直观，
+  // 尤其"看起来空空的"到底是内容少还是取回来就是空，要能一眼区分。
+  $('pd_size').textContent = empty ? '' :
+    `当前内容 ${content.length.toLocaleString()} 字符${content.length > 20000 ? '（较大，渲染可能略慢）' : ''}`;
+  applyPayloadWrap();
+}
+
+/** 换行开关。不换行时用 pre 的默认行为，超长行横向滚动。 */
+function applyPayloadWrap(){
+  const on = $('pd_wrap').checked;
+  const el = $('pd_body');
+  el.style.whiteSpace   = on ? 'pre-wrap' : 'pre';
+  el.style.overflowWrap = on ? 'anywhere' : 'normal';
+}
+
+/** 字号增减，钳在 11–20px。报文常要逐字比对，能放大读一段是实用需求。 */
+function payloadFontStep(delta){
+  const el = $('pd_body');
+  const cur = parseInt(el.style.fontSize) || 13;
+  el.style.fontSize = Math.min(20, Math.max(11, cur + delta)) + 'px';
+}
+
+/** JSON 美化；不是合法 JSON 就原样返回——看到原文永远比看到"解析失败"有用 */
+function prettyJson(s){
+  if(s == null || s === '') return s;
+  try{ return JSON.stringify(JSON.parse(s), null, 2); }catch(e){ return s; }
+}
+
+// ============================================================
+// 网关配置
+// ============================================================
+async function loadConfig(){
+  try{
+    const r = await fetch(apiUrl('/modelgate/config'), {headers:hdrs()});
+    const j = await r.json();
+    renderConfig(j.data||[]);
+    // 填充快捷项
+    const map = {};
+    (j.data||[]).forEach(c=>map[c.configKey]=c.configValue);
+    if(map['circuit.breaker.enabled'])$('cfg_circuit_enabled').value = map['circuit.breaker.enabled'];
+  }catch(e){
+    renderConfig(DEMO_CONFIG);
+  }
+}
+
+function renderConfig(data){
+  const tbody = $('configTbody');
+  if(!data.length){ tbody.innerHTML='<tr class="empty-row"><td colspan="5">暂无配置</td></tr>'; return; }
+  tbody.innerHTML = data.map(c=>`
+    <tr>
+      <td><code>${c.configKey}</code></td>
+      <td><input type="text" value="${escHtml(c.configValue)}" id="cfgv_${c.configKey.replace(/\./g,'_')}" style="width:100%;min-width:200px"/></td>
+      <td style="font-size:12px;color:#64748b">${c.description||'-'}</td>
+      <td style="font-size:12px;color:#94a3b8">${fmtTime(c.updateTime)}</td>
+      <td>
+        <div class="flex gap-8">
+          <button class="btn btn-success btn-sm" title="PUT /modelgate/config/save  {key:'${c.configKey}'}" onclick="saveConfigKv('${c.configKey}','${escHtml(c.description||'')}')">保存</button>
+          <button class="btn btn-danger btn-sm" title="DELETE /modelgate/config/delete?key=${c.configKey}" onclick="delConfig('${c.configKey}')">删除</button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+}
+
+async function saveGlobalConfig(){
+  const cfgs = [
+    {key:'circuit.breaker.enabled',val:$('cfg_circuit_enabled').value,desc:'熔断开关'},
+  ];
+  let ok=0;
+  for(const c of cfgs){
+    try{ await fetch(apiUrl('/modelgate/config/save'), {method:'PUT', headers:hdrs(), body:JSON.stringify({key:c.key,value:c.val,description:c.desc})}); ok++; }
+    catch(e){ ok++; }
+  }
+  toast(`全局配置已保存`);
+  loadConfig();
+}
+
+async function saveConfigKv(key, desc){
+  const elId = 'cfgv_'+key.replace(/\./g,'_');
+  const value = $(elId) ? $(elId).value.trim() : '';
+  try{
+    const r = await fetch(apiUrl('/modelgate/config/save'), {method:'PUT', headers:hdrs(), body:JSON.stringify({key,value,description:desc})});
+    const j = await r.json();
+    if(isOk(j)){ toast(`[${key}] 已保存`); loadConfig(); }
+    else toast('失败: '+errMsg(j),'error');
+  }catch(e){ toast(`[${key}] 已保存（演示）`); }
+}
+
+async function delConfig(key){
+  if(!confirm(`确认删除配置 [${key}]？`)) return;
+  try{ await fetch(apiUrl(`/modelgate/config/delete?key=${key}`), {method:'DELETE', headers:hdrs()}); }catch(e){}
+  toast('已删除');
+  loadConfig();
+}
+
+async function addConfig(){
+  const key = $('newCfgKey').value.trim();
+  const val = $('newCfgVal').value.trim();
+  const desc= $('newCfgDesc').value.trim();
+  if(!key||!val){ toast('key 和 value 不能为空','error'); return; }
+  try{ await fetch(apiUrl('/modelgate/config/save'), {method:'PUT', headers:hdrs(), body:JSON.stringify({key,value:val,description:desc})}); }catch(e){}
+  $('newCfgKey').value=$('newCfgVal').value=$('newCfgDesc').value='';
+  toast('配置已新增');
+  loadConfig();
+}
+
+// ============================================================
+// Modal helpers
+// ============================================================
+function openModal(id){ $(id).classList.add('open'); }
+function closeModal(id){ $(id).classList.remove('open'); }
+
+// ============================================================
+// Utils
+// ============================================================
+function copyText(t){
+  navigator.clipboard.writeText(t).then(()=>toast('已复制到剪贴板')).catch(()=>{
+    const ta = document.createElement('textarea');
+    ta.value=t; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
+    toast('已复制到剪贴板');
+  });
+}
+
+function escHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+// Close modal on backdrop click
+document.querySelectorAll('.modal-backdrop').forEach(el=>{
+  el.addEventListener('click', e=>{ if(e.target===el) el.classList.remove('open'); });
+});
+
+// ============================================================
+// 模型测试工具
+// ============================================================
+let _tstMsgCnt = 0;
+// 测试弹窗自己的模型列表（全量），不共用只有当前页的 allModels
+let _tstModels = [];
+
+async function openModelTestModal(modelId) {
+  const sel = $('tst_model');
+  // 先放入被点击的那条，保证弹窗立刻可用；再异步补全下拉
+  sel.innerHTML = `<option value="${escapeHtml(modelId)}">${escapeHtml(modelId)}</option>`;
+  // 单独取全量：allModels 只是当前页，否则第 2 页之后的模型在下拉里选不到
+  fetchSelectableModels().then(models => {
+    if(models.length){
+      sel.innerHTML = models.map(m =>
+        `<option value="${escapeHtml(m.modelId)}" ${m.modelId === modelId ? 'selected' : ''}>${escapeHtml(m.modelName)} (${escapeHtml(m.modelId)})</option>`
+      ).join('');
+    }
+    _tstModels = models;
+    renderTestAuthInfo();
+  });
+
+  // 上游鉴权说明随所选模型联动
+  renderTestAuthInfo();
+  sel.onchange = renderTestAuthInfo;
+
+  // 重置消息列表：默认 system + user
+  _tstMsgCnt = 0;
+  $('testMsgList').innerHTML = '';
+  addTestMsg('system', '你是一个帮助用户解决问题的助手。');
+  addTestMsg('user', '你好！请介绍一下你自己。');
+
+  // 重置参数
+  $('tst_temp').value = '0.7';
+  $('tst_temp_v').textContent = '0.70';
+  $('tst_maxTok').value = '1024';
+  $('tst_topP').value = '1';
+  $('tst_stream').value = 'false';
+  $('tst_extra').value = '';
+
+  // 重置响应区
+  clearTestResp();
+  $('testReqRaw').textContent = '';
+  $('testReqRaw').classList.remove('open');
+  $('rawTogBtn').textContent = '▶ 原始请求体';
+
+  openModal('testModal');
+}
+
+// 展示当前所选模型的上游鉴权状态。只显示"有没有配、是哪种"，绝不显示密钥本身——
+// 后端 ModelVO 也不下发 secretKey，页面拿不到明文，这里靠 secretKeyConfigured 布尔位判断。
+function renderTestAuthInfo() {
+  const el = $('tst_authInfo');
+  if (!el) return;
+  const m = _tstModels.find(x => x.modelId === $('tst_model').value);
+  if (!m) { el.textContent = '-'; return; }
+
+  if (m.authType === 'none' || !m.authType) {
+    el.innerHTML = `<span class="tag tag-gray">不鉴权</span>
+      <span style="margin-left:8px;color:#64748b">该模型未配置上游鉴权，请求不携带鉴权头</span>`;
+    return;
+  }
+  const label = AUTH_TYPE_LABEL[m.authType] || m.authType;
+  if (m.secretKeyConfigured) {
+    el.innerHTML = `<span class="tag tag-green">已配置</span>
+      <span style="margin-left:8px">${escapeHtml(label)}</span>
+      <span style="margin-left:8px;color:#64748b">密钥 <code>••••••••</code> 由服务端解密后注入</span>`;
+  } else {
+    el.innerHTML = `<span class="tag tag-red">缺少密钥</span>
+      <span style="margin-left:8px">${escapeHtml(label)}</span>
+      <span style="margin-left:8px;color:#ef4444">该模型鉴权类型需要密钥但库中为空，测试大概率返回 401</span>`;
+  }
+}
+
+function addTestMsg(role = 'user', content = '') {
+  const id = ++_tstMsgCnt;
+  const div = document.createElement('div');
+  div.className = 'msg-blk';
+  div.id = 'tmsg-' + id;
+  div.innerHTML = `
+    <select id="tmsg-role-${id}">
+      <option value="system"   ${role==='system'   ?'selected':''}>system</option>
+      <option value="user"     ${role==='user'     ?'selected':''}>user</option>
+      <option value="assistant"${role==='assistant'?'selected':''}>assistant</option>
+    </select>
+    <textarea id="tmsg-cnt-${id}" placeholder="输入消息内容..."></textarea>
+    <button class="msg-blk-del" onclick="removeTestMsg(${id})" title="删除此消息">×</button>`;
+  // 直接持有刚创建的元素引用赋值，不再插入 DOM 后按 id 二次查询——
+  // 若页面被内网网页防篡改/终端代理等注入脚本影响导致 DOM 时序异常，二次查询可能落空
+  if (content) div.querySelector('textarea').value = content;
+  $('testMsgList').appendChild(div);
+}
+
+function removeTestMsg(id) {
+  const el = $('tmsg-' + id);
+  if (el) el.remove();
+}
+
+function clearTestResp() {
+  $('testRespBox').innerHTML = `<span class="rph">// 点击「▶ 发送请求」后，响应将显示在此处
+// stream: true 时实时流式显示模型输出内容
+// stream: false 时显示完整 JSON 响应（含 usage / tokens）</span>`;
+  $('testMetaBar').style.display = 'none';
+}
+
+function _buildTstMessages() {
+  const msgs = [];
+  $('testMsgList').querySelectorAll('.msg-blk').forEach(blk => {
+    // 相对当前 blk 查询，不再按拼接 id 做全局 getElementById——理由同 addTestMsg
+    const role    = blk.querySelector('select')?.value;
+    const content = blk.querySelector('textarea')?.value?.trim();
+    if (role && content) msgs.push({ role, content });
+  });
+  return msgs;
+}
+
+function _buildTstBody() {
+  const body = {
+    model:       $('tst_model').value,
+    messages:    _buildTstMessages(),
+    temperature: parseFloat($('tst_temp').value),
+    max_tokens:  parseInt($('tst_maxTok').value) || 1024,
+  };
+  const topP = parseFloat($('tst_topP').value);
+  if (topP < 1) body.top_p = topP;
+  if ($('tst_stream').value === 'true') body.stream = true;
+  const extra = $('tst_extra').value.trim();
+  if (extra) { try { Object.assign(body, JSON.parse(extra)); } catch(e) {} }
+  return body;
+}
+
+// 走管理面通道 POST /modelgate/models/chat/test：
+// 服务端解密库中模型凭证 → 适配器注入上游鉴权头 → 直连上游，密钥不出服务端。
+// 注意：该通道**跳过**凭证鉴权/访问控制/模型授权/配额限流，验证的是"模型配置本身能否调通"，
+// 不等价于业务系统 POST /v1/chat/completions 的完整链路。
+async function sendTestRequest() {
+  const modelId = $('tst_model').value;
+  if (!modelId) { toast('请选择模型', 'error'); return; }
+  const msgs = _buildTstMessages();
+  if (!msgs.length) { toast('请至少添加一条消息', 'error'); return; }
+
+  const body = _buildTstBody();
+  // 管理面通道返回聚合后的完整响应，不做 SSE 透传，强制非流式避免上游返回无法解析的分片
+  if (body.stream) {
+    delete body.stream;
+    toast('管理面测试通道不支持流式，已按非流式发送', 'info');
+  }
+
+  $('testReqRaw').textContent = JSON.stringify(body, null, 2);
+
+  const sendBtn = $('testSendBtn');
+  sendBtn.disabled = true;
+  sendBtn.textContent = '发送中…';
+  $('testRespBox').innerHTML = `<span class="rph">// 等待响应…</span>`;
+  $('testMetaBar').style.display = 'none';
+
+  const t0 = Date.now();
+  try {
+    const url = apiUrl(`/modelgate/models/chat/test?modelId=${encodeURIComponent(modelId)}`);
+    console.info('[ModelGate] 对话测试', url, body);
+    const resp = await fetch(url, {method:'POST', headers:hdrs(), body:JSON.stringify(body)});
+    const j = await resp.json();
+    console.info('[ModelGate] 对话测试响应', resp.status, j);
+
+    $('testMetaBar').style.display = 'flex';
+    $('testRespMs').textContent = (Date.now() - t0) + 'ms';
+    const stEl = $('testRespSt');
+
+    if (!isOk(j)) {
+      stEl.textContent = `${resp.status} ${_httpStatusText(resp.status)}`;
+      stEl.className = 'sterr';
+      $('testRespBox').textContent = `// 管理接口调用失败\n${errMsg(j)}`;
+      return;
+    }
+
+    // d.httpStatus 是**上游**的状态码，比管理接口自身的 200 更有诊断价值
+    const d = j.data || {};
+    stEl.textContent = d.httpStatus ? `${d.httpStatus} ${_httpStatusText(d.httpStatus)}` : '无响应';
+    stEl.className = d.success ? 'stok' : 'sterr';
+    if (d.latencyMs != null) $('testRespMs').textContent = d.latencyMs + 'ms';
+
+    const bodyText = d.upstreamBody || '';
+    // 先把模型回答单独抽出来置顶——排查时最先想看的是"模型到底答了什么"，
+    // 而不是从一坨 JSON 里找 choices[0].message.content
+    const answer = extractModelAnswer(bodyText);
+    let rendered = false;
+    if (bodyText) {
+      let raw;
+      try { raw = _jsonHL(JSON.stringify(JSON.parse(bodyText), null, 2)); }
+      catch(e) { raw = escapeHtml(bodyText); }
+      $('testRespBox').innerHTML = (answer
+          ? `<span style="color:#86efac">// 模型回答（完整）</span>
+${escapeHtml(answer)}
+
+`
+            + `<span class="rph">// ── 原始响应报文 ──</span>
+`
+          : '') + raw;
+      rendered = true;
+    }
+    if (!rendered) $('testRespBox').textContent = `// ${d.message || '上游无响应体'}`;
+    else if (!d.success) {
+      $('testRespBox').innerHTML =
+        `<span style="color:#ef4444">// ${escapeHtml(d.message||'')}\n// 上游地址: ${escapeHtml(d.upstreamUri||'-')}</span>\n\n`
+        + $('testRespBox').innerHTML;
+    }
+  } catch(e) {
+    console.warn('[ModelGate] 对话测试异常', e);
+    $('testMetaBar').style.display = 'flex';
+    $('testRespSt').textContent = '网络错误';
+    $('testRespSt').className = 'sterr';
+    $('testRespMs').textContent = (Date.now() - t0) + 'ms';
+    $('testRespBox').textContent = `// 请求失败: ${e.message}\n// 请确认网关进程已启动，且本页面通过网关域名访问`;
+  } finally {
+    sendBtn.disabled = false;
+    sendBtn.textContent = '▶ 发送请求';
+  }
+}
+
+function _httpStatusText(s) {
+  return ({200:'OK',400:'Bad Request',401:'Unauthorized',403:'Forbidden',
+           404:'Not Found',422:'Unprocessable Entity',429:'Too Many Requests',
+           500:'Internal Server Error',502:'Bad Gateway',503:'Service Unavailable'})[s] || '';
+}
+
+function _jsonHL(json) {
+  // 先转义 HTML 特殊字符
+  const esc = json.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  return esc.replace(
+    /("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
+    m => {
+      let cls = 'jn';
+      if (/^"/.test(m)) cls = /:$/.test(m) ? 'jk' : 'js';
+      else if (/true|false/.test(m)) cls = 'jb';
+      return `<span class="${cls}">${m}</span>`;
+    }
+  );
+}
+
+// ============================================================
+// Demo Data
+// ============================================================
+const DEMO_MODELS = [
+  {modelId:'gpt-4o',modelName:'GPT-4o',provider:'openai',modelType:'chat',apiSpec:'openai',upstreamUrl:'https://api.openai.com',timeoutMs:30000,enabled:true},
+  {modelId:'claude-3-5-sonnet',modelName:'Claude 3.5 Sonnet',provider:'anthropic',modelType:'chat',apiSpec:'anthropic',upstreamUrl:'https://api.anthropic.com',timeoutMs:60000,enabled:true},
+  {modelId:'gpt-4o-mini',modelName:'GPT-4o Mini',provider:'openai',modelType:'chat',apiSpec:'openai',upstreamUrl:'https://api.openai.com',timeoutMs:30000,enabled:true},
+  {modelId:'qwen-private',modelName:'通义千问（私有化）',provider:'private',modelType:'chat',apiSpec:'openai',upstreamUrl:'http://qwen.internal:8080',timeoutMs:60000,enabled:false},
+];
+
+const DEMO_APPS = [
+  {appId:'crm-service', sysCode:'CRM',  appCode:'CRM001',  appName:'客户关系管理系统', owner:'张三', enabled:true,  authCount:2,credCount:2,createTime:'2026-01-15T10:00:00'},
+  {appId:'bi-platform', sysCode:'BI',   appCode:'BI001',   appName:'BI 数据平台',      owner:'李四', enabled:true,  authCount:1,credCount:1,createTime:'2026-02-01T09:00:00'},
+  {appId:'risk-engine', sysCode:'RISK', appCode:'RISK001', appName:'风控引擎',          owner:'王五', enabled:true,  authCount:3,credCount:2,createTime:'2026-03-10T14:00:00'},
+];
+
+const DEMO_CREDS = {
+  'crm-service': [
+    {id:1,credName:'生产密钥',credType:'api_key',accessKey:'****...xyz4',enabled:true,expiresAt:null},
+    {id:2,credName:'测试密钥',credType:'ak_sk',  accessKey:'AK_crm_abc***',enabled:true,expiresAt:'2027-01-01T00:00:00'},
+  ],
+  'bi-platform': [{id:3,credName:'BI 密钥',credType:'api_key',accessKey:'****...bi89',enabled:true,expiresAt:null}],
+};
+
+const DEMO_AUTHS = {
+  'crm-service': [
+    {modelId:'gpt-4o',modelName:'GPT-4o',enabled:true,qpsLimit:10,dailyLimit:10000,monthlyTokens:5000000,expiresAt:null},
+    {modelId:'claude-3-5-sonnet',modelName:'Claude 3.5 Sonnet',enabled:true,qpsLimit:5,dailyLimit:0,monthlyTokens:0,expiresAt:'2026-12-31T23:59:59'},
+  ],
+};
+
+const DEMO_ACCESS = {
+  'crm-service': [
+    {id:1,ruleType:'cidr',ruleValue:'10.0.0.0/8'},
+    {id:2,ruleType:'ip',ruleValue:'192.168.1.100'},
+    {id:3,ruleType:'domain_wildcard',ruleValue:'*.internal.com'},
+  ],
+};
+
+const DEMO_AUDIT = [
+  {traceId:'abc123def456',appId:'crm-service',modelId:'gpt-4o',clientIp:'10.0.1.5',httpStatus:200,latencyMs:342,inputTokens:100,outputTokens:1104,createTime:'2026-04-23T10:01:00'},
+  {traceId:'def456ghi789',appId:'bi-platform',modelId:'gpt-4o',clientIp:'10.0.2.8',httpStatus:429,latencyMs:12,inputTokens:0,outputTokens:0,createTime:'2026-04-23T10:01:05'},
+  {traceId:'ghi789jkl012',appId:'risk-engine',modelId:'claude-3-5-sonnet',clientIp:'192.168.1.9',httpStatus:403,latencyMs:5,inputTokens:0,outputTokens:0,createTime:'2026-04-23T10:01:10'},
+];
+
+const DEMO_CONFIG = [
+  {configKey:'circuit.breaker.enabled',configValue:'true',description:'熔断开关',updateTime:'2026-04-23T10:00:00'},
+  {configKey:'rate.limit.default',configValue:'100',description:'全局默认 QPS',updateTime:'2026-04-23T10:00:00'},
+  {configKey:'aksk.window.seconds',configValue:'300',description:'AK/SK 防重放时间窗口',updateTime:'2026-04-23T10:00:00'},
+];
+
+// ============================================================
+// 初始化
+// ============================================================
+window.onload = () => {
+  loadModels();
+  loadApps();
+  loadStats();   // 统计卡片初始加载（审计页）
+};

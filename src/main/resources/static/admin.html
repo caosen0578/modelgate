@@ -99,6 +99,15 @@ textarea{resize:vertical;min-height:80px;font-family:monospace}
 .modal-backdrop.open{display:flex}
 .modal{background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.2);width:560px;max-width:94vw;max-height:90vh;overflow-y:auto;animation:slideUp .2s ease}
 .modal-wide{width:720px}
+/* 报文详情专用：报文动辄几千字，720px 宽 + 420px 高的固定框读起来很痛苦。
+   这里改成撑满视口的阅读窗——正文区 flex 自适应高度，随浏览器窗口一起长，
+   而不是写死一个 max-height 让人在小窗里反复滚。
+   外层 overflow:hidden + 正文 min-height:0，是 flex 容器里让内部滚动条正常工作的必要写法
+   （不写 min-height:0，flex 子项不会收缩到小于内容高度，滚动条会跑到最外层去）。 */
+.modal-xl{width:1280px;max-width:96vw;height:90vh;max-height:90vh;
+          display:flex;flex-direction:column;overflow:hidden}
+.modal-xl .modal-body{flex:1;min-height:0;display:flex;flex-direction:column;gap:0}
+.modal-xl .modal-header,.modal-xl .modal-footer{flex:none}
 @keyframes slideUp{from{transform:translateY(20px);opacity:0}to{transform:none;opacity:1}}
 .modal-header{padding:20px 24px 16px;border-bottom:1px solid #f1f5f9;display:flex;align-items:center;justify-content:space-between}
 .modal-header h3{font-size:16px;font-weight:600;color:#1e1b4b}
@@ -827,25 +836,35 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
      三个正文分三个 tab，不同时铺开：单条报文可达几 MB，一次性塞进 DOM 会把页面卡死。
      切 tab 时只渲染当前那一份，数据本身已在 openPayloadDetail 里取回，不重复请求。 -->
 <div class="modal-backdrop" id="payloadDetailModal">
-  <div class="modal modal-wide">
+  <div class="modal modal-xl">
     <div class="modal-header">
       <h3>报文详情 · <span id="pd_trace" style="font-family:monospace;font-size:13px"></span></h3>
       <button class="modal-close" onclick="closeModal('payloadDetailModal')">×</button>
     </div>
     <div class="modal-body">
-      <div class="rmeta" id="pd_meta">-</div>
-      <div class="flex gap-8" style="margin:12px 0 8px">
+      <div class="rmeta" id="pd_meta" style="flex:none">-</div>
+      <div class="flex gap-8" style="margin:12px 0 8px;flex:none;align-items:center">
         <button class="btn btn-neutral btn-sm" id="pd_tab_request"  onclick="setPayloadTab('request')">请求报文</button>
         <button class="btn btn-neutral btn-sm" id="pd_tab_text"     onclick="setPayloadTab('text')">响应正文</button>
         <button class="btn btn-neutral btn-sm" id="pd_tab_raw"      onclick="setPayloadTab('raw')">响应原文</button>
+        <span class="hint" id="pd_tabHint" style="margin-left:4px"></span>
         <span style="flex:1"></span>
-        <span class="hint" id="pd_tabHint"></span>
+        <!-- 换行开关：SSE 原文与压缩 JSON 常有超长单行，不换行时得横向拖着看；
+             但换行又会打乱缩进对齐。两种读法都有用，交给用户切。 -->
+        <label style="font-size:12px;color:#64748b;display:flex;align-items:center;gap:5px;cursor:pointer">
+          <input type="checkbox" id="pd_wrap" checked onchange="applyPayloadWrap()" style="width:auto;margin:0"> 自动换行
+        </label>
+        <span style="font-size:12px;color:#64748b">字号</span>
+        <button class="btn btn-neutral btn-sm" onclick="payloadFontStep(-1)" title="缩小">A−</button>
+        <button class="btn btn-neutral btn-sm" onclick="payloadFontStep(1)"  title="放大">A+</button>
       </div>
-      <pre id="pd_body" style="background:#1e293b;color:#e2e8f0;border-radius:8px;padding:14px;
-           font-family:monospace;font-size:12px;line-height:1.6;overflow:auto;max-height:420px;
-           white-space:pre-wrap;word-break:break-all;margin:0"></pre>
+      <pre id="pd_body" style="background:#1e293b;color:#e2e8f0;border-radius:8px;padding:18px 20px;
+           font-family:ui-monospace,Consolas,Menlo,monospace;font-size:13px;line-height:1.7;
+           flex:1;min-height:0;overflow:auto;margin:0;
+           white-space:pre-wrap;overflow-wrap:anywhere;word-break:normal"></pre>
     </div>
     <div class="modal-footer">
+      <span id="pd_size" style="flex:1;font-size:12px;color:#94a3b8"></span>
       <button class="btn btn-neutral" onclick="closeModal('payloadDetailModal')">关闭</button>
       <button class="btn btn-primary" onclick="copyText($('pd_body').textContent)">复制当前内容</button>
     </div>
@@ -3317,7 +3336,28 @@ function setPayloadTab(tab){
     hint = d.isStream ? '完整 SSE 流（保留 data: 前缀与全部分帧）' : '上游返回的原始 JSON';
   }
   $('pd_tabHint').textContent = hint;
-  $('pd_body').textContent = (content == null || content === '') ? '（无内容）' : content;
+  const empty = (content == null || content === '');
+  $('pd_body').textContent = empty ? '（无内容）' : content;
+  // 底部显示当前这份内容的规模：报文有大有小，滚动条长度并不直观，
+  // 尤其"看起来空空的"到底是内容少还是取回来就是空，要能一眼区分。
+  $('pd_size').textContent = empty ? '' :
+    `当前内容 ${content.length.toLocaleString()} 字符${content.length > 20000 ? '（较大，渲染可能略慢）' : ''}`;
+  applyPayloadWrap();
+}
+
+/** 换行开关。不换行时用 pre 的默认行为，超长行横向滚动。 */
+function applyPayloadWrap(){
+  const on = $('pd_wrap').checked;
+  const el = $('pd_body');
+  el.style.whiteSpace   = on ? 'pre-wrap' : 'pre';
+  el.style.overflowWrap = on ? 'anywhere' : 'normal';
+}
+
+/** 字号增减，钳在 11–20px。报文常要逐字比对，能放大读一段是实用需求。 */
+function payloadFontStep(delta){
+  const el = $('pd_body');
+  const cur = parseInt(el.style.fontSize) || 13;
+  el.style.fontSize = Math.min(20, Math.max(11, cur + delta)) + 'px';
 }
 
 /** JSON 美化；不是合法 JSON 就原样返回——看到原文永远比看到"解析失败"有用 */
