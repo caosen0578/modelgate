@@ -77,6 +77,14 @@ public class GlobalExceptionHandler implements ErrorWebExceptionHandler {
             log.warn("[ModelGate] 业务异常: {} {} -> code={}, message={}",
                     method, path, be.getErrorCode().getCode(), detail);
             result = Result.fail(String.valueOf(be.getErrorCode().getCode()), detail);
+        } else if (ex instanceof com.pab.ficc.ibp.modelgate.server.crypto.CryptoService.CryptoException ce) {
+            // 解密失败属于「配置/数据问题」而非服务故障：最常见的就是当前 crypto.key
+            // 与该凭证加密时的密钥不是同一把。此前它混在未捕获异常里，前端只看到
+            // 500 "internal server error"，完全看不出是密钥不匹配还是密文损坏，
+            // 只能靠翻服务端堆栈才知道是 AEADBadTagException——那不该是排查的起点。
+            status = HttpStatus.BAD_REQUEST;
+            log.warn("[ModelGate] 凭证解密失败: {} {} | {}", method, path, ce.getMessage());
+            result = Result.fail(String.valueOf(ErrorCode.INVALID_PARAMETER.getCode()), ce.getMessage());
         } else {
             log.error("[ModelGate] 未捕获异常: {} {} -> {}", method, path, ex.getMessage(), ex);
             result = Result.fail(String.valueOf(ErrorCode.INTERNAL_ERROR.getCode()), ErrorCode.INTERNAL_ERROR.getMessage());

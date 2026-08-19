@@ -46,6 +46,26 @@ import java.util.Optional;
 public class CredentialAuthFilter implements GlobalFilter, Ordered {
 
     private static final int ORDER = -190;
+
+    /**
+     * 每线程复用的 HmacSHA256 实例。
+     *
+     * <p>{@code Mac.getInstance("HmacSHA256")} 每次调用都要走一遍 JCA provider 查找与实例化，
+     * 而 AKSK 验签是<b>每请求</b>都要做的。Mac 实例不是线程安全的，不能做成全局单例，
+     * 但每个线程留一个是安全的：{@code mac.init(key)} 会把内部状态重置，
+     * 上一次调用的残留不会带到下一次。
+     *
+     * <p>用 boundedElastic 这类<b>有界</b>线程池时，ThreadLocal 的数量天然受限于线程数，
+     * 不存在无限增长问题。
+     */
+    private static final ThreadLocal<Mac> HMAC_SHA256 = ThreadLocal.withInitial(() -> {
+        try {
+            return Mac.getInstance("HmacSHA256");
+        } catch (java.security.NoSuchAlgorithmException e) {
+            // HmacSHA256 是 JDK 标准算法，取不到说明运行环境本身有问题，属于不可恢复错误
+            throw new IllegalStateException("HmacSHA256 不可用", e);
+        }
+    });
     private static final long MAX_TIMESTAMP_SKEW_MS = 5L * 60 * 1000;
 
     /**
@@ -198,8 +218,13 @@ public class CredentialAuthFilter implements GlobalFilter, Ordered {
             return false;
         }
         try {
-            String plainSk = cryptoService.decrypt(cred.getSecretEncrypted());
-            Mac mac = Mac.getInstance("HmacSHA256");
+            // decryptCached 而非 decrypt：AKSK 每个请求都要明文 SK，而解密是纯函数
+            // （同一段密文永远解出同一个明文），原先每请求做一次完整 AES-GCM 解密纯属重复劳动。
+            // 缓存边界与安全取舍见 CryptoService.decryptCache。
+            String plainSk = cryptoService.decryptCached(cred.getSecretEncrypted());
+            // Mac 实例复用：Mac.getInstance 每次都要走 JCA provider 查找，
+            // 而 Mac 本身不是线程安全的，所以按线程各留一个、每次 init 时自动 reset。
+            Mac mac = HMAC_SHA256.get();
             mac.init(new SecretKeySpec(plainSk.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
             byte[] expected = mac.doFinal((accessKey + ":" + timestamp).getBytes(StandardCharsets.UTF_8));
             byte[] actual;
