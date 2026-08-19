@@ -5,7 +5,6 @@ import com.pab.ficc.ibp.modelgate.server.service.ModelAuthService;
 import com.pab.ficc.ibp.modelgate.server.service.PayloadService;
 import com.pab.ficc.ibp.modelgate.server.service.UpstreamResponseParser;
 
-import java.io.ByteArrayOutputStream;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
@@ -86,8 +85,12 @@ public class TraceFilter implements GlobalFilter, Ordered {
                         HttpStatusCode status = exchange.getResponse().getStatusCode();
                         int httpStatus = status != null ? status.value() : 0;
 
-                        byte[] requestBytes  = exchange.getAttribute("mg.bodyBytes");
-                        byte[] responseBytes = collectedResponse(exchange);
+                        byte[] requestBytes = exchange.getAttribute("mg.bodyBytes");
+                        ResponseCapture capture = exchange.getAttribute(PayloadCaptureFilter.ATTR_RESPONSE_BYTES);
+                        // TAIL 模式下这只是尾部若干 KB，不是完整响应；总字节数单独取，
+                        // 供解析器在找不到 usage 时做估算兜底（用尾巴长度会严重少算）
+                        byte[] responseBytes = capture == null || capture.isEmpty() ? null : capture.toByteArray();
+                        long totalResponseBytes = capture == null ? 0L : capture.totalBytes();
                         boolean stream = PayloadCaptureFilter.isStreamResponse(exchange);
 
                         // Token 解析**不受报文开关控制**，始终执行：
@@ -101,7 +104,8 @@ public class TraceFilter implements GlobalFilter, Ordered {
                         // 谁再往这个 doFinally 里加无界或阻塞操作，必须同步挪线程，不能想当然继续同步跑。
                         UpstreamResponseParser.ParsedResponse parsed = responseBytes == null
                                 ? UpstreamResponseParser.ParsedResponse.empty()
-                                : responseParser.parseUsageOnly(responseBytes, stream, requestBytes);
+                                : responseParser.parseUsageOnly(responseBytes, stream, requestBytes,
+                                        totalResponseBytes);
 
                         // 全量审计：appId 为空表示鉴权阶段即被拒（mg_audit_log.app_id 本就可空）。
                         // 这类记录是排查"谁在拿无效凭证反复试"的唯一依据，不能因为没有 appId 就丢掉。
@@ -113,7 +117,11 @@ public class TraceFilter implements GlobalFilter, Ordered {
 
                         // 报文留档：仅当该 (appId, modelId) 授权行开了开关。
                         // submit 只入队不解析，O(1)，不阻塞
+                        // capture.isFullMode() 是必要条件：TAIL 模式手里只有尾巴，
+                        // 落库会写进去一段残缺原文，比不记还糟。PayloadCaptureFilter 已按
+                        // 同一套开关决定模式，这里再判一次是防止两边判断漂移。
                         if (appId != null && modelId != null && responseBytes != null
+                                && capture.isFullMode()
                                 && modelAuthService.isPayloadLogEnabled(appId, modelId)) {
                             payloadService.submit(traceId, appId, modelId, requestBytes, responseBytes,
                                     stream, Boolean.TRUE.equals(exchange.getAttribute(
@@ -121,9 +129,13 @@ public class TraceFilter implements GlobalFilter, Ordered {
                                     httpStatus);
                         }
 
-                        log.debug("[Trace] 完成: appId={}, modelId={}, status={}, latency={}ms, tokens={}/{}({}), signal={}",
-                                appId, modelId, httpStatus, latencyMs,
-                                parsed.inputTokens(), parsed.outputTokens(), parsed.tokenSource(), signal);
+                        // isDebugEnabled 守卫不是多余的：8 个参数的 log.debug 即使级别没开，
+                        // varargs 的 Object[8] 装箱数组**仍会分配**，每请求一次。
+                        if (log.isDebugEnabled()) {
+                            log.debug("[Trace] 完成: appId={}, modelId={}, status={}, latency={}ms, tokens={}/{}({}), signal={}",
+                                    appId, modelId, httpStatus, latencyMs,
+                                    parsed.inputTokens(), parsed.outputTokens(), parsed.tokenSource(), signal);
+                        }
                     } catch (Exception e) {
                         // doFinally 抛出的异常会打断响应收尾，而审计失败绝不该影响已经完成的业务请求。
                         // 必须就地吞掉并记 WARN——静默吞则审计断流时无人知晓
@@ -132,9 +144,4 @@ public class TraceFilter implements GlobalFilter, Ordered {
                 });
     }
 
-    /** 取 PayloadCaptureFilter 采集到的响应字节；未采集到（如请求被拒、非业务路径）返回 null。 */
-    private static byte[] collectedResponse(ServerWebExchange exchange) {
-        Object buf = exchange.getAttribute(PayloadCaptureFilter.ATTR_RESPONSE_BYTES);
-        return buf instanceof ByteArrayOutputStream out ? out.toByteArray() : null;
-    }
 }

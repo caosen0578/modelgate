@@ -79,6 +79,85 @@ public class RateLimitService {
             "return current";
 
     /**
+     * QPS + 日调用量 + 月 Token 三层配额<b>一次往返</b>完成。
+     *
+     * <p>取代原先三次独立 {@code eval}。三次串行往返的代价不在端到端延迟——
+     * LLM 请求本身几十秒，两次多余的内网 RTT 可以忽略——而在于
+     * <b>线程与连接的占用时长</b>：Jedis 是同步阻塞客户端，三次调用意味着
+     * 一个 boundedElastic 线程和三份连接借还，全部乘以三。合并后降到 1/3。
+     *
+     * <p><b>短路语义与原实现完全一致</b>：QPS 超限时不再触碰日计数器，
+     * 日超限时不触碰月计数器。顺序不能改——改了会让被限流的请求也消耗日配额。
+     *
+     * <p>三个 key 分属不同 slot，这在 Redis Cluster 下会因 CROSSSLOT 被拒。
+     * 本项目 Redis 是<b>单机直连</b>（见 application.yml 的 redis.local host/port），
+     * 不存在该问题。<b>若将来切到集群，必须给三个 key 加相同的 hash tag</b>，
+     * 否则本方法会整体失败并 fail-open（等于配额全线失效，且只有 WARN 日志）。
+     *
+     * @return 0=全部通过，1=QPS 超限，2=日调用量超限，3=月 Token 超限
+     */
+    private static final String COMBINED_QUOTA_SCRIPT =
+            "local qpsLimit = tonumber(ARGV[1])\n" +
+            "if qpsLimit > 0 then\n" +
+            "    local c = redis.call('INCR', KEYS[1])\n" +
+            "    if c == 1 then redis.call('EXPIRE', KEYS[1], ARGV[2]) end\n" +
+            "    if c > qpsLimit then return 1 end\n" +
+            "end\n" +
+            "local dailyLimit = tonumber(ARGV[3])\n" +
+            "if dailyLimit > 0 then\n" +
+            "    local c = redis.call('INCR', KEYS[2])\n" +
+            "    if c == 1 then redis.call('EXPIRE', KEYS[2], ARGV[4]) end\n" +
+            "    if c > dailyLimit then return 2 end\n" +
+            "end\n" +
+            "local monthlyLimit = tonumber(ARGV[5])\n" +
+            "if monthlyLimit > 0 then\n" +
+            "    local v = redis.call('GET', KEYS[3])\n" +
+            "    if v and tonumber(v) >= monthlyLimit then return 3 end\n" +
+            "end\n" +
+            "return 0";
+
+    /** {@link #checkAllQuotas} 的返回码 */
+    public static final int QUOTA_OK = 0;
+    public static final int QUOTA_QPS_EXCEEDED = 1;
+    public static final int QUOTA_DAILY_EXCEEDED = 2;
+    public static final int QUOTA_MONTHLY_EXCEEDED = 3;
+
+    /**
+     * 三层配额合并检查，见 {@link #COMBINED_QUOTA_SCRIPT}。
+     *
+     * <p>三个上限都 ≤0（全不限）时<b>直接返回，不打 Redis</b>——
+     * 否则每个不设配额的请求都要白白付一次往返。
+     */
+    public int checkAllQuotas(String appId, String modelId,
+                              int qpsLimit, int dailyLimit, long monthlyLimit) {
+        if (qpsLimit <= 0 && dailyLimit <= 0 && monthlyLimit <= 0) {
+            return QUOTA_OK;
+        }
+        try {
+            LocalDate today = LocalDate.now();
+            LocalDateTime now = LocalDateTime.now();
+            long dailyTtl = ChronoUnit.SECONDS.between(now, today.plusDays(1).atTime(LocalTime.MIDNIGHT));
+
+            List<String> keys = List.of(
+                    "rl:quota:qps:" + appId + ":" + modelId + ":" + (System.currentTimeMillis() / 1000),
+                    "quota:daily:" + appId + ":" + modelId + ":" + today,
+                    monthlyKey(appId, modelId));
+            List<String> args = List.of(
+                    String.valueOf(qpsLimit), "2",
+                    String.valueOf(dailyLimit), String.valueOf(Math.max(dailyTtl, 1)),
+                    String.valueOf(monthlyLimit));
+
+            Object result = cacheProvider.eval(COMBINED_QUOTA_SCRIPT, keys, args);
+            return result == null ? QUOTA_OK : ((Number) result).intValue();
+        } catch (Exception e) {
+            // fail-open 与原实现一致：Redis 故障不能让业务全线中断
+            log.warn("[RateLimitService] 配额合并检查失败，fail-open appId={} modelId={}: {}",
+                    appId, modelId, e.getMessage());
+            return QUOTA_OK;
+        }
+    }
+
+    /**
      * 通用秒级滑动窗口限流。
      *
      * <p>key 包含秒级时间戳，每秒自然滚动到新 key，旧 key 在 TTL=2s 后自动清理。

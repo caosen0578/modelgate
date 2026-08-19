@@ -42,6 +42,14 @@ public class UpstreamResponseParser {
 
     private final ObjectMapper objectMapper;
 
+    /** 换行字节常量。用常量而不是字符字面量，避免脚本/编辑器的转义层把它改坏。 */
+    private static final byte LF = (byte) 10;
+    private static final byte CR = (byte) 13;
+
+    private static boolean isLineBreak(byte b) {
+        return b == LF || b == CR;
+    }
+
     /**
      * 解析结果。
      *
@@ -160,6 +168,21 @@ public class UpstreamResponseParser {
      * 改用响应字节数粗略估算（本身就是 estimated 口径，允许有精度损失）。
      */
     public ParsedResponse parseUsageOnly(byte[] responseBytes, boolean stream, byte[] requestBytes) {
+        return parseUsageOnly(responseBytes, stream, requestBytes,
+                responseBytes == null ? 0L : responseBytes.length);
+    }
+
+    /**
+     * 同上，但显式传入响应的<b>真实总字节数</b>。
+     *
+     * <p>调用方可能只保留了响应的尾部（见 {@code ResponseCapture} 的 TAIL 模式）——
+     * 此时 {@code responseBytes.length} 只是尾巴的长度，<b>不能</b>拿它做 Token 估算兜底，
+     * 否则估算值会被压到极小，悄悄少算月度配额。
+     *
+     * @param totalResponseBytes 响应真实总字节数；调用方若保留了全量，传 responseBytes.length 即可
+     */
+    public ParsedResponse parseUsageOnly(byte[] responseBytes, boolean stream, byte[] requestBytes,
+                                         long totalResponseBytes) {
         if (responseBytes == null || responseBytes.length == 0) {
             return ParsedResponse.empty();
         }
@@ -170,22 +193,51 @@ public class UpstreamResponseParser {
             return new ParsedResponse(full.inputTokens(), full.outputTokens(), full.tokenSource(),
                     null, full.finishReason());
         }
-        return parseStreamUsageOnly(responseBytes, requestBytes);
+        return parseStreamUsageOnly(responseBytes, requestBytes, totalResponseBytes);
     }
 
     /** parseUsageOnly 的流式分支：反向扫描，最多看尾部 {@link #TAIL_SCAN_FRAME_LIMIT} 个有效帧 */
     private static final int TAIL_SCAN_FRAME_LIMIT = 20;
 
-    private ParsedResponse parseStreamUsageOnly(byte[] responseBytes, byte[] requestBytes) {
-        String body = new String(responseBytes, StandardCharsets.UTF_8);
-        String[] lines = body.split("\n");
-
+    /**
+     * 流式响应的尾部 usage 扫描。
+     *
+     * <p><b>真正只碰尾部</b>。上一版虽然限制了「解析成 JSON 的帧数」，但开头先做了
+     * {@code new String(整个响应)} 再 {@code split("
+")}——把整条 SSE 流物化成一个大 String
+     * 外加<b>每一行一个 String 对象</b>的数组。一条 500KB、两千帧的流，光这一步就是
+     * 500KB 字符串 + 2000 个 String + 一个大数组，每个请求一次，全落在响应收尾路径上。
+     * 类注释里"只扫描尾部若干字节，成本可忽略"对 CPU 成立，对<b>内存完全不成立</b>。
+     *
+     * <p>现在改成在 byte[] 上从尾部反向找换行，<b>只对真正要解析的那几帧</b>做 UTF-8 解码，
+     * 扫到 usage 与 finish_reason 就停。分配量从"整条流"降到"最多 20 帧"。
+     */
+    private ParsedResponse parseStreamUsageOnly(byte[] responseBytes, byte[] requestBytes,
+                                                long totalResponseBytes) {
         int[] usage = null;
         String finishReason = null;
         int scanned = 0;
-        for (int i = lines.length - 1; i >= 0 && scanned < TAIL_SCAN_FRAME_LIMIT
-                && (usage == null || finishReason == null); i--) {
-            String frame = lines[i].strip();
+
+        int end = responseBytes.length;
+        // 末尾可能是若干换行，先跳过，避免把空行当成一帧
+        while (end > 0 && isLineBreak(responseBytes[end - 1])) {
+            end--;
+        }
+
+        while (end > 0 && scanned < TAIL_SCAN_FRAME_LIMIT && (usage == null || finishReason == null)) {
+            int lineStart = end - 1;
+            while (lineStart > 0 && responseBytes[lineStart - 1] != LF) {
+                lineStart--;
+            }
+            // 只对这一行做解码，而不是整条流
+            String frame = new String(responseBytes, lineStart, end - lineStart, StandardCharsets.UTF_8).strip();
+
+            // 下一轮扫描它前面那一行；同样跳过连续换行
+            end = lineStart;
+            while (end > 0 && isLineBreak(responseBytes[end - 1])) {
+                end--;
+            }
+
             if (frame.isEmpty() || !frame.startsWith(SSE_DATA_PREFIX)) {
                 continue;   // 帧分隔空行、event:/id: 等字段不计入扫描帧数
             }
@@ -210,10 +262,11 @@ public class UpstreamResponseParser {
         if (usage != null) {
             return new ParsedResponse(usage[0], usage[1], SOURCE_USAGE, null, finishReason);
         }
-        // 尾部若干帧内没找到 usage（罕见，如 OpenAI 未开 include_usage 且响应超出扫描上限）：
-        // 按响应总字节数粗略估算，不为了估算再做一次全量正向拼正文——那正是本方法要避免的开销
+        // 尾部若干帧内没找到 usage：按响应**总字节数**粗略估算。
+        // 注意用 totalResponseBytes 而不是 responseBytes.length——调用方可能只留了尾部，
+        // 用尾巴长度估算会把结果压到极小，悄悄少算配额。
         return new ParsedResponse(estimateTokens(requestBytes),
-                Math.max(1, responseBytes.length / CHARS_PER_TOKEN_ESTIMATE),
+                (int) Math.max(1, Math.min(Integer.MAX_VALUE, totalResponseBytes / CHARS_PER_TOKEN_ESTIMATE)),
                 SOURCE_ESTIMATED, null, finishReason);
     }
 

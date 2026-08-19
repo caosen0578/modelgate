@@ -39,11 +39,43 @@
         </encoder>
     </appender>
 
-    <!-- ===== 异步写文件（不阻塞主链路） ===== -->
+    <!-- ===== 异步写文件（不阻塞主链路） =====
+         ⚠️ neverBlock 必须显式设为 true。AsyncAppender 的默认值是 **false**，
+         也就是「队列满时阻塞调用方」——而调用方在本项目里很可能就是 Netty 事件循环线程。
+         一旦磁盘抖动或日志突增把 512 的队列打满，写日志就会卡住事件循环，
+         连累该 EventLoop 上的**所有连接**。这与本项目"绝不阻塞转发"的硬约束直接冲突。
+         配上 discardingThreshold=0 (永不按级别丢弃) 之后，这个阻塞风险反而是最高的：
+         什么都不丢、满了就只能等。
+
+         现在的取舍：宁可丢日志，也不能卡转发。
+           queueSize          2048  —— 容纳更长的突发
+           discardingThreshold 256  —— 剩余容量低于 256 时优先丢弃 INFO/DEBUG，保住 WARN/ERROR
+           neverBlock         true  —— 彻底填满时直接丢弃，绝不阻塞调用线程
+           includeCallerData  false —— 显式声明。它默认就是 false，但一旦有人打开，
+                                       每条日志都要抓一次调用栈，开销是数量级的增长 -->
     <appender name="ASYNC_FILE" class="ch.qos.logback.classic.AsyncAppender">
-        <discardingThreshold>0</discardingThreshold>
-        <queueSize>512</queueSize>
+        <queueSize>2048</queueSize>
+        <discardingThreshold>256</discardingThreshold>
+        <neverBlock>true</neverBlock>
+        <includeCallerData>false</includeCallerData>
         <appender-ref ref="FILE"/>
+    </appender>
+
+    <!-- ===== 异步控制台 =====
+         ConsoleAppender 的写入是 synchronized 的，且容器里 stdout 往往被日志驱动接管，
+         对端一慢就会反压到调用线程。同步挂在 root 上等于给热路径埋了个阻塞点，
+         所以这里同样包一层 Async。
+
+         另外注意：CONSOLE 与 FILE **同时**挂在 root 上，意味着每条日志被格式化两次、
+         写两次（一次 PatternLayout、一次 LogstashEncoder）。文件已是 ELK 采集口径，
+         若确认容器侧不从 stdout 采集日志，可以直接把 root 里的 ASYNC_CONSOLE 去掉，
+         省掉整整一份格式化开销。这里保留是因为去掉属于可观测性行为变更，需要你确认采集方式。 -->
+    <appender name="ASYNC_CONSOLE" class="ch.qos.logback.classic.AsyncAppender">
+        <queueSize>2048</queueSize>
+        <discardingThreshold>256</discardingThreshold>
+        <neverBlock>true</neverBlock>
+        <includeCallerData>false</includeCallerData>
+        <appender-ref ref="CONSOLE"/>
     </appender>
 
     <!-- ===== 单一固定配置，不使用 Spring Profile 机制 =====
@@ -54,7 +86,7 @@
          每个请求多打若干条 DEBUG 日志，是压测持续负载下长尾延迟的次要贡献因素之一。
          控制台 + 文件双写（此前仅挂 CONSOLE，导致 logs/modelgate.log 恒为空，无法回溯排查）。 -->
     <root level="${LOG_LEVEL}">
-        <appender-ref ref="CONSOLE"/>
+        <appender-ref ref="ASYNC_CONSOLE"/>
         <appender-ref ref="ASYNC_FILE"/>
     </root>
 

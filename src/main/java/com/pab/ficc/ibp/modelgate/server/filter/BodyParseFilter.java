@@ -1,7 +1,8 @@
 package com.pab.ficc.ibp.modelgate.server.filter;
 
 import com.pab.ficc.ibp.modelgate.server.constant.UrlConstant;
-import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -17,8 +18,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
-
-import java.nio.charset.StandardCharsets;
 
 /**
  * 请求体缓存过滤器（order=-175）。
@@ -86,13 +85,40 @@ public class BodyParseFilter implements GlobalFilter, Ordered {
                 .switchIfEmpty(chain.filter(exchange));
     }
 
+    /**
+     * 从请求体里取出顶层的 {@code model} 字段。
+     *
+     * <p><b>流式扫描，不建树</b>。上一版是
+     * {@code new String(bytes, UTF_8)} + {@code objectMapper.readTree(body)}——
+     * 为了拿一个字符串字段，先把整个请求体复制成 String，再建一棵完整的 JsonNode 树。
+     * 多轮对话的 {@code messages} 数组动辄几百 KB 到几 MB，这两步的分配量与请求体成正比，
+     * 而且<b>跑在 Netty 事件循环线程上</b>——请求体越大，卡住的 EventLoop 时间越长，
+     * 连累的是该 EventLoop 上的所有连接。
+     *
+     * <p>现在用 {@link JsonParser} 只遍历<b>顶层字段</b>：遇到对象/数组值直接
+     * {@code skipChildren()} 跳过（只做词法扫描，不构造任何节点），扫到 {@code model} 立即返回。
+     * 典型请求里 {@code model} 就在最前面，实际只读几十字节就结束。
+     *
+     * <p>只认顶层的 {@code model}：{@code messages} 里的用户内容完全可能出现同名字段，
+     * 建树版本用 {@code node.get("model")} 天然只取顶层，这里必须显式保持同样的语义。
+     */
     private void extractModelId(ServerWebExchange exchange, byte[] bytes) {
-        try {
-            String body = new String(bytes, StandardCharsets.UTF_8);
-            JsonNode node = objectMapper.readTree(body);
-            JsonNode modelNode = node.get("model");
-            if (modelNode != null && modelNode.isTextual()) {
-                exchange.getAttributes().put("mg.modelId", modelNode.asText());
+        try (JsonParser parser = objectMapper.getFactory().createParser(bytes)) {
+            if (parser.nextToken() != JsonToken.START_OBJECT) {
+                return;   // 顶层不是对象，没有 model 可取
+            }
+            while (parser.nextToken() == JsonToken.FIELD_NAME) {
+                String name = parser.currentName();
+                JsonToken value = parser.nextToken();
+                if ("model".equals(name)) {
+                    if (value == JsonToken.VALUE_STRING) {
+                        exchange.getAttributes().put("mg.modelId", parser.getText());
+                    }
+                    return;   // 顶层 model 只会有一个，取到即止
+                }
+                if (value == JsonToken.START_OBJECT || value == JsonToken.START_ARRAY) {
+                    parser.skipChildren();   // 关键：整段跳过，不为 messages 建任何节点
+                }
             }
         } catch (Exception e) {
             log.debug("[BodyParse] 请求体未能解析出 model 字段: {}", e.getMessage());

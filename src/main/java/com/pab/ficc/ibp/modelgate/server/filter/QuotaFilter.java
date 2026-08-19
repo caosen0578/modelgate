@@ -89,30 +89,29 @@ public class QuotaFilter implements GlobalFilter, Ordered {
             return null;
         }
 
+        // 用普通 for 而不是 stream：这是每请求都走的热路径，
+        // stream 的 Spliterator/Lambda 链每次都要分配，授权列表通常只有个位数条目，
+        // 顺序遍历更快也不分配
         List<AppModelAuthEntity> auths = modelAuthService.listByAppIdCached(appId);
-        Optional<AppModelAuthEntity> authOpt = auths.stream()
-                .filter(a -> a.getModelId().equals(modelId))
-                .findFirst();
-
-        if (authOpt.isEmpty()) return null;
-        AppModelAuthEntity auth = authOpt.get();
-
-        if (!rateLimitService.isQpsAllowed(appId, modelId, auth.getQpsLimit())) {
-            log.info("[QuotaFilter] QPS exceeded appId={} modelId={}", appId, modelId);
-            return ErrorCode.QUOTA_EXCEEDED_QPS;
+        AppModelAuthEntity auth = null;
+        for (AppModelAuthEntity a : auths) {
+            if (modelId.equals(a.getModelId())) {
+                auth = a;
+                break;
+            }
         }
+        if (auth == null) return null;
 
-        if (!rateLimitService.isDailyAllowed(appId, modelId, auth.getDailyLimit())) {
-            log.info("[QuotaFilter] Daily limit exceeded appId={} modelId={}", appId, modelId);
-            return ErrorCode.QUOTA_EXCEEDED_DAILY;
-        }
-
-        if (!rateLimitService.checkMonthlyTokens(appId, modelId, auth.getMonthlyTokens())) {
-            log.info("[QuotaFilter] Monthly token quota exceeded appId={} modelId={}", appId, modelId);
-            return ErrorCode.QUOTA_EXCEEDED_MONTHLY;
-        }
-
-        return null;
+        // 三层配额一次 Redis 往返完成（原先是三次串行 eval）。
+        // 短路语义不变：QPS 超限就不再动日计数器，日超限不再动月计数器。
+        int verdict = rateLimitService.checkAllQuotas(appId, modelId,
+                auth.getQpsLimit(), auth.getDailyLimit(), auth.getMonthlyTokens());
+        return switch (verdict) {
+            case RateLimitService.QUOTA_QPS_EXCEEDED -> ErrorCode.QUOTA_EXCEEDED_QPS;
+            case RateLimitService.QUOTA_DAILY_EXCEEDED -> ErrorCode.QUOTA_EXCEEDED_DAILY;
+            case RateLimitService.QUOTA_MONTHLY_EXCEEDED -> ErrorCode.QUOTA_EXCEEDED_MONTHLY;
+            default -> null;
+        };
     }
 
     private Mono<Void> reject(ServerWebExchange exchange, ErrorCode errorCode) {
