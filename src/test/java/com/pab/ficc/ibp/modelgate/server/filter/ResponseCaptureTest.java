@@ -34,6 +34,7 @@ public class ResponseCaptureTest {
         fullMode();
         totalBytesAccuracy();
         modelExtraction();
+        modelValueOffsets();
 
         System.out.println();
         System.out.println("通过 " + pass + " / " + (pass + fail));
@@ -146,6 +147,58 @@ public class ResponseCaptureTest {
         check("非对象顶层返回 null", extract("[1,2,3]") == null);
         check("非法 JSON 不抛异常", extract("{not json") == null);
         check("model 非字符串按无值处理", extract("{\"model\":123}") == null);
+    }
+
+    /**
+     * 验证 BodyParseFilter 记下的 model 值字节偏移**确实指向该 token**（含前后双引号）。
+     *
+     * <p>这条是 upstream_model_id 定点替换的地基：偏移差一个字节，拼出来就是坏 JSON，
+     * 而且要到真实转发时才炸。不能靠"Jackson 应该是这么定义的"来推断，必须实测。
+     */
+    private static void modelValueOffsets() throws Exception {
+        for (String body : new String[]{
+                "{\"model\":\"gpt-4o\",\"messages\":[]}",
+                "{\"messages\":[{\"role\":\"user\"}],\"model\":\"m-2\"}",
+                "{ \"model\" : \"spaced\" , \"x\":1}",
+        }) {
+            Map<String, Object> attrs = new HashMap<>();
+            runExtract(body, attrs);
+            Integer st = (Integer) attrs.get("mg.modelValueStart");
+            Integer en = (Integer) attrs.get("mg.modelValueEnd");
+            String modelId = (String) attrs.get("mg.modelId");
+            if (st == null || en == null) {
+                check("偏移已记录: " + body, false);
+                continue;
+            }
+            byte[] raw = body.getBytes(StandardCharsets.UTF_8);
+            String token = new String(raw, st, en - st, StandardCharsets.UTF_8);
+            check("偏移精确覆盖 model 值 token: " + token,
+                    token.equals("\"" + modelId + "\""));
+        }
+
+        // 定点替换后必须仍是合法 JSON，且只有 model 变了
+        String body = "{\"model\":\"outward\",\"messages\":[{\"content\":\"model\"}]}";
+        Map<String, Object> attrs = new HashMap<>();
+        runExtract(body, attrs);
+        int st = (Integer) attrs.get("mg.modelValueStart");
+        int en = (Integer) attrs.get("mg.modelValueEnd");
+        byte[] raw = body.getBytes(StandardCharsets.UTF_8);
+        String spliced = new String(raw, 0, st, StandardCharsets.UTF_8)
+                + "\"real-id\""
+                + new String(raw, en, raw.length - en, StandardCharsets.UTF_8);
+        com.fasterxml.jackson.databind.JsonNode n = new ObjectMapper().readTree(spliced);
+        check("拼接后仍是合法 JSON 且只有 model 变",
+                "real-id".equals(n.get("model").asText())
+                        && "model".equals(n.get("messages").get(0).get("content").asText()));
+    }
+
+    private static void runExtract(String json, Map<String, Object> attrs) throws Exception {
+        BodyParseFilter filter = new BodyParseFilter(new ObjectMapper());
+        Object exchange = FakeExchange.create(attrs);
+        Method m = BodyParseFilter.class.getDeclaredMethod("extractModelId",
+                org.springframework.web.server.ServerWebExchange.class, byte[].class);
+        m.setAccessible(true);
+        m.invoke(filter, exchange, json.getBytes(StandardCharsets.UTF_8));
     }
 
     private static String longMessages(int n) {

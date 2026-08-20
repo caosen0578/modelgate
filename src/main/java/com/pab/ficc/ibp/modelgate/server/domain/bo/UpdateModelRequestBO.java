@@ -18,6 +18,8 @@ public class UpdateModelRequestBO {
     /** 上游接口路径，如 /v1/chat/completions；留空按 apiSpec 取默认 */
     private String  upstreamPath;
     private Integer timeoutMs;
+    /** 上游真实模型 ID，留空则透传 modelId */
+    private String  upstreamModelId;
     private String  defaultParams;
     private String  forceParams;
     /** 自定义字段映射 JSON，api_spec=custom 时生效 */
@@ -38,6 +40,7 @@ public class UpdateModelRequestBO {
         m.setUpstreamUrl(upstreamUrl);
         m.setUpstreamPath(upstreamPath);
         m.setTimeoutMs(timeoutMs);
+        m.setUpstreamModelId(upstreamModelId);
         m.setDefaultParams(defaultParams);
         m.setForceParams(forceParams);
         m.setParamMapping(paramMapping);

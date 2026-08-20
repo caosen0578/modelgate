@@ -664,6 +664,16 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
             <span class="hint">对外暴露的唯一标识，创建后不可修改</span>
           </div>
           <div class="form-group">
+            <label>上游真实模型 ID</label>
+            <input type="text" id="m_upstreamModelId" placeholder="留空 = 与上面的模型 ID 相同"/>
+            <span class="hint">
+              <b>留空即可</b>，除非对外 ID 与上游真实 ID 不一致。
+              典型场景：同一个模型部署在两个平台（两个域名），平台以「模型 ID 重复」拒绝新增第二个地址——
+              此时上面填一个对外用的新名字，这里填上游认识的真实 ID，网关转发前会自动换回来。
+              调用方无感知；审计与配额仍按<b>对外 ID</b> 统计。
+            </span>
+          </div>
+          <div class="form-group">
             <label>展示名称 <span style="color:red">*</span></label>
             <input type="text" id="m_modelName" placeholder="GPT-4o"/>
           </div>
@@ -1656,6 +1666,7 @@ async function viewModel(modelId){
     </table>
     <h4 style="margin:16px 0 8px">参数配置</h4>
     <table style="width:100%;border-collapse:collapse">
+      ${viewRow('上游真实模型 ID', m.upstreamModelId || '（与对外 ID 相同）')}
       ${viewRow('默认参数', m.defaultParams, true)}
       ${viewRow('强制参数', m.forceParams, true)}
       ${viewRow('字段映射', m.paramMapping, true)}
@@ -1720,6 +1731,7 @@ function openModelModal(modelId=null){
   if(modelId){
     const m = allModels.find(x=>x.modelId===modelId) || {};
     $('m_modelId').value = m.modelId||'';
+    $('m_upstreamModelId').value = m.upstreamModelId||'';
     $('m_modelName').value = m.modelName||'';
     $('m_provider').value = m.provider||'openai';
     $('m_modelType').value = m.modelType||'chat';
@@ -1739,7 +1751,7 @@ function openModelModal(modelId=null){
     $('m_azureApiKey').value = '';
     setSecretKeyState(!!m.secretKeyConfigured);
   } else {
-    ['m_modelId','m_modelName','m_description','m_upstreamUrl','m_upstreamPath','m_accessKey','m_secretKey','m_secretKeySk',
+    ['m_modelId','m_upstreamModelId','m_modelName','m_description','m_upstreamUrl','m_upstreamPath','m_accessKey','m_secretKey','m_secretKeySk',
      'm_azureApiKey','m_azureResource','m_azureDeploy','m_azureVersion','m_defaultParams','m_forceParams','m_paramMapping'].forEach(id=>$( id).value='');
     $('m_timeoutMs').value = 30000;
     $('m_provider').value = 'openai';
@@ -1758,6 +1770,7 @@ function openModelModal(modelId=null){
 async function submitModel(){
   const body = {
     modelId:       $('m_modelId').value.trim(),
+    upstreamModelId:$('m_upstreamModelId').value.trim(),
     modelName:     $('m_modelName').value.trim(),
     provider:      $('m_provider').value,
     modelType:     $('m_modelType').value,
@@ -1847,6 +1860,7 @@ async function testModelConnById(modelId){
 function buildDraftConfig(){
   return {
     modelId:      $('m_modelId').value.trim(),
+    upstreamModelId:$('m_upstreamModelId').value.trim(),
     modelType:    $('m_modelType').value,
     apiSpec:      $('m_apiSpec').value,
     upstreamUrl:  $('m_upstreamUrl').value.trim(),

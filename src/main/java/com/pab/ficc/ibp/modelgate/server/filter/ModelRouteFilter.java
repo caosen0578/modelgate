@@ -193,7 +193,12 @@ public class ModelRouteFilter implements GlobalFilter, Ordered {
             // 再交给适配器做 api_spec 特有的改写。顺序不能反：适配器可能会删掉某些字段
             // （如 Azure 会 remove("model")），先跑适配器的话这些配置就落在了会被删掉的字段上。
             // 三项都没配时 merge 直接原样返回，不解析不分配。
-            byte[] mergedBody = paramMerger.merge(bodyBytes, model);
+            // 把 BodyParseFilter 顺带记下的 model 值偏移传下去：
+            // 「只需改上游模型 ID」这种情况能靠它走定点替换，省掉一次完整解析+序列化。
+            Integer mvStart = exchange.getAttribute(BodyParseFilter.ATTR_MODEL_VALUE_START);
+            Integer mvEnd = exchange.getAttribute(BodyParseFilter.ATTR_MODEL_VALUE_END);
+            byte[] mergedBody = paramMerger.merge(bodyBytes, model,
+                    mvStart == null ? -1 : mvStart, mvEnd == null ? -1 : mvEnd);
             byte[] transformedBody = adapter.transformRequestBody(mergedBody, model, credential);
             HttpHeaders transformedHeaders = adapter.buildUpstreamHeaders(model, credential);
             URI upstreamUri = adapter.buildUpstreamUri(model, exchange.getRequest().getURI());

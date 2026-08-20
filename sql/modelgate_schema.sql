@@ -27,6 +27,10 @@
 CREATE TABLE IF NOT EXISTS mg_model (
     id             BIGINT       NOT NULL AUTO_INCREMENT           COMMENT '主键，自增',
     model_id       VARCHAR(64)  NOT NULL                          COMMENT '对外暴露的模型标识（业务唯一键），如 gpt-4o',
+    -- 留空 = 直接透传 model_id；填了 = 转发前把请求体里的 model 换成它。
+    -- 用途：同一真实模型部署在多个平台时，平台会以「模型 ID 重复」拒绝新增第二个地址，
+    -- 于是对外换个名字、转发前再改回真实 ID。调用方无感知，审计与配额仍按对外 ID 统计。
+    upstream_model_id VARCHAR(64)                                 COMMENT '上游真实模型 ID，留空则透传 model_id',
     model_name     VARCHAR(128) NOT NULL                          COMMENT '模型展示名称',
     provider       VARCHAR(32)  NOT NULL                          COMMENT '提供商：openai|azure_openai|anthropic|private|custom',
     model_type     VARCHAR(32)  NOT NULL DEFAULT 'chat'           COMMENT '模型类型：chat|embedding|image|audio',

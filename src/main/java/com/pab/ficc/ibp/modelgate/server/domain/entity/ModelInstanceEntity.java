@@ -16,6 +16,17 @@ public class ModelInstanceEntity {
     @TableId(type = IdType.AUTO)
     private Long id;
     private String modelId;
+
+    /**
+     * 上游真实模型 ID。留空 = 直接透传 {@link #modelId}。
+     *
+     * <p>用于把<b>对外暴露的 ID</b> 与<b>转发给上游的 ID</b> 解耦：同一个真实模型部署在两个平台时，
+     * 平台会以「模型 ID 重复」拒绝新增第二个地址，于是对外换个名字、转发前再改回真实 ID。
+     *
+     * <p>与 {@code forceParams} 里写 {@code {"model":"..."}} 效果相同，但语义清楚得多——
+     * forceParams 是「调用参数」，这里是「路由身份」。两处都设时<b>本字段优先</b>。
+     */
+    private String upstreamModelId;
     private String modelName;
     private String provider;
     private String modelType;

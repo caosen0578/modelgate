@@ -36,6 +36,7 @@ public class RequestParamMergerTest {
         mappingDoesNotClobber();
         badConfigFallsBack();
         modelRename();
+        upstreamModelIdRename();
 
         System.out.println();
         System.out.println("通过 " + pass + " / " + (pass + fail));
@@ -113,6 +114,48 @@ public class RequestParamMergerTest {
         ModelInstanceEntity m = model("openai", null, "{\"model\":\"DeepSeek-V3\"}", null);
         JsonNode out = merge("{\"model\":\"deepseek-v3-platform-b\",\"messages\":[]}", m);
         check("force_params 可实现模型 ID 改名", "DeepSeek-V3".equals(out.get("model").asText()));
+    }
+
+    /** 专用字段改名：只配 upstream_model_id 时走字节级定点替换，不解析 */
+    private static void upstreamModelIdRename() throws Exception {
+        ModelInstanceEntity m = model("openai", null, null, null);
+        m.setModelId("deepseek-v3-b");
+        m.setUpstreamModelId("deepseek-ai/DeepSeek-V3");
+
+        String bodyStr = "{\"model\":\"deepseek-v3-b\",\"messages\":[{\"role\":\"user\",\"content\":\"你好\"}]}";
+        byte[] body = bytes(bodyStr);
+        // 模拟 BodyParseFilter 记下的偏移：model 值 token（含引号）的位置
+        int start = bodyStr.indexOf("\"deepseek-v3-b\"");
+        int end = start + "\"deepseek-v3-b\"".length();
+
+        byte[] out = MERGER.merge(body, m, start, end);
+        JsonNode node = MAPPER.readTree(out);
+        check("定点替换：model 已换成上游真实 ID",
+                "deepseek-ai/DeepSeek-V3".equals(node.get("model").asText()));
+        check("定点替换：其余字段原封不动",
+                "你好".equals(node.get("messages").get(0).get("content").asText()));
+        check("定点替换：确实没走解析路径（结果不是重新序列化的紧凑形态）",
+                new String(out, StandardCharsets.UTF_8).contains("\"messages\":[{\"role\""));
+
+        // 偏移未知时必须能退回解析方式，结果一致
+        byte[] out2 = MERGER.merge(body, m, -1, -1);
+        check("偏移未知时回退解析，结果一致",
+                "deepseek-ai/DeepSeek-V3".equals(MAPPER.readTree(out2).get("model").asText()));
+
+        // 与 force_params 冲突时 upstream_model_id 优先
+        ModelInstanceEntity m2 = model("openai", null, "{\"model\":\"from-force\"}", null);
+        m2.setModelId("outward");
+        m2.setUpstreamModelId("from-upstream-field");
+        JsonNode out3 = merge("{\"model\":\"outward\"}", m2);
+        check("与 force_params 冲突时 upstream_model_id 优先",
+                "from-upstream-field".equals(out3.get("model").asText()));
+
+        // 与对外 ID 相同 → 视为不需要改名，零开销
+        ModelInstanceEntity m3 = model("openai", null, null, null);
+        m3.setModelId("same-id");
+        m3.setUpstreamModelId("same-id");
+        byte[] same = bytes("{\"model\":\"same-id\"}");
+        check("上游 ID 与对外 ID 相同时不做任何事", MERGER.merge(same, m3, 9, 18) == same);
     }
 
     // ===================== 工具 =====================

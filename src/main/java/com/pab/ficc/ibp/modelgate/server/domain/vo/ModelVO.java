@@ -18,6 +18,8 @@ public class ModelVO {
     /** 上游接口路径；留空表示按 apiSpec 取默认，前端据此展示占位提示 */
     private String        upstreamPath;
     private Integer       timeoutMs;
+    /** 上游真实模型 ID，留空表示透传 modelId */
+    private String        upstreamModelId;
     private String        defaultParams;
     private String        forceParams;
     /** 自定义字段映射 JSON，api_spec=custom 时生效；编辑弹窗需要回显 */
@@ -50,6 +52,7 @@ public class ModelVO {
         vo.upstreamUrl  = e.getUpstreamUrl();
         vo.upstreamPath = e.getUpstreamPath();
         vo.timeoutMs    = e.getTimeoutMs();
+        vo.upstreamModelId = e.getUpstreamModelId();
         vo.defaultParams = e.getDefaultParams();
         vo.forceParams  = e.getForceParams();
         vo.paramMapping = e.getParamMapping();

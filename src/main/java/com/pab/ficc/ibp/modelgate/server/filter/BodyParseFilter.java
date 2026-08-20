@@ -45,6 +45,15 @@ public class BodyParseFilter implements GlobalFilter, Ordered {
 
     private static final int ORDER = -175;
 
+    /**
+     * 请求体里 {@code model} 值的字节起止位置（含前后双引号），供上游模型 ID 替换做定点拼接。
+     *
+     * <p>只在成功提取到 model 时才写入；提取不到、或 BodyParseFilter 未生效时不存在，
+     * 使用方需要有解析回退路径。
+     */
+    public static final String ATTR_MODEL_VALUE_START = "mg.modelValueStart";
+    public static final String ATTR_MODEL_VALUE_END = "mg.modelValueEnd";
+
     private final ObjectMapper objectMapper;
 
     @Override
@@ -113,6 +122,16 @@ public class BodyParseFilter implements GlobalFilter, Ordered {
                 if ("model".equals(name)) {
                     if (value == JsonToken.VALUE_STRING) {
                         exchange.getAttributes().put("mg.modelId", parser.getText());
+                        // 顺带记下这个值在原始字节数组里的位置（含前后双引号）。
+                        // 配了 upstream_model_id 的模型要把它替换成上游真实 ID，
+                        // 有了偏移就能做一次 arraycopy 拼接搞定，**不用再解析一遍整个请求体**。
+                        // 这两行是白捡的——parser 此刻就停在该 token 上，取位置不需要额外扫描。
+                        long start = parser.currentTokenLocation().getByteOffset();
+                        long end = parser.currentLocation().getByteOffset();
+                        if (start >= 0 && end > start && end <= bytes.length) {
+                            exchange.getAttributes().put(ATTR_MODEL_VALUE_START, (int) start);
+                            exchange.getAttributes().put(ATTR_MODEL_VALUE_END, (int) end);
+                        }
                     }
                     return;   // 顶层 model 只会有一个，取到即止
                 }

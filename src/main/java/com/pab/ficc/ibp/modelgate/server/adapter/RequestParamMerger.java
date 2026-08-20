@@ -56,6 +56,25 @@ public class RequestParamMerger {
      * @return 合并后的请求体；无需合并或合并失败时返回 {@code originalBody} 本身（同一个数组引用）
      */
     public byte[] merge(byte[] originalBody, ModelInstanceEntity model) {
+        return merge(originalBody, model, -1, -1);
+    }
+
+    /**
+     * 同上，额外接收请求体里 {@code model} 值的字节起止位置（由 BodyParseFilter 顺带记下）。
+     *
+     * <p>有了这两个偏移，「只需要改模型 ID」这种最常见的情况就能走
+     * <b>字节级定点替换</b>——一次 arraycopy 拼接，<b>不解析、不建树、不重新序列化</b>。
+     * 传 -1 表示位置未知，此时退回解析方式。
+     *
+     * <p>三条路径，按代价从低到高：
+     * <ol>
+     *   <li>什么都没配 → 原样返回同一个数组引用，零开销</li>
+     *   <li>只需改模型 ID 且偏移已知 → 一次拼接</li>
+     *   <li>还配了 default/force/mapping → 解析一次，改名顺带做掉，不额外收费</li>
+     * </ol>
+     */
+    public byte[] merge(byte[] originalBody, ModelInstanceEntity model,
+                        int modelValueStart, int modelValueEnd) {
         if (originalBody == null || originalBody.length == 0 || model == null) {
             return originalBody;
         }
@@ -63,9 +82,21 @@ public class RequestParamMerger {
         String forced = model.getForceParams();
         String mapping = "custom".equals(model.getApiSpec()) ? model.getParamMapping() : null;
 
+        String upstreamModelId = model.getUpstreamModelId();
+        boolean needRename = !isBlank(upstreamModelId)
+                && !upstreamModelId.equals(model.getModelId());
+
         if (isBlank(defaults) && isBlank(forced) && isBlank(mapping)) {
-            // 快路径：没配任何东西，一个字节都不动
-            return originalBody;
+            if (!needRename) {
+                // 快路径：什么都没配，一个字节都不动
+                return originalBody;
+            }
+            // 只需改模型 ID：能定点替换就别解析
+            if (modelValueStart >= 0 && modelValueEnd > modelValueStart
+                    && modelValueEnd <= originalBody.length) {
+                return spliceModelId(originalBody, modelValueStart, modelValueEnd, upstreamModelId);
+            }
+            // 偏移未知（BodyParseFilter 未生效等），退回解析方式
         }
 
         try {
@@ -83,6 +114,12 @@ public class RequestParamMerger {
             }
             if (!isBlank(mapping)) {
                 applyMapping(root, mapping, model);
+            }
+            // 改名放在最后：upstream_model_id 是专为路由身份设计的字段，
+            // 与 force_params 里的 model 冲突时**它优先**。
+            // 走到这里说明本来就要解析+序列化，改名不额外收费。
+            if (needRename) {
+                root.put("model", upstreamModelId);
             }
             return objectMapper.writeValueAsBytes(root);
         } catch (Exception e) {
@@ -154,6 +191,32 @@ public class RequestParamMerger {
             }
             root.set(to, root.remove(from));
         }
+    }
+
+    /**
+     * 字节级定点替换 {@code model} 的值。
+     *
+     * <p>{@code [start, end)} 是原始值 token 的范围，<b>含前后双引号</b>，
+     * 所以这里写入的新值也要自带引号。除此之外整个请求体原样保留——
+     * 几 MB 的 body 上这就是两次 arraycopy，比「建树 + 重新序列化」便宜约一个数量级。
+     *
+     * <p>新值必须做 JSON 字符串转义：模型 ID 通常是安全字符，但不能把正确性
+     * 押在「输入恰好没有引号和反斜杠」上。
+     */
+    private byte[] spliceModelId(byte[] body, int start, int end, String newModelId) {
+        byte[] replacement;
+        try {
+            // 用 Jackson 生成带引号且转义正确的 JSON 字符串字面量，不自己拼
+            replacement = objectMapper.writeValueAsBytes(newModelId);
+        } catch (Exception e) {
+            log.warn("[ParamMerger] 上游模型 ID 无法编码为 JSON 字符串，按原请求体转发: {}", newModelId);
+            return body;
+        }
+        byte[] out = new byte[body.length - (end - start) + replacement.length];
+        System.arraycopy(body, 0, out, 0, start);
+        System.arraycopy(replacement, 0, out, start, replacement.length);
+        System.arraycopy(body, end, out, start + replacement.length, body.length - end);
+        return out;
     }
 
     private static boolean isBlank(String s) {
