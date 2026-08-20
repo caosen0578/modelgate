@@ -1850,22 +1850,18 @@ async function submitModel(){
     const r = await fetch(url, {method, headers:hdrs(), body:JSON.stringify(body)});
     const j = await r.json();
     console.info('[ModelGate] 响应', r.status, j);
-    if(isOk(j)){ toast(editingModelId?'模型已更新':'模型已创建'); closeModal('modelModal'); loadModels(); }
+    if(isOk(j)){
+      toast(editingModelId?'模型已更新':'模型已创建');
+      closeModal('modelModal');
+      await loadModels();
+    }
     // HTTP 非 2xx 时把状态码一起带出来，便于对照后端日志中的同一条 traceId
     else toast(`失败(HTTP ${r.status}): ` + errMsg(j) + (j.logTraceId?` [trace=${j.logTraceId}]`:''), 'error');
   }catch(e){
-    console.warn('[ModelGate] 请求异常，回落演示模式', e);
-    // Demo 模式
-    if(editingModelId){
-      const idx = allModels.findIndex(x=>x.modelId===editingModelId);
-      if(idx>=0) allModels[idx] = {...allModels[idx], ...body};
-    } else {
-      allModels.push({...body, enabled:true, createTime:new Date().toISOString()});
-    }
-    $('modelCount').textContent = allModels.length;
-    renderModels(allModels);
-    toast(editingModelId?'模型已更新（演示）':'模型已创建（演示）');
-    closeModal('modelModal');
+    // 生产管理面绝不能在写请求失败后伪造本地成功，否则外键/事务失败会被掩盖，
+    // 运维会误以为模型改名已经落库。保留表单和弹窗，便于修正后重试。
+    console.warn('[ModelGate] 模型提交请求异常', e);
+    toast('提交失败：' + e.message, 'error');
   }
 }
 
@@ -1882,12 +1878,21 @@ function modelConfigForLog(config){
 async function toggleModel(modelId, currentEnabled){
   const action = currentEnabled ? 'disable' : 'enable';
   try{
-    await fetch(apiUrl(`/modelgate/models/${action}?modelId=${encodeURIComponent(modelId)}`), {method:'PATCH', headers:hdrs()});
-  }catch(e){}
-  // 服务端分页后不能只改本地数组：过滤条件可能让这一行不再属于当前页，
-  // 且 total / 页数都要重算。统一重新加载当前页。
-  await loadModels();
-  toast(`模型已${currentEnabled?'禁用':'启用'}`);
+    const r = await fetch(apiUrl(`/modelgate/models/${action}?modelId=${encodeURIComponent(modelId)}`),
+                          {method:'PATCH', headers:hdrs()});
+    const j = await r.json();
+    if(!isOk(j)){
+      toast(`${currentEnabled?'禁用':'启用'}失败(HTTP ${r.status}): ${errMsg(j)}`, 'error');
+      return;
+    }
+    // 服务端分页后不能只改本地数组：过滤条件可能让这一行不再属于当前页，
+    // 且 total / 页数都要重算。统一重新加载当前页。
+    await loadModels();
+    toast(`模型已${currentEnabled?'禁用':'启用'}`);
+  }catch(e){
+    console.warn('[ModelGate] 模型启禁请求异常', e);
+    toast(`${currentEnabled?'禁用':'启用'}失败：${e.message}`, 'error');
+  }
 }
 
 async function deleteModel(modelId){
@@ -1895,12 +1900,15 @@ async function deleteModel(modelId){
   try{
     const r = await fetch(apiUrl(`/modelgate/models/delete?modelId=${encodeURIComponent(modelId)}`), {method:'DELETE', headers:hdrs()});
     const j = await r.json();
-    if(!isOk(j)){ toast('删除失败: '+errMsg(j),'error'); return; }
-  }catch(e){}
-  // 删掉最后一页的最后一条时会停在一个空页，回退一页
-  if(allModels.length === 1 && pageState.models.pageIndex > 1) pageState.models.pageIndex--;
-  await loadModels();
-  toast('模型已删除');
+    if(!isOk(j)){ toast(`删除失败(HTTP ${r.status}): ${errMsg(j)}`,'error'); return; }
+    // 删掉最后一页的最后一条时会停在一个空页，回退一页
+    if(allModels.length === 1 && pageState.models.pageIndex > 1) pageState.models.pageIndex--;
+    await loadModels();
+    toast('模型已删除');
+  }catch(e){
+    console.warn('[ModelGate] 模型删除请求异常', e);
+    toast('删除失败：' + e.message, 'error');
+  }
 }
 
 // 列表页对已保存模型的测试：无 body，后端按 modelId 查库
@@ -1993,7 +2001,12 @@ async function testModelConn(){
     console.info('[ModelGate] 连通性测试', url, '草稿模式', modelConfigForLog(draft));
     const r = await fetch(url, opt);
     const j = await r.json();
-    console.info('[ModelGate] 连通性测试响应', r.status, j);
+    // 上游正文可能含业务数据，只记录诊断元信息，不把完整回答长期留在浏览器控制台。
+    console.info('[ModelGate] 连通性测试响应', r.status, {
+      resultCode:j?.resultCode, success:j?.data?.success,
+      httpStatus:j?.data?.httpStatus, latencyMs:j?.data?.latencyMs,
+      bodyChars:j?.data?.upstreamBody?.length||0
+    });
 
     if(!isOk(j)){
       el.textContent = `❌ 请求失败(HTTP ${r.status}): ${errMsg(j)}`;
@@ -3826,7 +3839,12 @@ async function sendTestRequest() {
     console.info('[ModelGate] 对话测试', url, {modelId, fields:Object.keys(body)});
     const resp = await fetch(url, {method:'POST', headers:hdrs(), body:JSON.stringify(body)});
     const j = await resp.json();
-    console.info('[ModelGate] 对话测试响应', resp.status, j);
+    // prompt 与模型回答都可能是业务敏感信息；控制台仅留状态和大小，正文只显示在当前弹窗。
+    console.info('[ModelGate] 对话测试响应', resp.status, {
+      resultCode:j?.resultCode, success:j?.data?.success,
+      httpStatus:j?.data?.httpStatus, latencyMs:j?.data?.latencyMs,
+      bodyChars:j?.data?.upstreamBody?.length||0
+    });
 
     $('testMetaBar').style.display = 'flex';
     $('testRespMs').textContent = (Date.now() - t0) + 'ms';

@@ -50,9 +50,18 @@ public class ModelConnectivityService {
      * 而排查上游问题恰恰需要看完整报文（错误详情往往在 JSON 末尾）。
      * 现放宽到 1MB：本通道是管理员手动触发的单次调试请求，不是业务热路径，
      * 回传大一点没有性能问题；仍保留上限是为了防止上游异常吐出超大响应把管理页卡死。
-     * 可经 modelgate.connectivity-test.max-body-chars 调整。
+     * 可经 modelgate.connectivity-test.max-body-chars 调整；生产保护上限为 4 MiB 字符，
+     * 防止误配置把单次管理员测试放大成超大堆分配。
      */
     private static final int DEFAULT_BODY_LIMIT = 1024 * 1024;
+    private static final int MAX_BODY_LIMIT = 4 * 1024 * 1024;
+
+    /**
+     * WebClient 默认只允许聚合约 256 KiB 响应；若不单独放宽，{@link #maxBodyChars}
+     * 配成 1 MiB 也永远到不了 {@link #snippet(String)}，会先抛 DataBufferLimitException。
+     * UTF-8 单字符最多 4 字节，因此按字符上限的 4 倍给管理面探测客户端预留解码空间。
+     */
+    private static final int MIN_RESPONSE_BUFFER_BYTES = 256 * 1024;
 
     private final List<ProviderAdapter> adapters;
     private final WebClient.Builder webClientBuilder;
@@ -132,7 +141,7 @@ public class ModelConnectivityService {
                 model.getModelId(), apiSpec,
                 credential != null ? credential.getAuthType() : "none", uriText, timeout.toMillis());
 
-        return webClientBuilder.build()
+        return probeWebClient()
                 .post()
                 .uri(upstreamUri)
                 .headers(h -> h.addAll(headers))
@@ -148,7 +157,8 @@ public class ModelConnectivityService {
                         log.info("[Connectivity] 探测成功: modelId={}, latency={}ms, httpStatus={}",
                                 model.getModelId(), vo.getLatencyMs(), vo.getHttpStatus());
                     } else {
-                        // upstreamBody 最多允许 1 MiB 回传管理页，但不能把整段模型输出/错误正文灌进生产日志。
+                        // upstreamBody 默认最多 1 MiB（配置硬上限 4 MiB）回传管理页，
+                        // 但不能把整段模型输出/错误正文灌进生产日志。
                         log.warn("[Connectivity] 探测失败: modelId={}, latency={}ms, httpStatus={}, message={}, bodyChars={}",
                                 model.getModelId(), vo.getLatencyMs(), vo.getHttpStatus(), vo.getMessage(),
                                 vo.getUpstreamBody() == null ? 0 : vo.getUpstreamBody().length());
@@ -280,8 +290,26 @@ public class ModelConnectivityService {
         if (body == null || body.isEmpty()) {
             return null;
         }
-        return body.length() <= maxBodyChars ? body
-                : body.substring(0, maxBodyChars) + "...(响应过长已截断，完整内容见上游日志)";
+        int limit = effectiveBodyLimitChars();
+        return body.length() <= limit ? body
+                : body.substring(0, limit) + "...(响应过长已截断，请在模型服务侧排查完整响应)";
+    }
+
+    /**
+     * 构造管理面专用客户端，不修改 Spring 共享 Builder，也不影响网关业务转发连接池。
+     * 每次测试本来就会 build 一个轻量 WebClient；这里只覆盖该实例的响应解码上限。
+     */
+    private WebClient probeWebClient() {
+        long utf8Bytes = (long) effectiveBodyLimitChars() * 4L;
+        int bufferBytes = (int) Math.min(Integer.MAX_VALUE,
+                Math.max(MIN_RESPONSE_BUFFER_BYTES, utf8Bytes));
+        return webClientBuilder.clone()
+                .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(bufferBytes))
+                .build();
+    }
+
+    private int effectiveBodyLimitChars() {
+        return Math.max(1, Math.min(maxBodyChars, MAX_BODY_LIMIT));
     }
 
     private Throwable rootCause(Throwable e) {

@@ -31,16 +31,18 @@ import java.util.concurrent.atomic.AtomicReference;
 public class ModelConnectivityServiceTest {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final byte[] SMALL_RESPONSE =
+            "{\"choices\":[{\"message\":{\"content\":\"ok\"}}]}".getBytes(StandardCharsets.UTF_8);
     private static int pass;
     private static int fail;
 
     public static void main(String[] args) throws Exception {
         AtomicReference<String> capturedBody = new AtomicReference<>();
+        AtomicReference<byte[]> responseBody = new AtomicReference<>(SMALL_RESPONSE);
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/", exchange -> {
             capturedBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
-            byte[] response = "{\"choices\":[{\"message\":{\"content\":\"ok\"}}]}"
-                    .getBytes(StandardCharsets.UTF_8);
+            byte[] response = responseBody.get();
             exchange.getResponseHeaders().set("Content-Type", "application/json");
             exchange.sendResponseHeaders(200, response.length);
             exchange.getResponseBody().write(response);
@@ -58,6 +60,7 @@ public class ModelConnectivityServiceTest {
             ModelInstanceEntity model = model(server.getAddress().getPort());
             probeUsesRealUpstreamId(service, model, capturedBody);
             anthropicProbeUsesRealUpstreamId(service, model, capturedBody);
+            largeManagementResponseExceedsWebClientDefault(service, model, responseBody);
             chatUsesRealIdAndConfiguredParams(service, model, capturedBody);
             draftCarriesAllRoutingFields();
             draftReusesOnlySavedCredential();
@@ -72,6 +75,30 @@ public class ModelConnectivityServiceTest {
         System.out.println("通过 " + pass + " / " + (pass + fail));
         if (fail > 0) {
             System.exit(1);
+        }
+    }
+
+    /**
+     * 1 MiB 页面上限不能被 WebClient 默认约 256 KiB 的解码上限提前截断。
+     * 这里用 300 KiB 回包钉住专用管理面 codec 配置；旧实现会得到 DataBufferLimitException。
+     */
+    private static void largeManagementResponseExceedsWebClientDefault(
+            ModelConnectivityService service, ModelInstanceEntity model,
+            AtomicReference<byte[]> responseBody) throws Exception {
+        String answer = "x".repeat(300 * 1024);
+        var response = MAPPER.createObjectNode();
+        response.putArray("choices").addObject()
+                .putObject("message").put("content", answer);
+        responseBody.set(response.toString().getBytes(StandardCharsets.UTF_8));
+        try {
+            ConnectivityTestVO result = service.probe(model, null).block(Duration.ofSeconds(10));
+            check("管理面可读取超过 WebClient 默认 256KiB 的响应",
+                    result != null && Boolean.TRUE.equals(result.getSuccess()));
+            check("大响应正文按配置返回而非 DataBufferLimitException",
+                    result != null && result.getUpstreamBody() != null
+                            && result.getUpstreamBody().length() > 300 * 1024);
+        } finally {
+            responseBody.set(SMALL_RESPONSE);
         }
     }
 

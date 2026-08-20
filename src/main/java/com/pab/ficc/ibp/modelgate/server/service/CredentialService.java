@@ -152,7 +152,8 @@ public class CredentialService {
     /**
      * 根据 API Key 的 SHA-256 哈希查询凭证。
      *
-     * <p>缓存层级：Caffeine L1（60s TTL）→ Redis L2 → DB。
+     * <p>真实缓存层级：Caffeine L1（60s TTL）→ DB。当前 Redis 凭证辅助方法没有接入
+     * 本读取链路，不能当作 L2；L1 miss 由 Caffeine 按 key 原子合并回源，避免同 key 并发打 DB。
      * 高频调用路径（每次 Bearer 请求都走这里），L1 命中率通常 > 95%。
      *
      * @param hash SHA-256(api_key) 十六进制字符串

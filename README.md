@@ -9,10 +9,10 @@
 | 语言 / 框架 | Java / Spring Boot | 17 / 3.5.6 |
 | 网关 | Spring Cloud Gateway（WebFlux 响应式，坐标 `spring-cloud-starter-gateway-server-webflux`） | Spring Cloud 2025.0.0 |
 | 持久化 | MyBatis Plus（Lambda API，无 XML）+ MySQL 8（生产 TDSQL + Druid） | 3.5.7 (spring-boot3 starter) |
-| 缓存 | Caffeine L1 + 内网 Redis L2（`com.pab.framework:redis`） | — |
+| 缓存 / 配额 | Caffeine L1（配置读取，miss 回源 MySQL）+ Redis（Lua 配额计数；不是 L2） | — |
 | 熔断 | Resilience4j | 2.2.0 |
 | 配置 | 配置文件（apollo-client 已移除） | — |
-| 监控 | Actuator（仅 health/info）；**不接 Prometheus/Grafana**，可观测性走日志 | — |
+| 监控 / 探针 | Actuator health/info + 行内容器 detection 三接口；**不接 Prometheus/Grafana**，可观测性走日志 | — |
 | API 文档 | 无（内网无 webflux 版 springdoc）；契约见 spec/04 | — |
 
 > 无 Kafka、无 Consul（审计日志仅写 MySQL；服务注册未接入）。外部资源仅需 **MySQL(TDSQL) / Redis** 两项（Apollo 依赖已移除）。
@@ -41,7 +41,9 @@ java -jar target/modelgate-1.0.0-SNAPSHOT.jar
 ```
 
 - 管理后台：`http://localhost:10811/admin.html`（静态页，全功能 CRUD + 调用预览）
-- 健康检查：`/actuator/health`（K8s 探针用）；**无指标端点**，告警走日志关键字，见 spec/10 §5
+- 行内容器探针：`/actuator/detection/running`、`/actuator/detection/available`、
+  `/actuator/detection/shutdown`（均按平台约定返回 200；状态语义见 spec/10）；标准健康页仍为 `/actuator/health`。
+  **无指标端点**，告警走日志关键字，见 spec/10 §5
 
 > 无在线 Swagger UI：内网仓库无 webflux 版 springdoc，且 webmvc 版会带入 spring-webmvc
 > 导致 Spring Cloud Gateway 拒绝启动。接口契约见 [04-接口与数据结构](spec/modelgate/04-接口与数据结构.md)。

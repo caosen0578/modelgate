@@ -129,19 +129,19 @@ svg{display:block}
 <rect x="435" y="322" width="128" height="50" rx="8" fill="#fff" stroke="#bbf7d0" stroke-width="1"/>
 <text x="450" y="342" font-size="18">⚡</text>
 <text x="492" y="342" font-size="11" fill="#1f2937" font-weight="600">Redis</text>
-<text x="492" y="358" font-size="9" fill="#64748b">L2缓存 / 限流计数</text>
+<text x="492" y="358" font-size="9" fill="#64748b">Lua配额计数（非L2）</text>
 
-<!-- Kafka -->
+<!-- 审计异步落库（无 Kafka） -->
 <rect x="295" y="384" width="128" height="50" rx="8" fill="#fff" stroke="#bbf7d0" stroke-width="1"/>
 <text x="310" y="404" font-size="18">📨</text>
-<text x="355" y="404" font-size="11" fill="#1f2937" font-weight="600">Kafka</text>
-<text x="355" y="420" font-size="9" fill="#64748b">审计日志异步写出</text>
+<text x="355" y="404" font-size="11" fill="#1f2937" font-weight="600">AuditService</text>
+<text x="355" y="420" font-size="9" fill="#64748b">内存队列→MySQL批量写</text>
 
-<!-- Consul -->
+<!-- 静态上游路由（无 Consul） -->
 <rect x="435" y="384" width="128" height="50" rx="8" fill="#fff" stroke="#bbf7d0" stroke-width="1"/>
 <text x="450" y="404" font-size="18">🔍</text>
-<text x="492" y="404" font-size="11" fill="#1f2937" font-weight="600">Consul</text>
-<text x="492" y="420" font-size="9" fill="#64748b">服务注册与发现</text>
+<text x="492" y="404" font-size="11" fill="#1f2937" font-weight="600">静态上游路由</text>
+<text x="492" y="420" font-size="9" fill="#64748b">mg_model.upstream_url</text>
 
 <!-- 配置文件（原 Apollo，apollo-client 已移除） -->
 <rect x="295" y="446" width="128" height="50" rx="8" fill="#fff" stroke="#bbf7d0" stroke-width="1"/>
@@ -261,7 +261,7 @@ svg{display:block}
 <rect x="220" y="172" width="560" height="48" rx="9" fill="#fff7ed" stroke="#fed7aa" stroke-width="1.5" filter="url(#sh2)"/>
 <text x="280" y="193" font-size="10" fill="#92400e" font-weight="700">order=-190</text>
 <text x="360" y="193" font-size="12" fill="#1f2937" font-weight="700">CredentialAuthFilter</text>
-<text x="360" y="209" font-size="10" fill="#64748b">API Key→SHA256→Caffeine→Redis→DB；AK/SK→HMAC重签→时间戳防重放(±5min)</text>
+<text x="360" y="209" font-size="10" fill="#64748b">API Key→SHA256→Caffeine→DB（miss原子回源）；AK/SK→HMAC重签→时间戳防重放(±5min)</text>
 <text x="735" y="196" font-size="10" fill="#92400e" text-anchor="end">→ 401</text>
 
 <line x1="500" y1="221" x2="500" y2="236" stroke="#6366f1" stroke-width="1.5" marker-end="url(#arr2)"/>
@@ -341,7 +341,7 @@ svg{display:block}
 <rect x="10" y="580" width="195" height="100" rx="12" fill="#fffbeb" stroke="#fde68a" stroke-width="1.5" filter="url(#sh2)"/>
 <text x="107" y="600" font-size="11" fill="#92400e" font-weight="700" text-anchor="middle">doFinally（响应后）</text>
 <text x="107" y="618" font-size="10" fill="#78350f" font-weight="600" text-anchor="middle">AuditService</text>
-<text x="107" y="634" font-size="9" fill="#92400e" text-anchor="middle">异步 Kafka 审计日志</text>
+<text x="107" y="634" font-size="9" fill="#92400e" text-anchor="middle">内存队列批量写 MySQL</text>
 <text x="107" y="648" font-size="9" fill="#92400e" text-anchor="middle">inputTokens / outputTokens</text>
 <text x="107" y="662" font-size="9" fill="#92400e" text-anchor="middle">httpStatus / latencyMs</text>
 <text x="107" y="676" font-size="9" fill="#92400e" text-anchor="middle">traceId / appId / modelId</text>
@@ -350,20 +350,20 @@ svg{display:block}
 
 <!-- 左侧：Cache层 -->
 <rect x="10" y="350" width="195" height="200" rx="12" fill="#fefce8" stroke="#fde68a" stroke-width="1.5" filter="url(#sh2)"/>
-<text x="107" y="373" font-size="11" fill="#78350f" font-weight="700" text-anchor="middle">缓存层</text>
+<text x="107" y="373" font-size="11" fill="#78350f" font-weight="700" text-anchor="middle">缓存 / 配额</text>
 <rect x="20" y="382" width="175" height="50" rx="7" fill="#fef3c7" stroke="#fcd34d" stroke-width="1"/>
 <text x="107" y="401" font-size="10" fill="#92400e" font-weight="700" text-anchor="middle">L1 Caffeine（进程内）</text>
 <text x="107" y="417" font-size="9" fill="#78350f" text-anchor="middle">凭证60s · 授权60s · 路由30s</text>
 <text x="107" y="430" font-size="9" fill="#78350f" text-anchor="middle">访问规则60s</text>
 
 <rect x="20" y="438" width="175" height="50" rx="7" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1"/>
-<text x="107" y="458" font-size="10" fill="#1e40af" font-weight="700" text-anchor="middle">L2 Redis（跨实例共享）</text>
-<text x="107" y="474" font-size="9" fill="#1d4ed8" text-anchor="middle">凭证永久 · 授权永久</text>
-<text x="107" y="487" font-size="9" fill="#1d4ed8" text-anchor="middle">Redis故障→L1降级服务</text>
+<text x="107" y="458" font-size="10" fill="#1e40af" font-weight="700" text-anchor="middle">Redis 配额状态（非L2）</text>
+<text x="107" y="474" font-size="9" fill="#1d4ed8" text-anchor="middle">QPS · 日调用 · 月Token</text>
+<text x="107" y="487" font-size="9" fill="#1d4ed8" text-anchor="middle">故障时配额fail-open</text>
 
 <rect x="20" y="494" width="175" height="46" rx="7" fill="#f0fdf4" stroke="#86efac" stroke-width="1"/>
 <text x="107" y="513" font-size="10" fill="#065f46" font-weight="700" text-anchor="middle">主动失效策略</text>
-<text x="107" y="529" font-size="9" fill="#15803d" text-anchor="middle">写操作立即逐出缓存</text>
+<text x="107" y="529" font-size="9" fill="#15803d" text-anchor="middle">本实例立即；其它实例按TTL</text>
 
 <line x1="206" y1="440" x2="218" y2="400" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arr2g)"/>
 
