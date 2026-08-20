@@ -93,23 +93,29 @@ public class ModelRouteFilter implements GlobalFilter, Ordered {
     }
 
     private Mono<Void> processRequest(ServerWebExchange exchange, GatewayFilterChain chain, byte[] bodyBytes) {
-        // 提取 model 字段（纯 CPU 操作，不涉及 IO，可在当前线程执行）
-        JsonNode root;
-        try {
-            root = objectMapper.readTree(bodyBytes);
-        } catch (Exception e) {
-            log.info("[ModelRoute] 拒绝: 请求体非合法 JSON, bytes={}, cause={}", bodyBytes.length, e.getMessage());
-            return reject(exchange, HttpStatus.BAD_REQUEST, ErrorCode.MODEL_FIELD_MISSING);
+        // 快路径：BodyParseFilter(-175) 已经把 model 提取好放进 attribute 了，直接取。
+        //
+        // 这里原先无条件做 objectMapper.readTree(bodyBytes) —— 把整个请求体建成一棵完整
+        // JsonNode 树，而拿到 root 之后**只用它读了一个 model 字段**，读完就丢。
+        // 多轮对话的 messages 动辄几百 KB 到几 MB，等于每请求白建一棵大树；
+        // 而且 BodyParseFilter 早就用流式扫描把这个值提取过一次，适配器
+        // (transformRequestBody) 之后还要为了注入/剔除参数再解析一次 —— 同一份 body
+        // 一个请求内被完整解析**三遍**，中间这遍是纯浪费。
+        String cachedModelId = exchange.getAttribute("mg.modelId");
+        final String modelId;
+        if (cachedModelId != null && !cachedModelId.isBlank()) {
+            modelId = cachedModelId;
+        } else {
+            // 回退路径：BodyParseFilter 未生效（order 被改、非 POST、Content-Type 非 JSON），
+            // 或请求体里确实没有 model。这时才需要真正解析一次。
+            String parsed = parseModelId(bodyBytes);
+            if (parsed == null) {
+                log.info("[ModelRoute] 拒绝: 请求体非合法 JSON 或缺少 model 字段, bytes={}", bodyBytes.length);
+                return reject(exchange, HttpStatus.BAD_REQUEST, ErrorCode.MODEL_FIELD_MISSING);
+            }
+            modelId = parsed;
+            exchange.getAttributes().put("mg.modelId", modelId);
         }
-        JsonNode modelNode = root.get("model");
-        if (modelNode == null || modelNode.isNull() || modelNode.asText().isBlank()) {
-            // 请求体中缺少 model 字段，明确返回 400（而非让下面的 null 流转到 404）
-            log.info("[ModelRoute] 拒绝: 请求体缺少 model 字段");
-            return reject(exchange, HttpStatus.BAD_REQUEST, ErrorCode.MODEL_FIELD_MISSING);
-        }
-        final String modelId = modelNode.asText();
-        // BodyParseFilter (-175) 已提取并写入，此处保持幂等（兼容直接调用场景）
-        exchange.getAttributes().put("mg.modelId", modelId);
 
         // 同 ModelAuthFilter：用 Optional 包一层，避免 Callable 返回 null 时 Mono 变 empty、
         // flatMap 不执行导致链路断掉（此处 null 表示"模型不存在或无适配器"，本该走 reject）
@@ -122,6 +128,33 @@ public class ModelRouteFilter implements GlobalFilter, Ordered {
             }
             return applyRoute(exchange, chain, info, modelId);
         });
+    }
+
+    /**
+     * 回退用：从请求体里解析 model 字段。取不到（非法 JSON / 无该字段 / 值为空）返回 null。
+     *
+     * <p><b>只在快路径失效时调用</b>，正常流量不会走到这里——正常情况下
+     * {@code mg.modelId} 由 BodyParseFilter 的流式扫描提供。
+     *
+     * <p><b>行为变化说明</b>：改造前这里是无条件执行的，因此"model 字段之后的部分是坏 JSON"
+     * 这种请求会被网关直接 400。现在走快路径时不再做整体 JSON 校验，这类请求会被转发到上游、
+     * 由上游返回错误。这是有意的取舍：为了拦住罕见的畸形请求，而让<b>每一个正常请求</b>
+     * 都付一次完整树解析的代价，不划算；何况上游给出的错误信息比网关的 MODEL_FIELD_MISSING 更准确。
+     * "model 字段缺失"这一类仍然会被拦下——那种情况下 BodyParseFilter 提取不到值，
+     * 正好落到本回退路径。
+     */
+    private String parseModelId(byte[] bodyBytes) {
+        try {
+            JsonNode root = objectMapper.readTree(bodyBytes);
+            JsonNode modelNode = root.get("model");
+            if (modelNode == null || modelNode.isNull() || modelNode.asText().isBlank()) {
+                return null;
+            }
+            return modelNode.asText();
+        } catch (Exception e) {
+            log.info("[ModelRoute] 请求体非合法 JSON, bytes={}, cause={}", bodyBytes.length, e.getMessage());
+            return null;
+        }
     }
 
     /** 装载模型+凭证、选适配器、构造上游请求；不可用时返回 null（调用方转 404）。 */
