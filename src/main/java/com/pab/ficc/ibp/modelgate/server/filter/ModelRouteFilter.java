@@ -5,6 +5,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pab.ficc.ibp.modelgate.server.adapter.ProviderAdapter;
+import com.pab.ficc.ibp.modelgate.server.adapter.RequestParamMerger;
 import com.pab.ficc.ibp.modelgate.server.common.ErrorCode;
 import com.pab.ficc.ibp.modelgate.server.common.Result;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.ModelCredentialEntity;
@@ -52,6 +53,8 @@ public class ModelRouteFilter implements GlobalFilter, Ordered {
     private final ModelService modelService;
     private final List<ProviderAdapter> adapters;
     private final ObjectMapper objectMapper;
+    /** 模型级 default_params / force_params / param_mapping 的合并器 */
+    private final RequestParamMerger paramMerger;
 
     @Override
     public int getOrder() {
@@ -186,7 +189,12 @@ public class ModelRouteFilter implements GlobalFilter, Ordered {
             }
 
             // 适配器负责：请求体参数转换、上游鉴权 Header 构造、上游 URL 构建
-            byte[] transformedBody = adapter.transformRequestBody(bodyBytes, model, credential);
+            // 先应用模型级参数配置（default_params / force_params / param_mapping），
+            // 再交给适配器做 api_spec 特有的改写。顺序不能反：适配器可能会删掉某些字段
+            // （如 Azure 会 remove("model")），先跑适配器的话这些配置就落在了会被删掉的字段上。
+            // 三项都没配时 merge 直接原样返回，不解析不分配。
+            byte[] mergedBody = paramMerger.merge(bodyBytes, model);
+            byte[] transformedBody = adapter.transformRequestBody(mergedBody, model, credential);
             HttpHeaders transformedHeaders = adapter.buildUpstreamHeaders(model, credential);
             URI upstreamUri = adapter.buildUpstreamUri(model, exchange.getRequest().getURI());
 
