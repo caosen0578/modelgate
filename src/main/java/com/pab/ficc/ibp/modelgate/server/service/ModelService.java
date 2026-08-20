@@ -9,6 +9,7 @@ import com.pab.ficc.ibp.modelgate.server.common.ErrorCode;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.pab.ficc.ibp.modelgate.server.crypto.CryptoService;
 import com.pab.ficc.ibp.modelgate.server.domain.bo.ModelQueryBO;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.AppModelAuthEntity;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.ModelCredentialEntity;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.ModelInstanceEntity;
 import com.pab.ficc.ibp.modelgate.server.mapper.AppModelAuthMapper;
@@ -17,11 +18,15 @@ import com.pab.ficc.ibp.modelgate.server.mapper.ModelMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -76,6 +81,7 @@ public class ModelService {
                 modelMapper.selectOne(new LambdaQueryWrapper<ModelInstanceEntity>().eq(ModelInstanceEntity::getModelId, modelId))));
     }
 
+    @Transactional(transactionManager = "tdsqlTransactionManager", rollbackFor = Exception.class)
     public ModelInstanceEntity create(ModelInstanceEntity model, ModelCredentialEntity credential) {
         boolean exists = modelMapper.exists(
                 new LambdaQueryWrapper<ModelInstanceEntity>().eq(ModelInstanceEntity::getModelId, model.getModelId()));
@@ -102,6 +108,8 @@ public class ModelService {
         } else {
             log.info("[ModelService][create] 未附带上游凭证，跳过凭证入库: modelId={}", model.getModelId());
         }
+        // 404 的空结果本身也会缓存；提交后主动清理，避免“先调用后创建”的模型继续 404 到 TTL 结束。
+        evictModelScopedCachesAfterCommit(Set.of(model.getModelId()), Set.of());
         return model;
     }
 
@@ -113,6 +121,7 @@ public class ModelService {
      *
      * @param credential 为 null 表示本次不修改凭证；非 null 时按 {@link #applyCredentialUpdate} 落库
      */
+    @Transactional(transactionManager = "tdsqlTransactionManager", rollbackFor = Exception.class)
     public ModelInstanceEntity update(String modelId, ModelInstanceEntity updates, ModelCredentialEntity credential) {
         return update(modelId, updates, credential, null);
     }
@@ -124,8 +133,8 @@ public class ModelService {
      *
      * <h3>改名的连带影响（调用方必须知晓）</h3>
      * <ul>
-     *   <li><b>调用方立刻断</b>：还在用旧 ID 的接入系统下一次请求就是 404。
-     *       这是改名不可避免的后果，不是缺陷。</li>
+     *   <li><b>旧 ID 会失效</b>：当前实例清缓存后下一次请求即 404；多副本的其他实例按下述
+     *       缓存 TTL 收敛。这是改名不可避免的后果，不是缺陷。</li>
      *   <li><b>凭证与授权自动跟随</b>：靠 {@code mg_model_credential} /
      *       {@code mg_app_model_auth} 两个外键的 {@code ON UPDATE CASCADE}
      *       （见 {@code sql/upgrade_20260819_model_id_cascade.sql}）。
@@ -134,12 +143,18 @@ public class ModelService {
      *   <li><b>历史审计与报文保留旧 ID</b>：这两张表没有外键、不参与级联。
      *       这是<b>有意的</b>——那些调用当时确实打的是旧 ID，改掉就是篡改历史。
      *       代价是用量统计会按新旧两个名字裂开，需要人工合并口径。</li>
+     *   <li><b>日/月配额从新键重新累计</b>：Redis 配额键包含对外 modelId。这里不在线搬迁计数，
+     *       因为改名瞬间仍可能有在途请求和延迟回写的 Token，直接复制/相加会造成漏计或重复计数。
+     *       有严格配额要求时应在低流量窗口改名，或新建模型并逐步迁移调用方。</li>
+     *   <li><b>多副本不是同时失效</b>：提交后的主动失效只作用于处理本次管理请求的实例；
+     *       当前没有跨实例缓存广播，其他实例依靠模型/凭证 30 秒、授权 60 秒 TTL 收敛。</li>
      * </ul>
      *
      * <p><b>多数情况下你不该改名</b>：如果只是想「对外换个名字」，正确做法是新建一条
      * 模型记录、用 {@code upstream_model_id} 指向上游真实 ID，旧记录保持不动——
      * 旧调用方不受影响，历史统计也不裂。改名只适合「当初 ID 就建错了、且还没人用」。
      */
+    @Transactional(transactionManager = "tdsqlTransactionManager", rollbackFor = Exception.class)
     public ModelInstanceEntity update(String modelId, ModelInstanceEntity updates,
                                       ModelCredentialEntity credential, String newModelId) {
         findByModelId(modelId);
@@ -153,13 +168,37 @@ public class ModelService {
                         "目标模型 ID 已存在: " + newModelId);
             }
             updates.setModelId(newModelId);
+
+            // ⚠️ 保住「上游收到的模型身份」不被改名连带改掉。
+            //
+            // resolveUpstreamModelId() 在 upstream_model_id 为空时回退成 model_id，
+            // 也就是说：一个上游 ID 留空的模型，改名前上游收到旧 ID、改名后就变成收到新 ID。
+            // 而运维改的本意通常只是**对外那个标签**（如为了绕开平台"模型 ID 重名"限制），
+            // 上游根本不认识这个新名字 —— 结果是改完之后该模型的每一个请求都被上游拒绝，
+            // 而且没有任何一层会报错提示，只能靠上游返回的 model not found 去猜。
+            //
+            // 所以：提交值为空时，把**改名前的 ID** 回填进去，让上游收到的东西一个字节都不变。
+            // 运维若确实想让上游也换名，显式填新 ID 即可（此处尊重非空的提交值，不覆盖）。
+            String preservedUpstreamId = resolveUpstreamIdOnRename(modelId, updates.getUpstreamModelId());
+            if (!preservedUpstreamId.equals(updates.getUpstreamModelId())) {
+                updates.setUpstreamModelId(preservedUpstreamId);
+                log.warn("[ModelService][update] 改名时上游真实模型 ID 为空，已自动回填为改名前的 {}，"
+                        + "以保证上游收到的模型身份不变。若确实希望上游也改用新 ID，"
+                        + "请在模型配置里把「上游真实模型 ID」显式填成 {}", modelId, newModelId);
+            }
+
             log.warn("[ModelService][update] 模型改名: {} -> {}。"
-                            + "凭证与授权将由外键级联跟随；**仍在使用旧 ID 的接入方会立刻 404**；"
-                            + "历史审计与报文保留旧 ID（用量统计会按两个名字裂开）",
-                    modelId, newModelId);
+                            + "凭证与授权将由外键级联跟随；旧 ID 调用方将在缓存收敛后 404；"
+                            + "历史审计/报文保留旧 ID，日/月 Redis 配额从新 ID 重新累计；"
+                            + "多副本环境最长按授权缓存 TTL 60 秒收敛；"
+                            + "上游真实模型 ID={}",
+                    modelId, newModelId, preservedUpstreamId);
         } else {
             updates.setModelId(modelId);
         }
+        // ON UPDATE CASCADE 会改 mg_app_model_auth.model_id，但应用授权缓存是按 appId 聚合的；
+        // 必须在改名前记下受影响 App，否则提交后已经无法再用旧 ID 查到它们。
+        Set<String> affectedAppIds = rename ? findAuthorizedAppIds(modelId) : Set.of();
         updates.setUpdateTime(LocalDateTime.now());
 
         try {
@@ -184,17 +223,30 @@ public class ModelService {
             log.debug("[ModelService][update] 未携带凭证，跳过凭证更新: modelId={}", effectiveId);
         }
 
-        // 改名时**新旧两个 key 都要清**：旧 key 的缓存值还指向这条记录，
-        // 不清的话在 TTL 内旧 ID 仍能被路由到，改名等于没生效
-        cacheManager.evictModelCache(modelId);
-        cacheManager.evictModelCredentialCache(modelId);
-        if (rename) {
-            cacheManager.evictModelCache(effectiveId);
-            cacheManager.evictModelCredentialCache(effectiveId);
-        }
-        log.info("[ModelService][update] 模型已更新并清缓存: modelId={}{}, upstreamUrl={}",
+        // 只在事务真正提交后清缓存。若在提交前先清，并发请求可能从尚未提交的数据库里
+        // 重新装入旧值，随后事务提交，缓存反而会一直脏到 TTL 结束。
+        Set<String> changedModelIds = rename ? Set.of(modelId, effectiveId) : Set.of(modelId);
+        evictModelScopedCachesAfterCommit(changedModelIds, affectedAppIds);
+        log.info("[ModelService][update] 模型已更新，提交后清缓存: modelId={}{}, upstreamUrl={}",
                 effectiveId, rename ? "（由 " + modelId + " 改名而来）" : "", updates.getUpstreamUrl());
         return findByModelId(effectiveId);
+    }
+
+    /**
+     * 改名时决定 {@code upstream_model_id} 的最终取值。
+     *
+     * <p>抽成独立静态方法是为了能单独回归——这条规则一旦写反，
+     * 后果是"改完名字该模型所有请求被上游拒绝"，且链路上没有任何一层会报错。
+     *
+     * @param oldModelId          改名<b>前</b>的对外 ID
+     * @param submittedUpstreamId 本次提交的上游真实 ID（可能为 null/空）
+     * @return 提交值非空则原样返回（尊重运维的显式选择）；为空则返回 {@code oldModelId}，
+     *         使上游收到的模型身份在改名前后保持一致
+     */
+    static String resolveUpstreamIdOnRename(String oldModelId, String submittedUpstreamId) {
+        return submittedUpstreamId == null || submittedUpstreamId.isBlank()
+                ? oldModelId
+                : submittedUpstreamId;
     }
 
     /** 查不到返回 null 而不是抛异常，供「目标 ID 是否已被占用」这类判断使用 */
@@ -307,18 +359,62 @@ public class ModelService {
         cacheManager.evictModelCache(modelId);
     }
 
+    @Transactional(transactionManager = "tdsqlTransactionManager", rollbackFor = Exception.class)
     public void delete(String modelId) {
         findByModelId(modelId);
         boolean hasActiveAuths = authMapper.exists(
-                new LambdaQueryWrapper<com.pab.ficc.ibp.modelgate.server.domain.entity.AppModelAuthEntity>()
-                        .eq(com.pab.ficc.ibp.modelgate.server.domain.entity.AppModelAuthEntity::getModelId, modelId)
-                        .eq(com.pab.ficc.ibp.modelgate.server.domain.entity.AppModelAuthEntity::getEnabled, true));
+                new LambdaQueryWrapper<AppModelAuthEntity>()
+                        .eq(AppModelAuthEntity::getModelId, modelId)
+                        .eq(AppModelAuthEntity::getEnabled, true));
         if (hasActiveAuths) {
             throw new BusinessException(ErrorCode.ACTIVE_REFS_EXIST, "model has active app authorizations");
         }
+        Set<String> affectedAppIds = findAuthorizedAppIds(modelId);
         credentialMapper.delete(new LambdaQueryWrapper<ModelCredentialEntity>().eq(ModelCredentialEntity::getModelId, modelId));
         modelMapper.delete(new LambdaQueryWrapper<ModelInstanceEntity>().eq(ModelInstanceEntity::getModelId, modelId));
-        cacheManager.evictModelCache(modelId);
+        // 模型和解密后的上游凭证必须一起失效；授权缓存也可能仍持有已禁用的历史授权。
+        evictModelScopedCachesAfterCommit(Set.of(modelId), affectedAppIds);
+    }
+
+    /** 查询某模型当前关联的 App，只取 app_id，供模型改名/删除后的授权缓存失效使用。 */
+    private Set<String> findAuthorizedAppIds(String modelId) {
+        return authMapper.selectList(new LambdaQueryWrapper<AppModelAuthEntity>()
+                        .select(AppModelAuthEntity::getAppId)
+                        .eq(AppModelAuthEntity::getModelId, modelId))
+                .stream()
+                .map(AppModelAuthEntity::getAppId)
+                .collect(Collectors.toSet());
+    }
+
+    /**
+     * 在数据库提交后失效模型相关缓存。
+     *
+     * <p>改名必须同时清旧/新模型配置、旧/新解密凭证以及所有受影响 App 的授权列表；
+     * 任一项遗漏都会在缓存 TTL 内造成旧 ID 仍可路由或新 ID 被误判为未授权。
+     * 本方法清的是当前 JVM 的 Caffeine；项目尚未实现跨实例失效广播，其他副本仍按 TTL 收敛。
+     */
+    private void evictModelScopedCachesAfterCommit(Set<String> modelIds, Set<String> appIds) {
+        Runnable eviction = () -> {
+            modelIds.forEach(id -> {
+                cacheManager.evictModelCache(id);
+                cacheManager.evictModelCredentialCache(id);
+            });
+            appIds.forEach(cacheManager::evictModelAuthCache);
+            log.debug("[ModelService] 模型关联缓存已失效: modelIds={}, appIds={}", modelIds, appIds);
+        };
+
+        if (TransactionSynchronizationManager.isActualTransactionActive()
+                && TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    eviction.run();
+                }
+            });
+        } else {
+            // 防御性兼容非代理调用/无事务测试；生产 Controller 路径会走上面的 afterCommit。
+            eviction.run();
+        }
     }
 
     public Optional<ModelCredentialEntity> getCredential(String modelId) {

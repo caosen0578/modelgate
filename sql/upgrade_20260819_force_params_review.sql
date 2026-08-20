@@ -68,15 +68,27 @@ SELECT  model_id                AS 模型ID,
 
 
 -- ============================================================================
--- 附：模型 ID 改名怎么配
+-- 附：模型 ID 改名怎么配（2026-08-20 更正）
 --
--- 接线之后，force_params 天然就能做「对外 ID ≠ 上游真实 ID」：
+-- 模型身份现已由专用 upstream_model_id 字段收口，禁止再藏进 force_params.model：
 --   对外暴露 model_id = 'deepseek-v3-platform-b'（平台上不重名，可以新增地址）
 --   转发时改回真实 ID：
 --
 --     UPDATE mg_model
---        SET force_params = '{"model": "deepseek-ai/DeepSeek-V3"}'
+--        SET upstream_model_id = 'deepseek-ai/DeepSeek-V3'
 --      WHERE model_id = 'deepseek-v3-platform-b' AND is_del = '0';
+--
+-- 投产前先查有没有旧写法；有结果必须逐条把 $.model 迁到 upstream_model_id，
+-- 并从 force_params 删除 model 键（其余强制参数保留）：
+--
+--   SELECT model_id, upstream_model_id, force_params
+--     FROM mg_model
+--    WHERE is_del = '0'
+--      AND JSON_CONTAINS_PATH(
+--            CASE WHEN JSON_VALID(force_params) THEN force_params ELSE '{}' END,
+--            'one', '$.model');
+--   CASE 不是多余的：SQL 优化器不承诺按 WHERE 书写顺序短路；直接写
+--   JSON_VALID(x) AND JSON_CONTAINS_PATH(x,...) 遇到历史非法 JSON 仍可能抛错。
 --
 -- 要点：
 --   · 对外 ID 与上游 ID 完全解耦，调用方无感知
@@ -86,8 +98,6 @@ SELECT  model_id                AS 模型ID,
 --   · 响应体里的 model 字段是上游返回的**真实 ID**，网关不做反向替换
 --     （已与你确认：不需要换回来）
 --
--- 代价：配了 force_params 的模型，每请求会多一次「JSON 解析 + 重新序列化」。
---       没配的模型完全零开销（RequestParamMerger 直接原样返回）。
---       若将来发现这笔开销在大 prompt 上不可接受，可以再加一个专用的
---       upstream_model_id 列走字节级定点替换，省掉解析——但那是优化，不是必需。
+-- 性能：仅配置 upstream_model_id 时走字节级定点替换，不建 JSON 树；
+--       同时配置 default/force/mapping 时复用那次必要的解析，不增加第二次解析。
 -- ============================================================================

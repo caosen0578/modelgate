@@ -17,6 +17,9 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.EnableTransactionManagement;
 
 import javax.sql.DataSource;
 
@@ -30,6 +33,7 @@ import javax.sql.DataSource;
  */
 @Slf4j
 @Configuration
+@EnableTransactionManagement
 @MapperScan(
         basePackages = "com.pab.ficc.ibp.modelgate.server.mapper",
         sqlSessionFactoryRef = "tdsqlSessionFactory"
@@ -66,6 +70,21 @@ public class TdsqlMybatisPlusConfig {
         // 分页拦截器，指定 MySQL 方言
         interceptor.addInnerInterceptor(new PaginationInnerInterceptor(DbType.MYSQL));
         return interceptor;
+    }
+
+    /**
+     * 与 tdsqlSessionFactory 共用同一个数据源的本地事务管理器。
+     *
+     * <p>{@code ModelGateApplication} 因手工装配 Druid 排除了
+     * {@code DataSourceTransactionManagerAutoConfiguration}，不能只写 {@code @Transactional}
+     * 就假定事务会生效；没有本 Bean 时模型+凭证的组合写入在运行期没有事务管理器，
+     * 甚至可能在第一次调用事务方法时直接报错。显式限定 tdsqlDataSource 也避免内网环境
+     * 将来出现多个 DataSource 后误选事务资源。
+     */
+    @Bean(name = "tdsqlTransactionManager")
+    public PlatformTransactionManager tdsqlTransactionManager(
+            @Qualifier("tdsqlDataSource") DataSource dataSource) {
+        return new DataSourceTransactionManager(dataSource);
     }
 
     @Bean(name = "tdsqlSessionFactory")

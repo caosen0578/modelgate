@@ -35,7 +35,7 @@ public class RequestParamMergerTest {
         mappingOnlyForCustom();
         mappingDoesNotClobber();
         badConfigFallsBack();
-        modelRename();
+        modelIdentityCannotBeOverriddenByForce();
         upstreamModelIdRename();
 
         System.out.println();
@@ -97,23 +97,28 @@ public class RequestParamMergerTest {
                 out.get("inputs").get(0).asInt() == 2 && out.has("messages"));
     }
 
-    /** 配置不是合法 JSON → 原样放行，不能让业务请求失败 */
-    private static void badConfigFallsBack() {
-        byte[] body = bytes("{\"model\":\"m\"}");
+    /** 配置不是合法 JSON → 忽略坏配置，但路由身份改写仍必须生效 */
+    private static void badConfigFallsBack() throws Exception {
+        byte[] body = bytes("{\"model\":\"gateway-alias\"}");
         ModelInstanceEntity m = model("openai", null, "{不是合法JSON", null);
+        m.setModelId("gateway-alias");
+        m.setUpstreamModelId("provider-real-id");
         byte[] out = MERGER.merge(body, m);
-        check("配置非法时原样放行不抛异常", out == body || new String(out, StandardCharsets.UTF_8).contains("\"m\""));
+        check("配置非法时忽略该项但仍改写上游模型 ID",
+                "provider-real-id".equals(MAPPER.readTree(out).path("model").asText()));
 
         byte[] bad = bytes("{不是合法JSON");
         byte[] out2 = MERGER.merge(bad, model("openai", null, "{\"a\":1}", null));
         check("请求体非法时原样放行不抛异常", out2 == bad);
     }
 
-    /** 用户的实际场景：同一真实模型部署在两个平台，网关对外用不同 ID，转发时改回真实 ID */
-    private static void modelRename() throws Exception {
+    /** 模型身份只能由 model_id / upstream_model_id 决定，不能再藏在普通强制参数里 */
+    private static void modelIdentityCannotBeOverriddenByForce() throws Exception {
         ModelInstanceEntity m = model("openai", null, "{\"model\":\"DeepSeek-V3\"}", null);
+        m.setModelId("deepseek-v3-platform-b");
         JsonNode out = merge("{\"model\":\"deepseek-v3-platform-b\",\"messages\":[]}", m);
-        check("force_params 可实现模型 ID 改名", "DeepSeek-V3".equals(out.get("model").asText()));
+        check("upstream_model_id 留空时 force_params.model 不能覆盖对外 ID",
+                "deepseek-v3-platform-b".equals(out.get("model").asText()));
     }
 
     /** 专用字段改名：只配 upstream_model_id 时走字节级定点替换，不解析 */
@@ -149,6 +154,15 @@ public class RequestParamMergerTest {
         JsonNode out3 = merge("{\"model\":\"outward\"}", m2);
         check("与 force_params 冲突时 upstream_model_id 优先",
                 "from-upstream-field".equals(out3.get("model").asText()));
+
+        // custom 字段映射在身份值确定之后执行：目标字段拿到真实 ID，且原 model 键被移除。
+        ModelInstanceEntity m4 = model("custom", null, null, "{\"model\":\"deployment\"}");
+        m4.setModelId("outward");
+        m4.setUpstreamModelId("provider-real-id");
+        JsonNode out4 = merge("{\"model\":\"outward\",\"messages\":[]}", m4);
+        check("custom 映射后的目标字段携带上游真实 ID",
+                "provider-real-id".equals(out4.path("deployment").asText()));
+        check("custom 映射 model 后不残留原字段", !out4.has("model"));
 
         // 与对外 ID 相同 → 视为不需要改名，零开销
         ModelInstanceEntity m3 = model("openai", null, null, null);

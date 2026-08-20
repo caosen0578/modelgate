@@ -2,6 +2,7 @@ package com.pab.ficc.ibp.modelgate.server.controller;
 import com.pab.ficc.ibp.modelgate.server.constant.UrlConstant;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pab.ficc.ibp.domain.base.vo.PageVo;
 import com.pab.ficc.ibp.modelgate.server.common.AdminScheduler;
@@ -30,6 +31,7 @@ import reactor.core.publisher.Mono;
 
 import jakarta.validation.Valid;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 @Slf4j
@@ -79,6 +81,7 @@ public class ModelController {
     @Operation(summary = "新增模型")
     @PostMapping(UrlConstant.ROOT)
     public Mono<Result<ModelVO>> create(@RequestBody @Valid CreateModelRequestBO req) {
+        validateModelParamConfigs(req.getDefaultParams(), req.getForceParams(), req.getParamMapping());
         log.info("[Model][create] 收到新增请求: modelId={}, modelName={}, provider={}, apiSpec={}, upstreamUrl={}, authType={}",
                 req.getModelId(), req.getModelName(), req.getProvider(), req.getApiSpec(), req.getUpstreamUrl(),
                 req.getCredential() != null ? req.getCredential().getAuthType() : "none");
@@ -96,6 +99,7 @@ public class ModelController {
     @Operation(summary = "更新模型信息")
     @PutMapping(UrlConstant.UPDATE)
     public Mono<Result<ModelVO>> update(@RequestBody @Valid UpdateModelRequestBO req) {
+        validateModelParamConfigs(req.getDefaultParams(), req.getForceParams(), req.getParamMapping());
         log.info("[Model][update] 收到更新请求: modelId={}, upstreamUrl={}, authType={}",
                 req.getModelId(), req.getUpstreamUrl(),
                 req.getCredential() != null ? req.getCredential().getAuthType() : "未携带");
@@ -151,13 +155,36 @@ public class ModelController {
             @Parameter(description = "草稿配置（新增模型时尚未入库），缺省则按 modelId 查库")
             @RequestBody(required = false) TestConnectionRequestBO draft) {
 
-        // 草稿模式：新增模型时记录还没入库，只能用表单里的配置探测
+        // 草稿模式：新增模型尚未入库，编辑模型也要测试页面上尚未保存的当前配置。
         if (draft != null && draft.hasDraftConfig()) {
-            String draftId = draft.getModelId() != null ? draft.getModelId() : modelId;
+            validateModelParamConfigs(
+                    draft.getDefaultParams(), draft.getForceParams(), draft.getParamMapping());
+            // 编辑页可用 query 中的原 ID 定位旧凭证；新增页则必须自行给出对外 ID。
+            // 不能把空字符串当作有效草稿 ID，否则最小探测体会安静地向生产上游发送 model=""。
+            String draftId = draft.getModelId();
+            if (draftId == null || draftId.isBlank()) {
+                draftId = modelId;
+            }
+            if (draftId == null || draftId.isBlank()) {
+                throw new BusinessException(ErrorCode.INVALID_PARAMETER,
+                        "草稿 modelId 不能为空（upstreamModelId 留空时将回退使用它）");
+            }
             draft.setModelId(draftId);
             log.info("[Model][test] 草稿模式探测: modelId={}, apiSpec={}, upstreamUrl={}",
                     draftId, draft.getApiSpec(), draft.getUpstreamUrl());
-            return connectivityService.probe(draft.toEntity(), draft.toCredential())
+            // 编辑页不会回显 SK。query modelId 是保存前的定位 ID，仅用于取已存凭证；
+            // 地址、上游真实 ID 和参数配置仍全部使用 body 草稿，确保“测试”的就是眼前这份配置。
+            Mono<ModelCredentialEntity> savedCredential = draft.requiresSavedCredential()
+                    && modelId != null && !modelId.isBlank()
+                    ? Mono.fromCallable(() -> modelService.getCredentialDecrypted(modelId))
+                    : Mono.empty();
+            return savedCredential
+                    .subscribeOn(AdminScheduler.get())
+                    .timeout(AdminScheduler.REQUEST_TIMEOUT)
+                    .flatMap(saved -> connectivityService.probe(
+                            draft.toEntity(), draft.toCredential(saved)))
+                    .switchIfEmpty(Mono.defer(() -> connectivityService.probe(
+                            draft.toEntity(), draft.toCredential(null))))
                     .map(Result::success);
         }
 
@@ -187,8 +214,9 @@ public class ModelController {
         if (modelId == null || modelId.isBlank()) {
             throw new BusinessException(ErrorCode.INVALID_PARAMETER, "modelId 不能为空");
         }
-        // 强制以库中 modelId 为准，避免 body 里的 model 与实际测试对象不一致
-        body.put("model", modelId);
+        if (body == null) {
+            throw new BusinessException(ErrorCode.INVALID_PARAMETER, "请求体不能为空");
+        }
         log.info("[Model][chatTest] 管理面对话测试: modelId={}, keys={}", modelId, body.keySet());
 
         return Mono.fromCallable(() -> {
@@ -202,7 +230,14 @@ public class ModelController {
                 .flatMap(mc -> {
                     byte[] raw;
                     try {
-                        raw = objectMapper.writeValueAsBytes(body);
+                        // query modelId 只负责定位 ModelGate 对外模型；真正发给供应商的 body.model
+                        // 必须由服务端按库中 upstreamModelId 决定，不能信任或透传浏览器传值。
+                        Map<String, Object> upstreamBody = new LinkedHashMap<>(body);
+                        String upstreamModelId = mc.model().resolveUpstreamModelId();
+                        upstreamBody.put("model", upstreamModelId);
+                        raw = objectMapper.writeValueAsBytes(upstreamBody);
+                        log.info("[Model][chatTest] 测试路由已解析: externalModelId={}, upstreamModelId={}",
+                                modelId, upstreamModelId);
                     } catch (JsonProcessingException e) {
                         throw new BusinessException(ErrorCode.INVALID_PARAMETER, "请求体序列化失败: " + e.getMessage());
                     }
@@ -212,4 +247,44 @@ public class ModelController {
     }
 
     private record ModelWithCredential(ModelInstanceEntity model, ModelCredentialEntity credential) {}
+
+    /**
+     * 管理写入口验证三个模型参数都是 JSON 对象，并拒绝无效的 forceParams.model。
+     * 运行期仍保留逐项忽略兜底，只用于历史脏数据或绕过管理 API 的直接改库。
+     */
+    private void validateModelParamConfigs(String defaultParams, String forceParams, String paramMapping) {
+        parseConfigObjectForWrite("defaultParams", defaultParams);
+        JsonNode forced = parseConfigObjectForWrite("forceParams", forceParams);
+        JsonNode mapping = parseConfigObjectForWrite("paramMapping", paramMapping);
+
+        if (forced != null && forced.has("model")) {
+            throw new BusinessException(ErrorCode.INVALID_PARAMETER,
+                    "forceParams.model 已废止；请使用“上游真实模型 ID（upstreamModelId）”配置模型身份");
+        }
+        if (mapping != null) {
+            mapping.fields().forEachRemaining(entry -> {
+                if (!entry.getValue().isTextual() || entry.getValue().asText().isBlank()) {
+                    throw new BusinessException(ErrorCode.INVALID_PARAMETER,
+                            "paramMapping 的目标字段必须是非空字符串: " + entry.getKey());
+                }
+            });
+        }
+    }
+
+    /** 管理写入口只接受 JSON 对象；运行期的容错仅用于历史脏数据或绕过管理 API 的直接改库。 */
+    private JsonNode parseConfigObjectForWrite(String fieldName, String json) {
+        if (json == null || json.isBlank()) return null;
+        final JsonNode node;
+        try {
+            node = objectMapper.readTree(json);
+        } catch (JsonProcessingException e) {
+            throw new BusinessException(ErrorCode.INVALID_PARAMETER,
+                    fieldName + " 必须是合法 JSON 对象: " + e.getOriginalMessage());
+        }
+        if (node == null || !node.isObject()) {
+            throw new BusinessException(ErrorCode.INVALID_PARAMETER,
+                    fieldName + " 必须是 JSON 对象");
+        }
+        return node;
+    }
 }

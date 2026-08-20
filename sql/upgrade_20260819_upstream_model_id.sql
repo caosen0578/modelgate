@@ -8,12 +8,9 @@
 --   第二个模型地址。于是需要网关对外暴露不同的 ID，转发时再改回真实 ID。
 --
 -- 【与 force_params 的关系】
---   接线 force_params 之后，写 {"model":"真实ID"} 也能达到同样效果。
---   但那是把「路由身份」塞进「请求参数」，语义不清、页面上找不到、无法校验、
---   模型列表也展示不出映射关系。故单列一个字段，force_params 回归它本来的用途
---   （temperature / max_tokens 这类调用参数）。
---
---   ⚠️ 两处都设了 model 时，**upstream_model_id 优先**——它是专为此设计的字段。
+--   早期曾允许 force_params 写 {"model":"真实ID"} 实现改名；专用字段落地后该方式已废止。
+--   模型身份只由 model_id / upstream_model_id 决定，force_params 回归 temperature / max_tokens
+--   等普通调用参数。即使 upstream_model_id 留空（回退 model_id），force_params.model 也不能覆盖。
 --
 -- 【性能】
 --   留空（绝大多数模型）→ 完全零开销，一个字节都不动。

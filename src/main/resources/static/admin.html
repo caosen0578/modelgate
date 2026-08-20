@@ -265,7 +265,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
           <table>
             <thead>
               <tr>
-                <th>模型 ID</th>
+                <th>模型 ID（网关对外）</th>
                 <th>名称</th>
                 <th>提供商</th>
                 <th>类型</th>
@@ -659,7 +659,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
       <div id="step1">
         <div class="form-grid form-grid-2">
           <div class="form-group">
-            <label>模型 ID <span style="color:red">*</span></label>
+            <label>模型 ID（网关对外） <span style="color:red">*</span></label>
             <input type="text" id="m_modelId" placeholder="gpt-4o"/>
             <span class="hint" id="m_modelIdHint">对外暴露的唯一标识，调用方请求体里的 model 字段填的就是它</span>
           </div>
@@ -790,6 +790,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
           <div class="form-group">
             <label>强制参数（JSON，业务系统不可覆盖）</label>
             <textarea id="m_forceParams" placeholder='{"max_tokens": 4096}'></textarea>
+            <span class="hint">不得填写 model；模型身份请使用第一步的「上游真实模型 ID」</span>
           </div>
           <div class="form-group" id="customMappingGroup" style="display:none">
             <label>自定义字段映射（api_spec=custom 时有效）</label>
@@ -1223,8 +1224,8 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
           <!-- 响应体 -->
           <div class="rbody" id="testRespBox">
             <span class="rph">// 点击「▶ 发送请求」后，响应将显示在此处
-// stream: true 时实时流式显示模型输出内容
-// stream: false 时显示完整 JSON 响应（含 usage / tokens）</span>
+// 管理面测试固定按非流式发送
+// 此处显示聚合后的完整 JSON 响应（含 usage / tokens）</span>
           </div>
           <!-- 原始请求体折叠 -->
           <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
@@ -1522,30 +1523,35 @@ const searchModels = debounce(()=>{ pageState.models.pageIndex = 1; loadModels()
 function renderModels(data){
   const tbody = $('modelsTbody');
   if(!data.length){ tbody.innerHTML='<tr class="empty-row"><td colspan="9">暂无模型</td></tr>'; return; }
-  tbody.innerHTML = data.map(m=>`
+  tbody.innerHTML = data.map(m=>{
+    // modelId/modelName 都是管理员可编辑数据：显示位置做 HTML 转义，事件参数则用
+    // JSON 字符串字面量 + 属性转义，避免引号、& 或反斜杠把 onclick 截断。
+    const modelArg = jsArg(m.modelId);
+    const nameArg  = jsArg(m.modelName||m.modelId);
+    return `
     <tr>
-      <td><code>${m.modelId}</code> <span onclick="copyText('${m.modelId}')" style="cursor:pointer;color:#6366f1;font-size:11px">复制</span></td>
-      <td><strong>${m.modelName}</strong></td>
+      <td><code>${escapeHtml(m.modelId)}</code> <span onclick="copyText(${modelArg})" style="cursor:pointer;color:#6366f1;font-size:11px">复制</span></td>
+      <td><strong>${escapeHtml(m.modelName)}</strong></td>
       <td>${providerTag(m.provider)}</td>
-      <td><span class="tag tag-gray">${m.modelType||'chat'}</span></td>
-      <td><span class="tag tag-blue">${m.apiSpec||'openai'}</span></td>
-      <td style="font-size:12px;color:#64748b;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${m.upstreamUrl||''}">${m.upstreamUrl||'-'}</td>
+      <td><span class="tag tag-gray">${escapeHtml(m.modelType||'chat')}</span></td>
+      <td><span class="tag tag-blue">${escapeHtml(m.apiSpec||'openai')}</span></td>
+      <td style="font-size:12px;color:#64748b;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(m.upstreamUrl||'')}">${escapeHtml(m.upstreamUrl||'-')}</td>
       <td>${(m.authorizedAppCount||0) > 0
-            ? `<a href="javascript:void(0)" onclick="viewModelAuthApps('${m.modelId}','${escapeHtml(m.modelName||m.modelId)}')"
+            ? `<a href="javascript:void(0)" onclick="viewModelAuthApps(${modelArg},${nameArg})"
                   style="color:#6366f1;font-weight:600">${m.authorizedAppCount} 个</a>`
             : '<span style="color:#94a3b8">无</span>'}</td>
       <td>${m.enabled!==false?'<span class="tag tag-green">启用</span>':'<span class="tag tag-red">禁用</span>'}</td>
       <td>
         <div class="flex gap-8">
-          <button class="btn btn-neutral btn-sm" title="GET /modelgate/models/detail?modelId=${m.modelId}" onclick="viewModel('${m.modelId}')">查看</button>
-          <button class="btn btn-neutral btn-sm" title="GET /modelgate/models/detail?modelId=${m.modelId}" onclick="openModelModal('${m.modelId}')">编辑</button>
-          <button class="btn btn-info btn-sm" onclick="openModelTestModal('${m.modelId}')">🧪 测试</button>
-          <button class="btn ${m.enabled!==false?'btn-warning':'btn-success'} btn-sm" title="${m.enabled!==false?'PATCH /modelgate/models/disable':'PATCH /modelgate/models/enable'}?modelId=${m.modelId}" onclick="toggleModel('${m.modelId}',${m.enabled!==false})">${m.enabled!==false?'禁用':'启用'}</button>
-          <button class="btn btn-danger btn-sm" title="DELETE /modelgate/models/delete?modelId=${m.modelId}" onclick="deleteModel('${m.modelId}')">删除</button>
+          <button class="btn btn-neutral btn-sm" title="查看模型详情" onclick="viewModel(${modelArg})">查看</button>
+          <button class="btn btn-neutral btn-sm" title="编辑模型" onclick="openModelModal(${modelArg})">编辑</button>
+          <button class="btn btn-info btn-sm" onclick="openModelTestModal(${modelArg})">🧪 测试</button>
+          <button class="btn ${m.enabled!==false?'btn-warning':'btn-success'} btn-sm" onclick="toggleModel(${modelArg},${m.enabled!==false})">${m.enabled!==false?'禁用':'启用'}</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteModel(${modelArg})">删除</button>
         </div>
       </td>
     </tr>
-  `).join('');
+  `}).join('');
 }
 
 // 原 filterModels 在前端数组上过滤。服务端分页后前端只持有当前页，
@@ -1554,7 +1560,7 @@ function renderModels(data){
 function providerTag(p){
   const map = {openai:'tag-green',azure_openai:'tag-blue',anthropic:'tag-purple',private:'tag-yellow',custom:'tag-gray'};
   const label = {openai:'OpenAI',azure_openai:'Azure',anthropic:'Anthropic',private:'私有',custom:'自定义'};
-  return `<span class="tag ${map[p]||'tag-gray'}">${label[p]||p}</span>`;
+  return `<span class="tag ${map[p]||'tag-gray'}">${escapeHtml(label[p]||p)}</span>`;
 }
 
 // 反查某模型被哪些接入系统授权。列表页只显示数量（随 /modelgate/models 一次性带回，
@@ -1612,6 +1618,11 @@ function escapeHtml(s){
   return String(s??'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
+/** 把动态值安全地放进 inline onclick 参数；HTML 转义不能替代 JavaScript 字符串转义。 */
+function jsArg(s){
+  return escapeHtml(JSON.stringify(String(s??'')));
+}
+
 function viewRow(label, value, mono){
   const v = (value===null||value===undefined||value==='') ? '<span style="color:#94a3b8">-</span>'
           : (mono ? `<code>${escapeHtml(value)}</code>` : escapeHtml(value));
@@ -1646,7 +1657,7 @@ async function viewModel(modelId){
   $('modelViewBody').innerHTML = `
     <h4 style="margin:0 0 8px">基础信息</h4>
     <table style="width:100%;border-collapse:collapse">
-      ${viewRow('模型 ID', m.modelId, true)}
+      ${viewRow('模型 ID（网关对外）', m.modelId, true)}
       ${viewRow('展示名称', m.modelName)}
       ${viewRow('提供商', m.provider)}
       ${viewRow('模型类型', m.modelType)}
@@ -1689,7 +1700,7 @@ async function viewModel(modelId){
       <div style="font-size:13px">
         共 ${cnt} 个系统被授权 ·
         <a href="javascript:void(0)" style="color:#6366f1"
-           onclick="closeModal('modelViewModal');viewModelAuthApps('${modelId}','${escapeHtml(m.modelName||modelId)}')">查看明细</a>
+           onclick="closeModal('modelViewModal');viewModelAuthApps(${jsArg(modelId)},${jsArg(m.modelName||modelId)})">查看明细</a>
       </div>`;
   }
 }
@@ -1735,7 +1746,7 @@ function openModelModal(modelId=null){
   // 保存时会与 editingOriginalModelId 比对，变了才带上 newModelId 走改名路径。
   $('m_modelId').disabled = false;
   $('m_modelIdHint').innerHTML = modelId
-    ? '对外暴露的唯一标识。<b style="color:#b45309">可以修改，但改名后仍在用旧 ID 的接入方会立刻 404</b>，'
+    ? '对外暴露的唯一标识。<b style="color:#b45309">可以修改，但改名后旧 ID 会在缓存收敛后 404</b>，'
       + '且历史审计与报文保留旧 ID（用量统计会按两个名字裂开）。'
       + '若只是想对外换个名字，更稳妥的做法是新建一条模型、用下面的「上游真实模型 ID」指向真实 ID。'
     : '对外暴露的唯一标识，调用方请求体里的 model 字段填的就是它';
@@ -1801,6 +1812,12 @@ async function submitModel(){
     }
   };
   if(!body.modelId||!body.modelName||!body.upstreamUrl){ toast('模型 ID、名称、上游地址不能为空','error'); return; }
+  const configError = modelParamConfigError(body);
+  if(configError){
+    toast(configError,'error');
+    goStep(3);
+    return;
+  }
 
   // 改名处理：modelId 始终传**原始 ID**（后端靠它定位记录），新值放在 newModelId。
   // 拿输入框的值当定位键会让后端按新 ID 找不到记录、直接报「模型不存在」。
@@ -1810,9 +1827,13 @@ async function submitModel(){
       '确认把模型 ID 从 ' + editingOriginalModelId + ' 改成 ' + newId + ' ？',
       '',
       '影响：',
-      '· 仍在使用旧 ID 的接入方会立刻收到 404，请先通知到位',
+      '· 仍在使用旧 ID 的接入方会在缓存收敛后收到 404，请先通知到位',
       '· 凭证与模型授权会自动跟随，无需手工处理',
       '· 历史审计与报文保留旧 ID，用量统计会按新旧两个名字裂开',
+      '· 日/月配额以模型 ID 组成 Redis 键；改名后新 ID 将从 0 重新累计',
+      '· 多副本部署无缓存广播，其他实例最长约 60 秒后收敛，请在低流量窗口操作',
+      '· 「上游真实模型 ID」留空时，会自动回填为改名前的 ' + editingOriginalModelId + '，',
+      '  以保证上游收到的模型身份不变；若想让上游也改用新 ID，请显式填写该字段',
       '',
       '若只是想对外换个名字，更稳妥的做法是新建一条模型并配置「上游真实模型 ID」。'
     ];
@@ -1824,7 +1845,8 @@ async function submitModel(){
   try{
     const method = editingModelId ? 'PUT' : 'POST';
     const url    = apiUrl(editingModelId ? '/modelgate/models/update' : '/modelgate/models');
-    console.info('[ModelGate] 提交模型', method, url, body);
+    // 上游 SK 可能是本次新输入的明文，禁止进入浏览器控制台。
+    console.info('[ModelGate] 提交模型', method, url, modelConfigForLog(body));
     const r = await fetch(url, {method, headers:hdrs(), body:JSON.stringify(body)});
     const j = await r.json();
     console.info('[ModelGate] 响应', r.status, j);
@@ -1847,10 +1869,20 @@ async function submitModel(){
   }
 }
 
+/** 生成仅用于浏览器诊断的模型配置副本；任何上游密钥一律脱敏。 */
+function modelConfigForLog(config){
+  const safe = {...config};
+  if(config?.credential){
+    safe.credential = {...config.credential,
+      secretKey: config.credential.secretKey ? '***' : ''};
+  }
+  return safe;
+}
+
 async function toggleModel(modelId, currentEnabled){
   const action = currentEnabled ? 'disable' : 'enable';
   try{
-    await fetch(apiUrl(`/modelgate/models/${action}?modelId=${modelId}`), {method:'PATCH', headers:hdrs()});
+    await fetch(apiUrl(`/modelgate/models/${action}?modelId=${encodeURIComponent(modelId)}`), {method:'PATCH', headers:hdrs()});
   }catch(e){}
   // 服务端分页后不能只改本地数组：过滤条件可能让这一行不再属于当前页，
   // 且 total / 页数都要重算。统一重新加载当前页。
@@ -1861,7 +1893,7 @@ async function toggleModel(modelId, currentEnabled){
 async function deleteModel(modelId){
   if(!confirm(`确认删除模型 ${modelId}？`)) return;
   try{
-    const r = await fetch(apiUrl(`/modelgate/models/delete?modelId=${modelId}`), {method:'DELETE', headers:hdrs()});
+    const r = await fetch(apiUrl(`/modelgate/models/delete?modelId=${encodeURIComponent(modelId)}`), {method:'DELETE', headers:hdrs()});
     const j = await r.json();
     if(!isOk(j)){ toast('删除失败: '+errMsg(j),'error'); return; }
   }catch(e){}
@@ -1897,6 +1929,8 @@ function buildDraftConfig(){
     upstreamUrl:  $('m_upstreamUrl').value.trim(),
     upstreamPath: $('m_upstreamPath').value.trim(),
     timeoutMs:    parseInt($('m_timeoutMs').value)||30000,
+    defaultParams:$('m_defaultParams').value.trim(),
+    forceParams:  $('m_forceParams').value.trim(),
     paramMapping: $('m_paramMapping').value.trim(),
     credential:{
       authType:  $('m_authType').value,
@@ -1904,6 +1938,31 @@ function buildDraftConfig(){
       secretKey: $('m_secretKey').value.trim()||$('m_secretKeySk').value.trim()||$('m_azureApiKey').value.trim(),
     }
   };
+}
+
+/** 写入前校验三项模型参数；服务端会再次校验，运行期容错只负责历史/直接改库脏数据。 */
+function modelParamConfigError(config){
+  const fields = [
+    ['默认参数', config.defaultParams, false],
+    ['强制参数', config.forceParams, false],
+    ['字段映射', config.paramMapping, true],
+  ];
+  for(const [label, raw, mapping] of fields){
+    if(!raw) continue;
+    let value;
+    try{ value = JSON.parse(raw); }
+    catch(e){ return `${label}必须是合法 JSON 对象：${e.message}`; }
+    if(!value || typeof value !== 'object' || Array.isArray(value)){
+      return `${label}必须是 JSON 对象`;
+    }
+    if(label==='强制参数' && Object.prototype.hasOwnProperty.call(value, 'model')){
+      return '强制参数中的 model 已废止，请填写「上游真实模型 ID」';
+    }
+    if(mapping && Object.entries(value).some(([,to])=>typeof to!=='string' || !to.trim())){
+      return '字段映射的目标字段必须是非空字符串';
+    }
+  }
+  return '';
 }
 
 async function testModelConn(){
@@ -1918,17 +1977,20 @@ async function testModelConn(){
     el.style.color = '#f59e0b';
     return;
   }
-  // 编辑已保存模型且未重新输入密钥时，草稿里的 secretKey 为空——此时不传 body，
-  // 让后端用库里已加密的凭证解密后探测，避免"没填密钥所以测不通"的误报。
-  const useDraft = !editingModelId || !!draft.credential.secretKey;
+  const configError = modelParamConfigError(draft);
+  if(configError){
+    el.textContent = '❌ ' + configError;
+    el.style.color = '#ef4444';
+    return;
+  }
+  // 始终提交当前草稿：编辑时即使 SK 留空，后端也只复用库中旧密钥，其余字段仍按当前表单测试。
+  // 旧实现会在未重填密钥时完全不传 body，导致刚修改的地址/上游 ID/参数根本没有被测试。
   const modelId = editingModelId || draft.modelId;
 
   try{
     const url = apiUrl(`/modelgate/models/test${modelId?`?modelId=${encodeURIComponent(modelId)}`:''}`);
-    const opt = useDraft
-      ? {method:'POST', headers:hdrs(), body:JSON.stringify(draft)}
-      : {method:'POST', headers:hdrs()};
-    console.info('[ModelGate] 连通性测试', url, useDraft?'草稿模式':'查库模式', useDraft?draft:null);
+    const opt = {method:'POST', headers:hdrs(), body:JSON.stringify(draft)};
+    console.info('[ModelGate] 连通性测试', url, '草稿模式', modelConfigForLog(draft));
     const r = await fetch(url, opt);
     const j = await r.json();
     console.info('[ModelGate] 连通性测试响应', r.status, j);
@@ -2296,7 +2358,8 @@ async function openUsageModal(credId){
   const usable = (currentAuths||[]).filter(isAuthUsable);
   const sel = $('ug_model');
   sel.innerHTML = usable.length
-    ? usable.map(a=>`<option value="${a.modelId}" data-type="${a.modelType||'chat'}">${a.modelName||a.modelId}（${a.modelId}）</option>`).join('')
+    // modelId/modelName 已允许管理员自定义，放进 option 属性和文本时都必须转义。
+    ? usable.map(a=>`<option value="${escapeHtml(a.modelId)}" data-type="${escapeHtml(a.modelType||'chat')}">${escapeHtml(a.modelName||a.modelId)}（${escapeHtml(a.modelId)}）</option>`).join('')
     : '<option value="">（该系统暂无可用授权，请先到「模型授权」页授权）</option>';
 
   $('ug_credName').textContent = c.credName || ('#'+credId);
@@ -2356,6 +2419,11 @@ function usageParts(){
           body: JSON.stringify(bodyObj, null, 2)};
 }
 
+/** POSIX shell 单引号字面量；JSON 内若含单引号，直接写 -d '...' 会截断命令。 */
+function shellSingleQuoted(value){
+  return "'" + String(value).replace(/'/g, "'\"'\"'") + "'";
+}
+
 function usageCurl(p){
   const c = usageCtx.cred;
   if(c.credType==='ak_sk'){
@@ -2368,13 +2436,13 @@ function usageCurl(p){
       + '  -H "Content-Type: application/json" \\\n'
       + '  -H "Authorization: AKSK $AK:$TS:$SIGN" \\\n'
       + (p.stream ? '  -N \\\n' : '')
-      + "  -d '" + p.body + "'";
+      + '  -d ' + shellSingleQuoted(p.body);
   }
   return 'curl -X POST "' + p.base + p.path + '" \\\n'
     + '  -H "Content-Type: application/json" \\\n'
     + '  -H "Authorization: Bearer ' + (usageCtx.secret||'<在此填入 API Key>') + '" \\\n'
     + (p.stream ? '  -N \\\n' : '')
-    + "  -d '" + p.body + "'";
+    + '  -d ' + shellSingleQuoted(p.body);
 }
 
 function usageHttp(p){
@@ -2394,6 +2462,8 @@ function usageHttp(p){
 
 function usagePython(p){
   const c = usageCtx.cred;
+  // JSON 字符串字面量同时是合法 Python 字符串，可安全承载引号、反斜杠和 Unicode 模型 ID。
+  const pyModel = JSON.stringify(p.modelId);
   if(c.credType==='ak_sk'){
     // AKSK 每请求都要重新签名，OpenAI SDK 塞不进这种动态头，只能用 requests 手写
     // 压成单行：多行 JSON 直接嵌进 json= 会缩进错位，不像能直接跑的代码
@@ -2423,7 +2493,7 @@ function usagePython(p){
   if(p.embed){
     return head
       + 'resp = client.embeddings.create(\n'
-      + '    model="' + p.modelId + '",\n'
+      + '    model=' + pyModel + ',\n'
       + '    input="需要向量化的文本",\n'
       + ')\n'
       + 'print(resp.data[0].embedding[:8])';
@@ -2431,7 +2501,7 @@ function usagePython(p){
   if(p.stream){
     return head
       + 'resp = client.chat.completions.create(\n'
-      + '    model="' + p.modelId + '",\n'
+      + '    model=' + pyModel + ',\n'
       + '    messages=[{"role": "user", "content": "你好"}],\n'
       + '    stream=True,\n'
       + ')\n'
@@ -2440,7 +2510,7 @@ function usagePython(p){
   }
   return head
     + 'resp = client.chat.completions.create(\n'
-    + '    model="' + p.modelId + '",\n'
+    + '    model=' + pyModel + ',\n'
     + '    messages=[{"role": "user", "content": "你好"}],\n'
     + ')\n'
     + 'print(resp.choices[0].message.content)';
@@ -2755,11 +2825,14 @@ async function loadAuths(){
 
 function renderAuths(data){
   const tbody = $('authTbody');
-  if(!data.length){ tbody.innerHTML='<tr class="empty-row"><td colspan="8">暂无授权</td></tr>'; return; }
-  tbody.innerHTML = data.map(a=>`
+  if(!data.length){ tbody.innerHTML='<tr class="empty-row"><td colspan="9">暂无授权</td></tr>'; return; }
+  tbody.innerHTML = data.map(a=>{
+    // 授权页同样消费可编辑的模型 ID，不能再用单引号直接拼 inline handler。
+    const modelArg = jsArg(a.modelId);
+    return `
     <tr>
-      <td><strong>${a.modelName||a.modelId}</strong></td>
-      <td><code>${a.modelId}</code></td>
+      <td><strong>${escapeHtml(a.modelName||a.modelId)}</strong></td>
+      <td><code>${escapeHtml(a.modelId)}</code></td>
       <td>${a.enabled!==false?'<span class="tag tag-green">✅ 启用</span>':'<span class="tag tag-red">禁用</span>'}</td>
       <td>${fmt(a.qpsLimit)}/s</td>
       <td>${fmt(a.dailyLimit)}</td>
@@ -2768,13 +2841,13 @@ function renderAuths(data){
       <td>${a.expiresAt?fmtTime(a.expiresAt):'永久'}</td>
       <td>
         <div class="flex gap-8">
-          <button class="btn btn-neutral btn-sm" title="PUT /modelgate/auth/update" onclick="openAuthEditModal('${a.modelId}')">编辑</button>
-          <button class="btn ${a.enabled!==false?'btn-warning':'btn-success'} btn-sm" title="${a.enabled!==false?'PATCH /modelgate/auth/disable':'PATCH /modelgate/auth/enable'}?appId=${currentApp?.appId}&modelId=${a.modelId}" onclick="toggleAuth('${a.modelId}',${a.enabled!==false})">${a.enabled!==false?'禁用':'启用'}</button>
-          <button class="btn btn-danger btn-sm" title="DELETE /modelgate/auth/revoke?appId=${currentApp?.appId}&modelId=${a.modelId}" onclick="revokeAuth('${a.modelId}')">撤销</button>
+          <button class="btn btn-neutral btn-sm" title="编辑模型授权" onclick="openAuthEditModal(${modelArg})">编辑</button>
+          <button class="btn ${a.enabled!==false?'btn-warning':'btn-success'} btn-sm" title="${a.enabled!==false?'禁用':'启用'}模型授权" onclick="toggleAuth(${modelArg},${a.enabled!==false})">${a.enabled!==false?'禁用':'启用'}</button>
+          <button class="btn btn-danger btn-sm" title="撤销模型授权" onclick="revokeAuth(${modelArg})">撤销</button>
         </div>
       </td>
     </tr>
-  `).join('');
+  `}).join('');
 }
 
 // null = 新增授权；非空 = 正在编辑该 modelId 的授权
@@ -2890,14 +2963,14 @@ async function submitAuth(){
 
 async function toggleAuth(modelId, currentEnabled){
   const action = currentEnabled?'disable':'enable';
-  try{ await fetch(apiUrl(`/modelgate/auth/${action}?appId=${currentApp.appId}&modelId=${modelId}`), {method:'PATCH', headers:hdrs()}); }catch(e){}
+  try{ await fetch(apiUrl(`/modelgate/auth/${action}?appId=${encodeURIComponent(currentApp.appId)}&modelId=${encodeURIComponent(modelId)}`), {method:'PATCH', headers:hdrs()}); }catch(e){}
   toast(`授权已${currentEnabled?'禁用':'启用'}`);
   loadAuths();
 }
 
 async function revokeAuth(modelId){
   if(!confirm(`确认撤销 ${modelId} 的授权？`)) return;
-  try{ await fetch(apiUrl(`/modelgate/auth/revoke?appId=${currentApp.appId}&modelId=${modelId}`), {method:'DELETE', headers:hdrs()}); }catch(e){}
+  try{ await fetch(apiUrl(`/modelgate/auth/revoke?appId=${encodeURIComponent(currentApp.appId)}&modelId=${encodeURIComponent(modelId)}`), {method:'DELETE', headers:hdrs()}); }catch(e){}
   toast('授权已撤销');
   loadAuths();
 }
@@ -3064,14 +3137,14 @@ function renderAudit(data){
     <tr>
       <td style="font-size:12px;white-space:nowrap">${fmtTime(a.createTime)}</td>
       <td><code style="font-size:11px" title="${escHtml(a.traceId||'')}">${(a.traceId||'').slice(0,12)}...</code></td>
-      <td>${a.appId||'-'}</td>
-      <td>${a.modelId||'-'}</td>
-      <td style="font-size:12px">${a.clientIp||'-'}</td>
+      <td>${escHtml(a.appId||'-')}</td>
+      <td>${escHtml(a.modelId||'-')}</td>
+      <td style="font-size:12px">${escHtml(a.clientIp||'-')}</td>
       <td>${statusTag(a.httpStatus)}</td>
       <td>${a.latencyMs!=null?a.latencyMs+'ms':'-'}</td>
       <td>${(a.inputTokens||0)+(a.outputTokens||0)||'-'}</td>
       <td><button class="btn btn-neutral btn-sm" title="按 traceId 查这次调用的请求/响应报文"
-                  onclick="payloadOfTrace('${escHtml(a.traceId||'')}')">📨 报文</button></td>
+                  onclick="payloadOfTrace(${jsArg(a.traceId||'')})">📨 报文</button></td>
     </tr>
   `).join('');
 }
@@ -3559,7 +3632,7 @@ function copyText(t){
   });
 }
 
-function escHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function escHtml(s){ return escapeHtml(s); }
 
 // Close modal on backdrop click
 document.querySelectorAll('.modal-backdrop').forEach(el=>{
@@ -3572,19 +3645,33 @@ document.querySelectorAll('.modal-backdrop').forEach(el=>{
 let _tstMsgCnt = 0;
 // 测试弹窗自己的模型列表（全量），不共用只有当前页的 allModels
 let _tstModels = [];
+// 防止连续打开 A/B 两个测试弹窗时，A 较慢的下拉请求后返回并覆盖 B 的目标模型。
+let _tstLoadSeq = 0;
 
 async function openModelTestModal(modelId) {
+  const loadSeq = ++_tstLoadSeq;
   const sel = $('tst_model');
+  // 先用当前列表页的完整 VO（含 upstreamModelId）初始化，避免全量下拉请求返回前点击发送时
+  // 又退回使用对外 ID；同时清掉上一次打开弹窗留下的模型数组。
+  const initialModel = allModels.find(m => m.modelId === modelId);
+  _tstModels = initialModel ? [initialModel] : [];
   // 先放入被点击的那条，保证弹窗立刻可用；再异步补全下拉
   sel.innerHTML = `<option value="${escapeHtml(modelId)}">${escapeHtml(modelId)}</option>`;
   // 单独取全量：allModels 只是当前页，否则第 2 页之后的模型在下拉里选不到
   fetchSelectableModels().then(models => {
-    if(models.length){
-      sel.innerHTML = models.map(m =>
-        `<option value="${escapeHtml(m.modelId)}" ${m.modelId === modelId ? 'selected' : ''}>${escapeHtml(m.modelName)} (${escapeHtml(m.modelId)})</option>`
-      ).join('');
+    if(loadSeq !== _tstLoadSeq) return;
+    // fetchSelectableModels 只返回启用模型；从禁用行点“测试”时仍必须保留原目标，
+    // 不能在异步返回后悄悄跳到下拉第一项、测试了另一个模型。
+    const merged = initialModel && !models.some(m => m.modelId === modelId)
+      ? [initialModel, ...models] : models;
+    if(merged.length){
+      sel.innerHTML = merged.map(m => {
+        const realId = m.upstreamModelId?.trim();
+        const route = realId && realId !== m.modelId ? ` → 上游 ${realId}` : '';
+        return `<option value="${escapeHtml(m.modelId)}" ${m.modelId === modelId ? 'selected' : ''}>${escapeHtml(m.modelName)} (${escapeHtml(m.modelId)}${escapeHtml(route)})</option>`;
+      }).join('');
+      _tstModels = merged;
     }
-    _tstModels = models;
     renderTestAuthInfo();
   });
 
@@ -3623,18 +3710,23 @@ function renderTestAuthInfo() {
   const m = _tstModels.find(x => x.modelId === $('tst_model').value);
   if (!m) { el.textContent = '-'; return; }
 
+  const upstreamId = m.upstreamModelId?.trim() || m.modelId;
+  const routeInfo = `<div style="margin-bottom:6px"><b>测试报文模型 ID：</b><code>${escapeHtml(upstreamId)}</code>`
+    + (upstreamId !== m.modelId ? ` <span style="color:#64748b">（对外 <code>${escapeHtml(m.modelId)}</code> → 上游真实 ID）</span>` : '')
+    + '</div>';
+
   if (m.authType === 'none' || !m.authType) {
-    el.innerHTML = `<span class="tag tag-gray">不鉴权</span>
+    el.innerHTML = routeInfo + `<span class="tag tag-gray">不鉴权</span>
       <span style="margin-left:8px;color:#64748b">该模型未配置上游鉴权，请求不携带鉴权头</span>`;
     return;
   }
   const label = AUTH_TYPE_LABEL[m.authType] || m.authType;
   if (m.secretKeyConfigured) {
-    el.innerHTML = `<span class="tag tag-green">已配置</span>
+    el.innerHTML = routeInfo + `<span class="tag tag-green">已配置</span>
       <span style="margin-left:8px">${escapeHtml(label)}</span>
       <span style="margin-left:8px;color:#64748b">密钥 <code>••••••••</code> 由服务端解密后注入</span>`;
   } else {
-    el.innerHTML = `<span class="tag tag-red">缺少密钥</span>
+    el.innerHTML = routeInfo + `<span class="tag tag-red">缺少密钥</span>
       <span style="margin-left:8px">${escapeHtml(label)}</span>
       <span style="margin-left:8px;color:#ef4444">该模型鉴权类型需要密钥但库中为空，测试大概率返回 401</span>`;
   }
@@ -3666,8 +3758,8 @@ function removeTestMsg(id) {
 
 function clearTestResp() {
   $('testRespBox').innerHTML = `<span class="rph">// 点击「▶ 发送请求」后，响应将显示在此处
-// stream: true 时实时流式显示模型输出内容
-// stream: false 时显示完整 JSON 响应（含 usage / tokens）</span>`;
+// 管理面测试固定按非流式发送
+// 此处显示聚合后的完整 JSON 响应（含 usage / tokens）</span>`;
   $('testMetaBar').style.display = 'none';
 }
 
@@ -3683,8 +3775,11 @@ function _buildTstMessages() {
 }
 
 function _buildTstBody() {
+  const selectedId = $('tst_model').value;
+  const selectedModel = _tstModels.find(m => m.modelId === selectedId);
+  const upstreamId = selectedModel?.upstreamModelId?.trim() || selectedId;
   const body = {
-    model:       $('tst_model').value,
+    model:       upstreamId,
     messages:    _buildTstMessages(),
     temperature: parseFloat($('tst_temp').value),
     max_tokens:  parseInt($('tst_maxTok').value) || 1024,
@@ -3694,6 +3789,8 @@ function _buildTstBody() {
   if ($('tst_stream').value === 'true') body.stream = true;
   const extra = $('tst_extra').value.trim();
   if (extra) { try { Object.assign(body, JSON.parse(extra)); } catch(e) {} }
+  // 额外参数即使包含 model 也不能覆盖真实上游 ID；服务端还会按数据库配置再校正一次。
+  body.model = upstreamId;
   return body;
 }
 
@@ -3725,7 +3822,8 @@ async function sendTestRequest() {
   const t0 = Date.now();
   try {
     const url = apiUrl(`/modelgate/models/chat/test?modelId=${encodeURIComponent(modelId)}`);
-    console.info('[ModelGate] 对话测试', url, body);
+    // prompt 可能包含业务敏感信息；控制台只记字段名，不展开 messages 内容。
+    console.info('[ModelGate] 对话测试', url, {modelId, fields:Object.keys(body)});
     const resp = await fetch(url, {method:'POST', headers:hdrs(), body:JSON.stringify(body)});
     const j = await resp.json();
     console.info('[ModelGate] 对话测试响应', resp.status, j);

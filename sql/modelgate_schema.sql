@@ -73,7 +73,9 @@ CREATE TABLE IF NOT EXISTS mg_model_credential (
     updater_um    VARCHAR(100) DEFAULT NULL                      COMMENT '更新人 UM 账号',
     PRIMARY KEY (id),
     UNIQUE KEY uk_model_id (model_id, is_del),
+    -- model_id 允许在管理页改名；凭证业务键必须随父记录同步变化。
     CONSTRAINT fk_modelcred_model FOREIGN KEY (model_id) REFERENCES mg_model (model_id)
+        ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='模型上游鉴权凭证';
 
 -- ============================================================================
@@ -151,7 +153,9 @@ CREATE TABLE IF NOT EXISTS mg_app_model_auth (
     UNIQUE KEY uk_app_model (app_id, model_id, is_del),
     KEY idx_model_id (model_id),
     CONSTRAINT fk_auth_app   FOREIGN KEY (app_id)   REFERENCES mg_app (app_id),
+    -- 模型改名后授权关系继续指向同一模型；历史审计/报文表没有外键，仍保留旧 ID。
     CONSTRAINT fk_auth_model FOREIGN KEY (model_id) REFERENCES mg_model (model_id)
+        ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='接入系统对模型的调用授权';
 
 -- ============================================================================

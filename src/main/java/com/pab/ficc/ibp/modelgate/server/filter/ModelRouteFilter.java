@@ -192,7 +192,8 @@ public class ModelRouteFilter implements GlobalFilter, Ordered {
             // 先应用模型级参数配置（default_params / force_params / param_mapping），
             // 再交给适配器做 api_spec 特有的改写。顺序不能反：适配器可能会删掉某些字段
             // （如 Azure 会 remove("model")），先跑适配器的话这些配置就落在了会被删掉的字段上。
-            // 三项都没配时 merge 直接原样返回，不解析不分配。
+            // 三项都没配且上游 ID 无需改写时，merge 直接原样返回、不解析不分配；
+            // 只配置上游 ID 时则优先走下面的字节偏移定点替换。
             // 把 BodyParseFilter 顺带记下的 model 值偏移传下去：
             // 「只需改上游模型 ID」这种情况能靠它走定点替换，省掉一次完整解析+序列化。
             Integer mvStart = exchange.getAttribute(BodyParseFilter.ATTR_MODEL_VALUE_START);

@@ -1,6 +1,9 @@
 package com.pab.ficc.ibp.modelgate.server.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.pab.ficc.ibp.modelgate.server.adapter.ProviderAdapter;
+import com.pab.ficc.ibp.modelgate.server.adapter.RequestParamMerger;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.ModelCredentialEntity;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.ModelInstanceEntity;
 import com.pab.ficc.ibp.modelgate.server.domain.vo.ConnectivityTestVO;
@@ -23,9 +26,10 @@ import java.util.concurrent.TimeoutException;
 /**
  * 模型连通性探测。
  *
- * <p>向上游发送一次**真实**的最小推理请求，复用 {@link ProviderAdapter}——即请求体转换、
- * 鉴权 Header 构造、上游 URL 拼接与 {@code ModelRouteFilter} 走同一套逻辑。这样"测通"
- * 才等价于"这条配置真能路由"，而不是仅仅证明网络可达。
+ * <p>向上游发送一次**真实**的最小推理请求，复用 {@link RequestParamMerger} 与
+ * {@link ProviderAdapter}——默认/强制参数、模型 ID/字段映射、协议转换、鉴权 Header 和上游 URL
+ * 都与 {@code ModelRouteFilter} 走同一套逻辑。这样“测通”才等价于“这条配置真能路由”，
+ * 而不是仅仅证明网络可达。
  *
  * <p>判定原则：只有上游返回 2xx 才算连通。鉴权失败、地址错误、超时、DNS 失败一律判失败，
  * 并给出具体原因，避免错误配置被误判为可用。
@@ -38,7 +42,7 @@ public class ModelConnectivityService {
     /** 探测超时上限：模型本身可能配了很长的超时（如 570s），但连通性测试必须尽快给结论 */
     private static final int MAX_PROBE_TIMEOUT_MS = 15_000;
     private static final int DEFAULT_PROBE_TIMEOUT_MS = 10_000;
-    /** 上游响应体片段最大保留长度，避免把整篇报错灌进返回值与日志 */
+
     /**
      * 上游响应体回传上限（字符）。
      *
@@ -53,6 +57,15 @@ public class ModelConnectivityService {
     private final List<ProviderAdapter> adapters;
     private final WebClient.Builder webClientBuilder;
 
+    /** 仅用于构造管理面最小探测体，确保可自定义模型 ID 按 JSON 规则正确转义。 */
+    private final ObjectMapper objectMapper;
+
+    /**
+     * 管理面测试复用业务转发的参数语义；它只在管理员手动测试时执行，
+     * 不会改变或增加 /v1/** 热路径的每请求开销。
+     */
+    private final RequestParamMerger requestParamMerger;
+
     /** 见 {@link #DEFAULT_BODY_LIMIT} 的说明；可配以便应对超长上下文模型 */
     @Value("${modelgate.connectivity-test.max-body-chars:1048576}")
     private int maxBodyChars = DEFAULT_BODY_LIMIT;
@@ -64,7 +77,8 @@ public class ModelConnectivityService {
      * @param credential 上游凭证，secretKey 必须是**明文**（已保存模型需先解密）
      */
     public Mono<ConnectivityTestVO> probe(ModelInstanceEntity model, ModelCredentialEntity credential) {
-        byte[] body = probeBody(model.getModelId(), model.getModelType()).getBytes(StandardCharsets.UTF_8);
+        // 探测的是供应商真实模型，不是 ModelGate 对外路由别名。
+        byte[] body = probeBody(model.resolveUpstreamModelId(), model.getModelType());
         return exchange(model, credential, body, probePath(model));
     }
 
@@ -95,7 +109,10 @@ public class ModelConnectivityService {
         HttpHeaders headers;
         URI upstreamUri;
         try {
-            finalBody = adapter.transformRequestBody(requestBody, model, credential);
+            // 与 ModelRouteFilter 保持同一顺序：先处理默认/强制参数、字段映射和真实模型 ID，
+            // 再做供应商协议转换。此前管理面测试跳过了这一步，会出现“测试报文”和真实转发不一致。
+            byte[] mergedBody = requestParamMerger.merge(requestBody, model);
+            finalBody = adapter.transformRequestBody(mergedBody, model, credential);
             headers = adapter.buildUpstreamHeaders(model, credential);
             upstreamUri = adapter.buildUpstreamUri(model, URI.create(path));
         } catch (Exception e) {
@@ -131,9 +148,10 @@ public class ModelConnectivityService {
                         log.info("[Connectivity] 探测成功: modelId={}, latency={}ms, httpStatus={}",
                                 model.getModelId(), vo.getLatencyMs(), vo.getHttpStatus());
                     } else {
-                        log.warn("[Connectivity] 探测失败: modelId={}, latency={}ms, httpStatus={}, message={}, body={}",
-                                model.getModelId(), vo.getLatencyMs(), vo.getHttpStatus(),
-                                vo.getMessage(), vo.getUpstreamBody());
+                        // upstreamBody 最多允许 1 MiB 回传管理页，但不能把整段模型输出/错误正文灌进生产日志。
+                        log.warn("[Connectivity] 探测失败: modelId={}, latency={}ms, httpStatus={}, message={}, bodyChars={}",
+                                model.getModelId(), vo.getLatencyMs(), vo.getHttpStatus(), vo.getMessage(),
+                                vo.getUpstreamBody() == null ? 0 : vo.getUpstreamBody().length());
                     }
                 });
     }
@@ -231,14 +249,20 @@ public class ModelConnectivityService {
      * 最小探测请求体：chat 限制 max_tokens=1，尽量少消耗上游 token 与算力。
      * 以 OpenAI 规范构造，非 openai 规范由对应适配器转换。
      */
-    private String probeBody(String modelId, String modelType) {
+    private byte[] probeBody(String modelId, String modelType) {
         String id = modelId != null ? modelId : "";
+        ObjectNode root = objectMapper.createObjectNode();
+        root.put("model", id);
         if ("embedding".equals(modelType)) {
-            return "{\"model\":\"" + id + "\",\"input\":\"ping\"}";
+            root.put("input", "ping");
+        } else {
+            root.putArray("messages").addObject()
+                    .put("role", "user")
+                    .put("content", "ping");
+            root.put("max_tokens", 1);
+            root.put("stream", false);
         }
-        return "{\"model\":\"" + id + "\","
-                + "\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}],"
-                + "\"max_tokens\":1,\"stream\":false}";
+        return root.toString().getBytes(StandardCharsets.UTF_8);
     }
 
     private int probeTimeoutMs(Integer configured) {

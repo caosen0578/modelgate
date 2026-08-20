@@ -23,8 +23,8 @@ public class ModelInstanceEntity {
      * <p>用于把<b>对外暴露的 ID</b> 与<b>转发给上游的 ID</b> 解耦：同一个真实模型部署在两个平台时，
      * 平台会以「模型 ID 重复」拒绝新增第二个地址，于是对外换个名字、转发前再改回真实 ID。
      *
-     * <p>与 {@code forceParams} 里写 {@code {"model":"..."}} 效果相同，但语义清楚得多——
-     * forceParams 是「调用参数」，这里是「路由身份」。两处都设时<b>本字段优先</b>。
+     * <p>{@code forceParams} 是「调用参数」，本字段是「路由身份」。模型身份只由
+     * {@code modelId/upstreamModelId} 决定，{@code forceParams.model} 不得覆盖它。
      */
     private String upstreamModelId;
     private String modelName;
@@ -71,4 +71,15 @@ public class ModelInstanceEntity {
     private String createrUm;
     @TableField(fill = FieldFill.INSERT_UPDATE)
     private String updaterUm;
+
+    /**
+     * 返回真正发给模型供应商的模型 ID。
+     *
+     * <p>{@code modelId} 是 ModelGate 对调用方暴露的路由别名；只有
+     * {@code upstreamModelId} 未配置时，两者才是同一个值。把这个判断收口在实体上，
+     * 避免业务转发、连通性测试和管理面对话测试各写一份后逐渐产生不同语义。
+     */
+    public String resolveUpstreamModelId() {
+        return upstreamModelId == null || upstreamModelId.isBlank() ? modelId : upstreamModelId;
+    }
 }

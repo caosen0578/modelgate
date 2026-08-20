@@ -25,21 +25,25 @@ import java.util.Map;
  *   <li>{@code default_params}：<b>业务可覆盖</b>。只在请求体里<b>没有</b>该字段时才写入。
  *       用途是给没显式传参的调用方一个合理默认值（如 {@code temperature}）。</li>
  *   <li>{@code force_params}：<b>业务不可覆盖</b>。无条件覆盖请求体里的同名字段。
- *       用途是管控（如强制 {@code max_tokens} 上限），或把某个字段改写成上游要的值。</li>
+ *       用途是管控（如强制 {@code max_tokens} 上限）。唯一例外是 {@code model}：
+ *       模型身份只能由 modelId/upstreamModelId 决定。</li>
  *   <li>{@code param_mapping}：<b>字段改名</b>，仅 {@code api_spec=custom} 时生效。
  *       形如 <code>{"messages":"inputs"}</code> 表示把请求体里的 {@code messages}
  *       改名成 {@code inputs}，用于对接字段名与 OpenAI 规范不一致的私有模型。</li>
  * </ul>
- * 应用顺序：<b>default → force → mapping</b>。
- * mapping 放最后，是因为它改的是<b>键名</b>，必须在键值都确定之后再动，
- * 否则 force_params 里写的是原名、改名后就落不上了。
+ * 应用顺序：<b>default → force → 上游真实模型 ID → mapping</b>。
+ * mapping 放最后，是因为它改的是<b>键名</b>，必须在键值（含模型真实身份）都确定之后再动，
+ * 否则把 {@code model} 映射成 {@code deployment} 时，目标字段会拿到错误的对外 ID。
  *
  * <h3>性能</h3>
- * <b>三项都为空时（绝大多数模型）直接原样返回，不解析、不分配</b>——这是最关键的一点。
+ * <b>三项都为空且上游 ID 留空/等于对外 ID 时（绝大多数模型）直接原样返回，不解析、不分配</b>
+ * ——这是最关键的一点。
  * 只有真正配置了的模型才付出「解析 + 重新序列化」的代价，而那是这个功能不可避免的成本。
  *
- * <p>合并失败（配置不是合法 JSON 等）时<b>返回原始请求体</b>并打 WARN：
- * 一个配置写错不该让业务请求直接失败。但必须打日志，否则运维会以为配置生效了。
+ * <p>管理 API 会在写入时校验配置；这里仍防御历史脏数据和绕过 API 的直接改库：
+ * 某一项模型配置不是合法 JSON 时，只忽略该项并打 WARN，其他配置和上游模型 ID 仍继续生效。
+ * 一个普通参数配置写错不能让业务请求失败，更不能顺带取消模型身份改写。只有请求体本身无法解析或
+ * 序列化失败时才降级；若 BodyParseFilter 已提供 model 字节偏移，降级时仍优先完成定点改名。
  */
 @Slf4j
 @Component
@@ -53,7 +57,7 @@ public class RequestParamMerger {
      *
      * @param originalBody 原始请求体
      * @param model        模型配置
-     * @return 合并后的请求体；无需合并或合并失败时返回 {@code originalBody} 本身（同一个数组引用）
+     * @return 合并后的请求体；无需合并时返回 {@code originalBody} 本身（同一个数组引用）
      */
     public byte[] merge(byte[] originalBody, ModelInstanceEntity model) {
         return merge(originalBody, model, -1, -1);
@@ -68,7 +72,7 @@ public class RequestParamMerger {
      *
      * <p>三条路径，按代价从低到高：
      * <ol>
-     *   <li>什么都没配 → 原样返回同一个数组引用，零开销</li>
+     *   <li>参数未配置且模型 ID 无需改写 → 原样返回同一个数组引用，零开销</li>
      *   <li>只需改模型 ID 且偏移已知 → 一次拼接</li>
      *   <li>还配了 default/force/mapping → 解析一次，改名顺带做掉，不额外收费</li>
      * </ol>
@@ -82,7 +86,7 @@ public class RequestParamMerger {
         String forced = model.getForceParams();
         String mapping = "custom".equals(model.getApiSpec()) ? model.getParamMapping() : null;
 
-        String upstreamModelId = model.getUpstreamModelId();
+        String upstreamModelId = model.resolveUpstreamModelId();
         boolean needRename = !isBlank(upstreamModelId)
                 && !upstreamModelId.equals(model.getModelId());
 
@@ -112,31 +116,35 @@ public class RequestParamMerger {
             if (!isBlank(forced)) {
                 applyForced(root, forced, model);
             }
+            // 模型身份不是普通调用参数：即使 upstream_model_id 留空，真实 ID 也明确回退为
+            // model_id，因此 force_params.model 不能把它改成第三个值。先固定“值”，再由
+            // param_mapping 改“键名”，custom 上游把 model 映射成 deployment 等字段时才不会
+            // 同时残留一个多余的 model 字段。
+            if (!isBlank(upstreamModelId)) {
+                root.put("model", upstreamModelId);
+            }
             if (!isBlank(mapping)) {
                 applyMapping(root, mapping, model);
             }
-            // 改名放在最后：upstream_model_id 是专为路由身份设计的字段，
-            // 与 force_params 里的 model 冲突时**它优先**。
-            // 走到这里说明本来就要解析+序列化，改名不额外收费。
-            if (needRename) {
-                root.put("model", upstreamModelId);
-            }
             return objectMapper.writeValueAsBytes(root);
         } catch (Exception e) {
-            // 配置或请求体有问题都不该让这次调用失败——原样放行，但要留下痕迹
-            log.warn("[ParamMerger] 参数合并失败，按原始请求体转发: modelId={}, cause={}",
+            // 请求体本身解析/序列化失败时仍不阻断调用；若已有精确偏移，至少保证路由身份正确。
+            if (needRename && modelValueStart >= 0 && modelValueEnd > modelValueStart
+                    && modelValueEnd <= originalBody.length) {
+                log.warn("[ParamMerger] 请求体合并失败，仅执行上游模型 ID 定点改写: modelId={}, cause={}",
+                        model.getModelId(), e.getMessage());
+                return spliceModelId(originalBody, modelValueStart, modelValueEnd, upstreamModelId);
+            }
+            log.warn("[ParamMerger] 请求体合并失败，按原始请求体转发: modelId={}, cause={}",
                     model.getModelId(), e.getMessage());
             return originalBody;
         }
     }
 
     /** 只填补缺失的字段，已有的一律不动 */
-    private void applyDefaults(ObjectNode root, String json, ModelInstanceEntity model) throws Exception {
-        JsonNode node = objectMapper.readTree(json);
-        if (!node.isObject()) {
-            log.warn("[ParamMerger] default_params 不是 JSON 对象，已忽略: modelId={}", model.getModelId());
-            return;
-        }
+    private void applyDefaults(ObjectNode root, String json, ModelInstanceEntity model) {
+        ObjectNode node = parseConfigObject("default_params", json, model);
+        if (node == null) return;
         Iterator<Map.Entry<String, JsonNode>> it = node.fields();
         while (it.hasNext()) {
             Map.Entry<String, JsonNode> en = it.next();
@@ -147,12 +155,9 @@ public class RequestParamMerger {
     }
 
     /** 无条件覆盖 */
-    private void applyForced(ObjectNode root, String json, ModelInstanceEntity model) throws Exception {
-        JsonNode node = objectMapper.readTree(json);
-        if (!node.isObject()) {
-            log.warn("[ParamMerger] force_params 不是 JSON 对象，已忽略: modelId={}", model.getModelId());
-            return;
-        }
+    private void applyForced(ObjectNode root, String json, ModelInstanceEntity model) {
+        ObjectNode node = parseConfigObject("force_params", json, model);
+        if (node == null) return;
         Iterator<Map.Entry<String, JsonNode>> it = node.fields();
         while (it.hasNext()) {
             Map.Entry<String, JsonNode> en = it.next();
@@ -166,12 +171,9 @@ public class RequestParamMerger {
      * <p>目标名已存在时<b>跳过并告警</b>，不覆盖——覆盖会静默丢掉原有数据，
      * 而这种配置多半是写错了，应该让人看见。
      */
-    private void applyMapping(ObjectNode root, String json, ModelInstanceEntity model) throws Exception {
-        JsonNode node = objectMapper.readTree(json);
-        if (!node.isObject()) {
-            log.warn("[ParamMerger] param_mapping 不是 JSON 对象，已忽略: modelId={}", model.getModelId());
-            return;
-        }
+    private void applyMapping(ObjectNode root, String json, ModelInstanceEntity model) {
+        ObjectNode node = parseConfigObject("param_mapping", json, model);
+        if (node == null) return;
         Iterator<Map.Entry<String, JsonNode>> it = node.fields();
         while (it.hasNext()) {
             Map.Entry<String, JsonNode> en = it.next();
@@ -191,6 +193,23 @@ public class RequestParamMerger {
             }
             root.set(to, root.remove(from));
         }
+    }
+
+    /**
+     * 独立解析一项模型参数配置。单项配置错误只忽略该项，不能让后续真实模型 ID 改写一起失效。
+     */
+    private ObjectNode parseConfigObject(String configName, String json, ModelInstanceEntity model) {
+        try {
+            JsonNode node = objectMapper.readTree(json);
+            if (node instanceof ObjectNode objectNode) {
+                return objectNode;
+            }
+            log.warn("[ParamMerger] {} 不是 JSON 对象，已忽略: modelId={}", configName, model.getModelId());
+        } catch (Exception e) {
+            log.warn("[ParamMerger] {} 不是合法 JSON，已忽略: modelId={}, cause={}",
+                    configName, model.getModelId(), e.getMessage());
+        }
+        return null;
     }
 
     /**

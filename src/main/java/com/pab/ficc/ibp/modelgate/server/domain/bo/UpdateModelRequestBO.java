@@ -24,7 +24,7 @@ public class UpdateModelRequestBO {
      * <p>{@code modelId} 始终是<b>定位用的原 ID</b>，本字段才是要改成的目标值——
      * 两者分开是因为「改名」必须同时知道改前和改后，用一个字段表达不了。
      *
-     * <p>⚠️ 改名会让仍在用旧 ID 的接入方立刻 404，且历史审计保留旧 ID。
+     * <p>⚠️ 改名会让仍在用旧 ID 的接入方在缓存收敛后 404，且历史审计保留旧 ID。
      * 详见 {@code ModelService.update} 的说明。
      */
     private String  newModelId;

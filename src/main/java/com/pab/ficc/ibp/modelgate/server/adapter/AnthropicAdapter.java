@@ -42,7 +42,9 @@ public class AnthropicAdapter implements ProviderAdapter {
             ObjectNode dst = objectMapper.createObjectNode();
 
             // model
-            dst.put("model", src.path("model").asText(model.getModelId()));
+            // 正常链路会先由 RequestParamMerger 改写；这里的 fallback 也必须用上游真实 ID，
+            // 防止管理面测试或降级调用缺少 model 字段时又退回对外别名。
+            dst.put("model", src.path("model").asText(model.resolveUpstreamModelId()));
 
             // separate system from messages
             ArrayNode srcMessages = (ArrayNode) src.get("messages");

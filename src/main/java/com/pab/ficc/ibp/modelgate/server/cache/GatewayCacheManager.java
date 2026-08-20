@@ -19,19 +19,18 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
 /**
- * 网关两级缓存统一管理器（Caffeine L1 + Redis L2）。
+ * 网关缓存统一管理器（业务读取热路径以 Caffeine L1 为主）。
  *
- * <p><b>缓存分层设计：</b>
- * <pre>
- *   请求 → Caffeine L1（本进程，纳秒级）→ Redis L2（集群共享，毫秒级）→ MySQL（毫秒~十毫秒）
- * </pre>
+ * <p><b>真实读取路径：</b>凭证、授权、访问规则、模型和接入系统信息均为
+ * {@code Caffeine L1 → MySQL}。类中虽保留凭证 Redis set/get 辅助方法，但当前没有业务调用，
+ * 因而既不是有效 L2，也不存在 Redis 通知；Redis DEL 不能清除其他 JVM 的本地 Caffeine。
  *
  * <p><b>各缓存说明：</b>
  * <ul>
- *   <li><b>凭证（Credential）</b>：L1 60s TTL + Redis 30天 TTL。
+ *   <li><b>凭证（Credential）</b>：实际读取为 L1 60s TTL → MySQL；Redis 30 天辅助方法尚未接入。
  *       每次 Bearer 请求都查此缓存，命中率最高，对延迟最敏感。
  *       写操作后必须主动失效，否则禁用凭证要等 60s 才生效。</li>
- *   <li><b>模型授权（ModelAuth）</b>：L1 60s TTL + Redis 失效通知。
+ *   <li><b>模型授权（ModelAuth）</b>：L1 60s TTL；兼容性清理 Redis 同名键，但没有订阅通知。
  *       按 appId 聚合，一个 App 的所有模型授权同批加载，减少 DB 查询次数。</li>
  *   <li><b>访问规则（AccessRuleEntity）</b>：L1 60s TTL，不存 Redis（数据量小，变更少）。</li>
  *   <li><b>模型配置（ModelInstanceEntity）</b>：L1 30s TTL，不存 Redis。
@@ -45,11 +44,11 @@ import java.util.function.Supplier;
  * 后者在缓存过期瞬间，多个并发请求会同时判定 miss、同时打 DB（缓存雪崩）；前者对同一 key 的
  * 并发 miss 只执行一次 mappingFunction，其余并发调用等待复用结果。
  *
- * <p><b>降级策略：</b>Redis 故障时，L1 已缓存的数据继续提供服务；
- * L1 miss 时不穿透 DB（直接拒绝），防止 Redis 故障触发雪崩。
+ * <p><b>降级策略：</b>Redis 不在上述主读取链路上，其故障只影响共享备份写入/清理等 Redis 操作；
+ * L1 miss 会调用 DB loader，并由 Caffeine 原子加载合并同 key 的并发回源，避免同一时刻重复打 DB。
  *
- * <p><b>主动失效：</b>写操作（增删改启禁）后调用对应 {@code evict*} 方法，
- * 同时清 L1 和 Redis，使变更在秒级内对所有实例生效。
+ * <p><b>主动失效：</b>写操作（增删改启禁）后调用对应 {@code evict*} 方法，当前实例立即生效。
+ * 项目尚未实现 Redis Pub/Sub 等跨实例广播；其他实例依靠各 L1 的 30/60 秒 TTL 收敛。
  */
 @Slf4j
 @Component
@@ -160,7 +159,10 @@ public class GatewayCacheManager {
         return modelAuthCache.get(appId, k -> dbLoader.get());
     }
 
-    /** 失效某 App 的模型授权缓存（授权增删改时调用）。 */
+    /**
+     * 失效当前实例某 App 的模型授权缓存（授权增删改时调用）。
+     * Redis DEL 是历史兼容清理，不会向其他实例的 Caffeine 广播失效事件。
+     */
     public void evictModelAuthCache(String appId) {
         modelAuthCache.invalidate(appId);
         evictRedisKey("mg:auth:" + appId);
@@ -230,7 +232,9 @@ public class GatewayCacheManager {
         }
     }
 
-    /** 将凭证 JSON 写入 Redis（TTL=30天），用于多实例间凭证数据共享备份。 */
+    /**
+     * 将凭证 JSON 写入 Redis（TTL=30 天）的预留辅助方法；当前业务没有调用，不能视为已启用 L2。
+     */
     public void setRedisCredential(String secretHash, String json) {
         try {
             cacheProvider.setex("mg:cred:" + secretHash, CREDENTIAL_REDIS_TTL_SECONDS, json);
@@ -239,7 +243,7 @@ public class GatewayCacheManager {
         }
     }
 
-    /** 从 Redis 读取凭证 JSON，Redis 故障时返回 {@code Optional.empty()} 而非抛异常。 */
+    /** 从 Redis 读取凭证 JSON 的预留辅助方法；Redis 故障时返回 {@code Optional.empty()}。 */
     public Optional<String> getRedisCredential(String secretHash) {
         try {
             return Optional.ofNullable(cacheProvider.get("mg:cred:" + secretHash));
