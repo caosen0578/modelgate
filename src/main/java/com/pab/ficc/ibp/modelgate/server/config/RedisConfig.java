@@ -91,10 +91,59 @@ public class RedisConfig {
             }
         }
 
+        /**
+         * 脚本正文 → SHA1 的本地缓存。
+         *
+         * <p>脚本都是类里的静态常量，数量是个位数，用 ConcurrentHashMap 存足够，
+         * 不需要淘汰策略。key 是脚本正文本身，天然去重。
+         */
+        private final java.util.concurrent.ConcurrentHashMap<String, String> scriptShaCache =
+                new java.util.concurrent.ConcurrentHashMap<>();
+
+        /**
+         * Lua 脚本执行，走 <b>EVALSHA + NOSCRIPT 回退</b>。
+         *
+         * <p>原实现直接 {@code jedis.eval(script, ...)}，也就是<b>每个请求都把整段脚本正文
+         * 完整传一遍</b>。配额检查脚本约 600 字节，而它在 {@code /v1/**} 热路径上每请求执行一次——
+         * 纯粹是白烧的带宽与 Redis 侧的解析开销。EVALSHA 只传 40 字节的 SHA1。
+         *
+         * <p>标准做法是先 {@code SCRIPT LOAD} 再 EVALSHA，这里用更省事也更健壮的等价写法：
+         * <b>本地算出 SHA1 直接 EVALSHA</b>，只有 Redis 说不认识（NOSCRIPT）时才回退到 EVAL
+         * 送一次正文——而 EVAL 本身会让 Redis 缓存住这段脚本，于是下一次 EVALSHA 就命中了。
+         * 这样"预热"是自动完成的，且天然覆盖 <b>Redis 重启 / SCRIPT FLUSH / 主从切换</b>
+         * 这些会让脚本缓存失效的场景：失效后第一个请求回退一次，之后继续走 EVALSHA。
+         *
+         * <p>SHA1 是 Redis 对脚本正文的标准寻址方式，本地算与服务端算结果一致，不存在歧义。
+         */
         @Override
         public Object eval(String script, List<String> keys, List<String> args) {
+            String sha = scriptShaCache.computeIfAbsent(script, JedisCacheProvider::sha1Hex);
             try (Jedis jedis = pool.getResource()) {
-                return jedis.eval(script, keys, args);
+                try {
+                    return jedis.evalsha(sha, keys, args);
+                } catch (redis.clients.jedis.exceptions.JedisNoScriptException e) {
+                    // Redis 侧没有这段脚本：首次调用、或 Redis 重启 / SCRIPT FLUSH 之后。
+                    // 用 EVAL 送一次正文，Redis 会顺带把它缓存起来，后续请求自动回到 EVALSHA。
+                    return jedis.eval(script, keys, args);
+                }
+            }
+        }
+
+        /** 计算脚本的 SHA1（十六进制小写），与 Redis 内部的寻址方式一致 */
+        private static String sha1Hex(String script) {
+            try {
+                byte[] digest = java.security.MessageDigest.getInstance("SHA-1")
+                        .digest(script.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                char[] hex = "0123456789abcdef".toCharArray();
+                char[] out = new char[digest.length * 2];
+                for (int i = 0; i < digest.length; i++) {
+                    int v = digest[i] & 0xFF;
+                    out[i * 2] = hex[v >>> 4];
+                    out[i * 2 + 1] = hex[v & 0x0F];
+                }
+                return new String(out);
+            } catch (java.security.NoSuchAlgorithmException e) {
+                throw new IllegalStateException("SHA-1 不可用，无法使用 EVALSHA", e);
             }
         }
 

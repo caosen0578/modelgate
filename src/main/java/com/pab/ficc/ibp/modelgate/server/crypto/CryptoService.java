@@ -95,7 +95,11 @@ public class CryptoService {
             SECURE_RANDOM.nextBytes(iv);
             Cipher cipher = Cipher.getInstance(ALGORITHM);
             cipher.init(Cipher.ENCRYPT_MODE, secretKey, new GCMParameterSpec(GCM_TAG_LENGTH, iv));
-            byte[] cipherText = cipher.doFinal(plaintext.getBytes());
+            // 必须与 decrypt 的 UTF-8 对称。此前 encrypt 用平台默认字符集、
+            // decrypt 也用默认，勉强自洽；现在 decrypt 已固定 UTF-8，这里不跟上就会
+            // 在非 UTF-8 平台上出现"加密再解密拿到乱码"。密钥材料是纯 ASCII 时两者无差别，
+            // 但不能把正确性寄托在"输入恰好是 ASCII"上。
+            byte[] cipherText = cipher.doFinal(plaintext.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             ByteBuffer buf = ByteBuffer.allocate(iv.length + cipherText.length);
             buf.put(iv);
             buf.put(cipherText);
@@ -173,25 +177,22 @@ public class CryptoService {
      * String.format 要解析格式串、走 Formatter、装箱参数，单次就在微秒级，
      * 32 次叠起来是每请求几十微秒，纯属白烧。改成查表后是几十纳秒的事。
      *
-     * <p>⚠️ <b>{@code input.getBytes()} 用的是平台默认字符集，这里刻意<u>不</u>改成显式 UTF-8。</b>
-     * 已知这是个隐患：不同平台默认字符集不同（Linux 通常 UTF-8、Windows 是 GBK），
-     * 同一个 key 在两台机器上会算出<b>不同的哈希</b>。
-     * 但<b>现在改会直接炸掉存量凭证</b>——库里 {@code secret_hash} 是当初用旧字符集算出来的，
-     * 换算法就再也匹配不上，表现为"凭证突然全部认证失败"，且无法回滚（明文已不可得）。
+     * <p><b>字符集显式固定为 UTF-8</b>（2026-08-19 改）。此前用的是
+     * {@code input.getBytes()} 即平台默认字符集——Linux 通常 UTF-8、Windows 是 GBK，
+     * <b>同一个 key 在两台机器上会算出不同的哈希</b>，表现为"凭证在某台机器上突然认不出来"，
+     * 而且这种故障只在密钥含非 ASCII 字符时才出现，极难复现和定位。
      *
-     * <p>实际风险有多大：生成的密钥材料本身是 URL-safe Base64（纯 ASCII），
-     * 两种字符集编码结果完全一致；<b>唯一的暴露面是 api_key 里拼接的 appId</b>
-     * （{@code "mg-" + appId + "-" + randomHex(24)}），而 appId 由用户创建系统时输入。
-     * 当前库中 appId 均为数字，不受影响。
-     *
-     * <p><b>要修的话必须配套做</b>：先扫描所有含非 ASCII appId 的凭证，
-     * 对它们重新生成密钥（旧的注定失效），再统一切到 UTF-8。
-     * 单独改这一行等于埋雷。
+     * <p><b>兼容性影响</b>：库中已有的 {@code secret_hash} 是用旧字符集算出来的。
+     * 只有当被哈希的字符串含<b>非 ASCII 字符</b>时新旧结果才会不同——
+     * 密钥材料本身是 URL-safe Base64（纯 ASCII），唯一的暴露面是 api_key 里拼接的 appId
+     * （{@code "mg-" + appId + "-" + randomHex(24)}）。
+     * 因此<b>只有"appId 含非 ASCII 字符"的 api_key 类型凭证会失效</b>，需重新生成。
+     * 定位这类凭证的 SQL 见 {@code sql/upgrade_20260819_sha256_utf8_migration.sql}。
      */
     public String sha256Hex(String input) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(input.getBytes());
+            byte[] hash = digest.digest(input.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             char[] out = new char[hash.length * 2];
             for (int i = 0; i < hash.length; i++) {
                 int v = hash[i] & 0xFF;
@@ -223,7 +224,9 @@ public class CryptoService {
         if (a == null || b == null) return false;
         try {
             MessageDigest md = MessageDigest.getInstance("SHA-256");
-            return MessageDigest.isEqual(md.digest(a.getBytes()), md.digest(b.getBytes()));
+            return MessageDigest.isEqual(
+                    md.digest(a.getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                    md.digest(b.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
         } catch (NoSuchAlgorithmException e) {
             return a.equals(b);
         }
