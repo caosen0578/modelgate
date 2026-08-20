@@ -18,6 +18,17 @@ public class UpdateModelRequestBO {
     /** 上游接口路径，如 /v1/chat/completions；留空按 apiSpec 取默认 */
     private String  upstreamPath;
     private Integer timeoutMs;
+    /**
+     * 新的对外模型 ID。留空 = 不改名。
+     *
+     * <p>{@code modelId} 始终是<b>定位用的原 ID</b>，本字段才是要改成的目标值——
+     * 两者分开是因为「改名」必须同时知道改前和改后，用一个字段表达不了。
+     *
+     * <p>⚠️ 改名会让仍在用旧 ID 的接入方立刻 404，且历史审计保留旧 ID。
+     * 详见 {@code ModelService.update} 的说明。
+     */
+    private String  newModelId;
+
     /** 上游真实模型 ID，留空则透传 modelId */
     private String  upstreamModelId;
     private String  defaultParams;

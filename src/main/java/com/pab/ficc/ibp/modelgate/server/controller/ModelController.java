@@ -101,9 +101,13 @@ public class ModelController {
                 req.getCredential() != null ? req.getCredential().getAuthType() : "未携带");
         return Mono.fromCallable(() -> {
                     String modelId = req.getModelId();
-                    ModelInstanceEntity updated = modelService.update(modelId, req.toEntity(), req.toCredential());
-                    ModelVO vo = ModelVO.of(updated, modelService.getCredential(modelId).orElse(null));
-                    log.info("[Model][update] 更新成功: modelId={}, authType={}", modelId, vo.getAuthType());
+                    ModelInstanceEntity updated = modelService.update(
+                            modelId, req.toEntity(), req.toCredential(), req.getNewModelId());
+                    // 改名后凭证必须按**新** ID 查：外键已把子表级联改过去了，按旧 ID 查是空的，
+                    // 结果就是页面上「保存成功但鉴权配置不见了」
+                    String effectiveId = updated.getModelId();
+                    ModelVO vo = ModelVO.of(updated, modelService.getCredential(effectiveId).orElse(null));
+                    log.info("[Model][update] 更新成功: modelId={}, authType={}", effectiveId, vo.getAuthType());
                     return vo;
                 }).subscribeOn(AdminScheduler.get())
                 .timeout(AdminScheduler.REQUEST_TIMEOUT)

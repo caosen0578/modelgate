@@ -661,7 +661,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
           <div class="form-group">
             <label>模型 ID <span style="color:red">*</span></label>
             <input type="text" id="m_modelId" placeholder="gpt-4o"/>
-            <span class="hint">对外暴露的唯一标识，创建后不可修改</span>
+            <span class="hint" id="m_modelIdHint">对外暴露的唯一标识，调用方请求体里的 model 字段填的就是它</span>
           </div>
           <div class="form-group">
             <label>上游真实模型 ID</label>
@@ -1259,6 +1259,9 @@ let allApps   = [];
 let currentApp = null;    // 当前打开 drawer 的 app
 let currentAccessRules = [];
 let editingModelId = null; // null=新增, string=编辑
+// 打开编辑弹窗时的原始模型 ID。模型 ID 现在可改，保存时要拿它和输入框比对，
+// 变了才走改名路径——不能直接用输入框的值当定位键，否则后端按新 ID 找不到记录。
+let editingOriginalModelId = null;
 let currentStep = 1;
 
 const PAGE_TITLES = {models:'模型管理', apps:'接入系统', audit:'审计日志', payload:'报文记录', settings:'网关配置'};
@@ -1724,9 +1727,18 @@ function setSecretKeyState(configured){
 
 function openModelModal(modelId=null){
   editingModelId = modelId;
+  editingOriginalModelId = modelId;   // 保存时用它判断有没有改名
   currentStep = 1;
   $('modelModalTitle').textContent = modelId ? '编辑模型' : '新增模型';
-  $('m_modelId').disabled = !!modelId;
+  // 模型 ID 改为**可编辑**。它是业务唯一键、且被凭证与授权两张表以外键引用，
+  // 后端靠 ON UPDATE CASCADE 让子表跟随（见 upgrade_20260819_model_id_cascade.sql）。
+  // 保存时会与 editingOriginalModelId 比对，变了才带上 newModelId 走改名路径。
+  $('m_modelId').disabled = false;
+  $('m_modelIdHint').innerHTML = modelId
+    ? '对外暴露的唯一标识。<b style="color:#b45309">可以修改，但改名后仍在用旧 ID 的接入方会立刻 404</b>，'
+      + '且历史审计与报文保留旧 ID（用量统计会按两个名字裂开）。'
+      + '若只是想对外换个名字，更稳妥的做法是新建一条模型、用下面的「上游真实模型 ID」指向真实 ID。'
+    : '对外暴露的唯一标识，调用方请求体里的 model 字段填的就是它';
 
   if(modelId){
     const m = allModels.find(x=>x.modelId===modelId) || {};
@@ -1789,6 +1801,25 @@ async function submitModel(){
     }
   };
   if(!body.modelId||!body.modelName||!body.upstreamUrl){ toast('模型 ID、名称、上游地址不能为空','error'); return; }
+
+  // 改名处理：modelId 始终传**原始 ID**（后端靠它定位记录），新值放在 newModelId。
+  // 拿输入框的值当定位键会让后端按新 ID 找不到记录、直接报「模型不存在」。
+  if(editingModelId && editingOriginalModelId && body.modelId !== editingOriginalModelId){
+    const newId = body.modelId;
+    const lines = [
+      '确认把模型 ID 从 ' + editingOriginalModelId + ' 改成 ' + newId + ' ？',
+      '',
+      '影响：',
+      '· 仍在使用旧 ID 的接入方会立刻收到 404，请先通知到位',
+      '· 凭证与模型授权会自动跟随，无需手工处理',
+      '· 历史审计与报文保留旧 ID，用量统计会按新旧两个名字裂开',
+      '',
+      '若只是想对外换个名字，更稳妥的做法是新建一条模型并配置「上游真实模型 ID」。'
+    ];
+    if(!confirm(lines.join(String.fromCharCode(10)))) return;
+    body.newModelId = newId;
+    body.modelId    = editingOriginalModelId;
+  }
 
   try{
     const method = editingModelId ? 'PUT' : 'POST';
