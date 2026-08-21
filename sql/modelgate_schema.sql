@@ -218,7 +218,7 @@ CREATE TABLE IF NOT EXISTS mg_request_payload (
     app_id          VARCHAR(64)                                 COMMENT '调用方 appId（冗余自审计，便于按接入系统直接筛选）',
     model_id        VARCHAR(64)                                 COMMENT '模型 ID（冗余自审计，便于按模型直接筛选）',
     is_stream       TINYINT(1)   NOT NULL DEFAULT 0             COMMENT '是否流式响应：1=SSE 流式，0=一次性返回',
-    request_headers MEDIUMTEXT                                  COMMENT '请求头安全 JSON 快照。默认采集全部非敏感 Header，配置 allowlist 后仅采集名单字段；凭证头硬拒绝，代码限制字段数与总字符数',
+    request_headers MEDIUMTEXT                                  COMMENT '全部入站请求头 JSON 快照，包含 Authorization/Cookie/API Key/Token/JWT/签名等凭证字段；代码限制单值与总字符数',
     request_body    LONGTEXT                                    COMMENT '请求报文原文（JSON）。⚠️ 含用户原始 prompt，脱敏方案待定',
     response_raw    LONGTEXT                                    COMMENT '响应报文原文：流式为完整 SSE 流（含 data: 前缀与所有分帧），非流式为原始 JSON。供排查时完整复现上游返回',
     response_text   LONGTEXT                                    COMMENT '响应正文：流式为各帧 delta.content 拼接后的最终文本，非流式为 choices[0].message.content。供查询展示，人可直读',

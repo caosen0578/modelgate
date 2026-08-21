@@ -80,7 +80,7 @@ public class PayloadController {
                 .map(Result::success);
     }
 
-    @Operation(summary = "查询单条报文全文（含白名单请求头、请求报文、响应原文、响应正文）")
+    @Operation(summary = "查询单条报文全文（含全部请求头、请求报文、响应原文、响应正文）")
     @GetMapping(UrlConstant.DETAIL)
     public Mono<Result<PayloadDetailVO>> detail(
             @Parameter(description = "报文记录主键 id") @RequestParam(name = "id") Long id) {
@@ -106,10 +106,6 @@ public class PayloadController {
         m.put("retentionDays", retentionDays);
         m.put("cleanupCron", cleanupCron);
         m.put("maxCaptureBytes", maxCaptureBytes);
-        // 页面必须知道当前是“全部非敏感”还是“显式白名单”，否则空名单会被误解为不采集。
-        m.put("requestHeaderCaptureMode", requestHeaderSnapshotter.captureMode());
-        m.put("requestHeaderAllowlist", requestHeaderSnapshotter.allowedHeaders());
-        m.put("requestHeaderMaxCount", requestHeaderSnapshotter.maxHeaderCount());
         m.put("requestHeaderMaxValueChars", requestHeaderSnapshotter.maxValueChars());
         m.put("requestHeadersMaxTotalChars", requestHeaderSnapshotter.maxTotalChars());
         return Mono.just(Result.success(m));
@@ -139,7 +135,7 @@ public class PayloadController {
      *       无法走索引。单独使用就是一轮全表扫描并污染 buffer pool，
      *       连带把网关热数据（凭证/授权等小表）挤出缓冲池，这是"管理面拖垮转发"最隐蔽的路径。</li>
      *   <li><b>三种模糊关键字不能同时传</b>——requestKeyword 只搜请求正文、headerKeyword
-     *       只搜白名单请求头、旧 keyword 为兼容调用方仍搜请求与响应；同时传入会重复扫描大列，
+     *       只搜请求头快照、旧 keyword 为兼容调用方仍搜请求与响应；同时传入会重复扫描大列，
      *       且 AND 语义容易制造误判，直接拒绝更明确。</li>
      *   <li><b>Header 关键字限制长度</b>——1 个字符即使在 24 小时窗口内也可能命中绝大多数行，
      *       异常长参数又没有排障价值，因此限定 3..256 字符。</li>
@@ -249,7 +245,7 @@ public class PayloadController {
         }
 
         if (notBlank(headerKeyword)) {
-            // request_headers 仅有白名单小字段，远小于正文，但前导 % 仍不能走 B-Tree；
+            // request_headers 有总字符保险丝、远小于正文，但前导 % 仍不能走 B-Tree；
             // 因此复用同一套 TraceID/24h 候选集上界、LIKE 转义与 JDBC 超时。
             String kw = "%" + escapeLike(headerKeyword.trim()) + "%";
             w.apply("request_headers LIKE {0} ESCAPE '" + LIKE_ESCAPE + "'", kw);

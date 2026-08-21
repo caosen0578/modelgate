@@ -115,7 +115,7 @@ public class PayloadAndAppQueryTest {
 
     private static boolean validationFails(PayloadQueryBO q) throws Exception {
         PayloadController controller = new PayloadController(null,
-                new RequestHeaderSnapshotter("X-User-Id", 8192, 16384));
+                new RequestHeaderSnapshotter(8192, 16384));
         Method validate = PayloadController.class.getDeclaredMethod("validate", PayloadQueryBO.class);
         validate.setAccessible(true);
         try {

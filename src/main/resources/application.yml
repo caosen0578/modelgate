@@ -235,10 +235,9 @@ modelgate:
     # 上游异常吐出超大响应时若无上限会吃光堆内存触发 OOM，那是全部请求一起挂。
     # 达到阈值只停止本条采集并标记 truncated，转发完全不受影响。设为 0 表示不设防（不建议）。
     max-capture-bytes: 67108864
-    # 请求头默认采集全部非敏感字段；Authorization/Cookie/API Key/Token 等凭证头始终由代码硬拒绝。
-    # 如需最小化留档范围，可选配置 modelgate.payload-log.request-header-allowlist（逗号分隔）；
-    # 未配置或留空即为“全部非敏感”模式。单次最多 64 项，并受以下字符保险丝约束。
-    # 白名单字段值本身也不得夹带密钥；JSON 序列化在消费线程执行。
+    # 按管理排障要求采集全部入站请求头，包括 Authorization/Cookie/API Key/Token/JWT/签名等凭证字段。
+    # 数据以明文进入 mg_request_payload；必须限制管理面/数据库权限，并依赖报文保留期及时清理。
+    # 请求线程只做有界复制，JSON 序列化在消费线程执行；以下保险丝避免异常 Header 放大堆占用。
     request-header-max-value-chars: 8192
     request-headers-max-total-chars: 16384
 

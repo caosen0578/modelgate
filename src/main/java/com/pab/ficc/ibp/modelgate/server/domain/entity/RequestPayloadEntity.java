@@ -39,8 +39,8 @@ public class RequestPayloadEntity {
     private Boolean isStream;
 
     /**
-     * 安全请求头 JSON 快照。未配置 allowlist 时采集全部非敏感 Header；
-     * 严禁保存 Authorization/Cookie/API Key 等凭证字段。
+     * 全部入站请求头 JSON 快照，包含 Authorization/Cookie/API Key 等凭证字段；
+     * 仅受字符保险丝限制，生产环境必须限制管理面与数据库访问权限。
      */
     private String requestHeaders;
 

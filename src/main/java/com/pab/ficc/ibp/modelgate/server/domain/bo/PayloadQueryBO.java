@@ -69,8 +69,7 @@ public class PayloadQueryBO extends BaseBo {
     private String requestKeyword;
 
     /**
-     * 请求头关键字，全模糊匹配白名单快照 request_headers。
-     * 只支持已配置采集的 Header，且必须搭配收窄条件。
+     * 请求头关键字，全模糊匹配完整请求头快照 request_headers，且必须搭配收窄条件。
      */
     private String headerKeyword;
 
