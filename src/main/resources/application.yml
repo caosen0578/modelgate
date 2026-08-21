@@ -235,6 +235,14 @@ modelgate:
     # 上游异常吐出超大响应时若无上限会吃光堆内存触发 OOM，那是全部请求一起挂。
     # 达到阈值只停止本条采集并标记 truncated，转发完全不受影响。设为 0 表示不设防（不建议）。
     max-capture-bytes: 67108864
+    # 请求头只采集白名单，禁止全量落库（Authorization/Cookie/API Key 会造成明文凭证泄露）。
+    # 请按行内实际用户信息 Header 修改；Header 名大小写不敏感，且字段值本身也只能含可留档的用户标识。
+    # 已知凭证类 Header 即使误配也会被代码硬拒绝，但安全名称下夹带的密钥仍需由接入侧避免。
+    request-header-allowlist: "X-User-Id,X-User-Name,X-User-Info"
+    # 有效白名单最多 16 项；单个 Header 与单条记录另有字符保险丝。只在开启报文记录的授权上生效；
+    # JSON 序列化在消费线程执行。
+    request-header-max-value-chars: 8192
+    request-headers-max-total-chars: 16384
 
   # 模型凭证加密密钥：用于加密存储在 MySQL 中的 AK/SK 等敏感凭证
   # 必须为 32 字节 base64 编码字符串（生成方法见 10-部署与运维手册 §2.1）；为空时加密功能不可用。

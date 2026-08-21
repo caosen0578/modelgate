@@ -50,7 +50,7 @@ public interface RequestPayloadMapper extends BaseMapper<RequestPayloadEntity> {
      * 管理面列表分页查询。
      *
      * <p><b>不能用 {@code selectPage(page, wrapper)}</b>：BaseMapper 的默认实现是
-     * {@code SELECT *}，会把 request_body / response_raw / response_text 三个 LONGTEXT
+     * {@code SELECT *}，会把 MEDIUMTEXT 请求头快照及 request_body / response_raw / response_text 三个 LONGTEXT
      * 一起拖出来——一页 20 条就可能是几十 MB，DB 网络、服务端堆、浏览器渲染一起遭殃。
      * 这里显式列出小字段，正文只取<b>长度</b>和<b>前 160 字预览</b>，都在 SQL 侧算完。
      *
@@ -109,9 +109,11 @@ public interface RequestPayloadMapper extends BaseMapper<RequestPayloadEntity> {
     @Options(timeout = QUERY_TIMEOUT_SECONDS)
     @Select("SELECT id, trace_id, app_id, model_id, is_stream, finish_reason, upstream_status, " +
             "       truncated, create_time, " +
+            "       CHAR_LENGTH(request_headers) AS request_headers_len, " +
             "       CHAR_LENGTH(request_body)  AS request_len, " +
             "       CHAR_LENGTH(response_raw)  AS response_raw_len, " +
             "       CHAR_LENGTH(response_text) AS response_text_len, " +
+            "       LEFT(request_headers, 160) AS request_headers_preview, " +
             "       LEFT(request_body,  160)   AS request_preview, " +
             "       LEFT(response_text, 160)   AS response_preview, " +
             "       (SELECT a.input_tokens  FROM mg_audit_log a " +
@@ -137,7 +139,7 @@ public interface RequestPayloadMapper extends BaseMapper<RequestPayloadEntity> {
      * 同样用标量子查询，理由见 {@link #selectListPage}。
      */
     @Options(timeout = QUERY_TIMEOUT_SECONDS)
-    @Select("SELECT id, trace_id, app_id, model_id, is_stream, request_body, response_raw, " +
+    @Select("SELECT id, trace_id, app_id, model_id, is_stream, request_headers, request_body, response_raw, " +
             "       response_text, finish_reason, upstream_status, truncated, create_time, " +
             "       (SELECT a.input_tokens  FROM mg_audit_log a " +
             "         WHERE a.trace_id = mg_request_payload.trace_id " +

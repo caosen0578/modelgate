@@ -15,6 +15,7 @@ import com.pab.ficc.ibp.modelgate.server.domain.entity.RequestPayloadEntity;
 import com.pab.ficc.ibp.modelgate.server.domain.vo.PayloadDetailVO;
 import com.pab.ficc.ibp.modelgate.server.domain.vo.PayloadListVO;
 import com.pab.ficc.ibp.modelgate.server.mapper.RequestPayloadMapper;
+import com.pab.ficc.ibp.modelgate.server.service.RequestHeaderSnapshotter;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -37,7 +38,7 @@ import java.util.Set;
  * 本接口回答"这次调用到底发了什么、上游回了什么"。两者通过 {@code traceId} 关联，
  * 页面上可从审计行一键跳到对应报文。
  *
- * <p><b>列表与详情严格分离</b>：列表不返回三个 LONGTEXT 正文（见
+ * <p><b>列表与详情严格分离</b>：列表不返回请求头快照及三个 LONGTEXT 正文（见
  * {@code RequestPayloadMapper.selectListPage} 注释），正文只在详情接口按 id 单条返回。
  *
  * <ul>
@@ -53,6 +54,7 @@ import java.util.Set;
 public class PayloadController {
 
     private final RequestPayloadMapper payloadMapper;
+    private final RequestHeaderSnapshotter requestHeaderSnapshotter;
 
     @Value("${modelgate.payload-log.enabled:true}")
     private boolean payloadLogEnabled;
@@ -78,7 +80,7 @@ public class PayloadController {
                 .map(Result::success);
     }
 
-    @Operation(summary = "查询单条报文全文（含请求报文、响应原文、响应正文）")
+    @Operation(summary = "查询单条报文全文（含白名单请求头、请求报文、响应原文、响应正文）")
     @GetMapping(UrlConstant.DETAIL)
     public Mono<Result<PayloadDetailVO>> detail(
             @Parameter(description = "报文记录主键 id") @RequestParam(name = "id") Long id) {
@@ -104,6 +106,11 @@ public class PayloadController {
         m.put("retentionDays", retentionDays);
         m.put("cleanupCron", cleanupCron);
         m.put("maxCaptureBytes", maxCaptureBytes);
+        // 页面必须知道哪些 Header 真正会被记录，否则输入一个未入白名单的用户头只会得到空结果。
+        m.put("requestHeaderAllowlist", requestHeaderSnapshotter.allowedHeaders());
+        m.put("requestHeaderMaxCount", requestHeaderSnapshotter.maxHeaderCount());
+        m.put("requestHeaderMaxValueChars", requestHeaderSnapshotter.maxValueChars());
+        m.put("requestHeadersMaxTotalChars", requestHeaderSnapshotter.maxTotalChars());
         return Mono.just(Result.success(m));
     }
 
@@ -125,13 +132,16 @@ public class PayloadController {
     /**
      * 入参校验。
      *
-     * <p>四件事，每件都对应一条能把数据库拖垮或把人误导的真实路径：
+     * <p>五件事，每件都对应一条能把数据库拖垮或把人误导的真实路径：
      * <ol>
-     *   <li><b>关键字必须搭配收窄条件</b>——正文检索是 LONGTEXT 上的 {@code LIKE '%x%'}，
-     *       无法走索引。单独使用就是一轮全表扫描 + 把全部正文读进 buffer pool，
+     *   <li><b>关键字必须搭配收窄条件</b>——请求头/正文检索是大文本列上的 {@code LIKE '%x%'}，
+     *       无法走索引。单独使用就是一轮全表扫描并污染 buffer pool，
      *       连带把网关热数据（凭证/授权等小表）挤出缓冲池，这是"管理面拖垮转发"最隐蔽的路径。</li>
-     *   <li><b>两种正文关键字不能同时传</b>——新参数 requestKeyword 只搜请求，旧参数 keyword
-     *       为兼容调用方仍搜请求与响应；同时传入的 AND 语义极易制造误判，直接拒绝更明确。</li>
+     *   <li><b>三种模糊关键字不能同时传</b>——requestKeyword 只搜请求正文、headerKeyword
+     *       只搜白名单请求头、旧 keyword 为兼容调用方仍搜请求与响应；同时传入会重复扫描大列，
+     *       且 AND 语义容易制造误判，直接拒绝更明确。</li>
+     *   <li><b>Header 关键字限制长度</b>——1 个字符即使在 24 小时窗口内也可能命中绝大多数行，
+     *       异常长参数又没有排障价值，因此限定 3..256 字符。</li>
      *   <li><b>pageSize 必须封顶</b>——{@code BaseBo.setPageSize} 是个裸 setter，不做任何收敛。
      *       实测 {@code pageSize=5000} 会被原样接受。一个 GET 就能让 MySQL 吐出几千行带正文预览
      *       的结果并长时间占住一条 Druid 连接（池上限 100），是最廉价的自伤方式。</li>
@@ -143,18 +153,32 @@ public class PayloadController {
     private void validate(PayloadQueryBO q) {
         String keyword = q.getKeyword();
         String requestKeyword = q.getRequestKeyword();
+        String headerKeyword = q.getHeaderKeyword();
         boolean hasKeyword = notBlank(keyword);
         boolean hasRequestKeyword = notBlank(requestKeyword);
-        if (hasKeyword && hasRequestKeyword) {
+        boolean hasHeaderKeyword = notBlank(headerKeyword);
+        int keywordModes = (hasKeyword ? 1 : 0) + (hasRequestKeyword ? 1 : 0)
+                + (hasHeaderKeyword ? 1 : 0);
+        if (keywordModes > 1) {
             throw new BusinessException(ErrorCode.INVALID_PARAMETER,
-                    "keyword 与 requestKeyword 不能同时指定；按用户 ID 查请求报文请只使用 requestKeyword");
+                    "keyword、requestKeyword、headerKeyword 只能指定一个；请明确要检索响应/请求正文还是请求头");
         }
-        if ((hasKeyword || hasRequestKeyword) && !q.hasNarrowingFilter()) {
+        if (hasHeaderKeyword) {
+            int length = headerKeyword.trim().length();
+            if (length < PayloadQueryBO.headerKeywordMinLength()
+                    || length > PayloadQueryBO.headerKeywordMaxLength()) {
+                throw new BusinessException(ErrorCode.INVALID_PARAMETER, String.format(
+                        "请求头关键字长度必须为 %d..%d 个字符（当前 %d）",
+                        PayloadQueryBO.headerKeywordMinLength(),
+                        PayloadQueryBO.headerKeywordMaxLength(), length));
+            }
+        }
+        if (keywordModes > 0 && !q.hasNarrowingFilter()) {
             throw new BusinessException(ErrorCode.INVALID_PARAMETER, String.format(
-                    "正文关键字检索必须同时指定：TraceID（至少 %d 位前缀），"
+                    "报文模糊检索必须同时指定：TraceID（至少 %d 位前缀），"
                             + "或两端齐全且跨度不超过 %d 小时的时间范围。"
                             + "（接入系统/模型不足以收窄——单个系统常占全表大半，"
-                            + "关键字是 LONGTEXT 上的模糊匹配走不了索引，候选集不设上界会拖垮数据库）",
+                            + "关键字是大文本列上的模糊匹配走不了索引，候选集不设上界会拖垮数据库）",
                     PayloadQueryBO.tracePrefixMin(), PayloadQueryBO.timeSpanMaxHours()));
         }
 
@@ -187,6 +211,7 @@ public class PayloadController {
         String truncated    = q.getTruncated();
         String keyword      = q.getKeyword();
         String requestKeyword = q.getRequestKeyword();
+        String headerKeyword = q.getHeaderKeyword();
 
         LambdaQueryWrapper<RequestPayloadEntity> w = new LambdaQueryWrapper<RequestPayloadEntity>()
                 .eq(notBlank(appId),        RequestPayloadEntity::getAppId,          appId)
@@ -220,6 +245,13 @@ public class PayloadController {
             // 在候选窗口相同的前提下显著减少大字段读取；前置的 TraceID/24h 护栏仍不可绕过。
             String kw = "%" + escapeLike(requestKeyword.trim()) + "%";
             w.apply("request_body LIKE {0} ESCAPE '" + LIKE_ESCAPE + "'", kw);
+        }
+
+        if (notBlank(headerKeyword)) {
+            // request_headers 仅有白名单小字段，远小于正文，但前导 % 仍不能走 B-Tree；
+            // 因此复用同一套 TraceID/24h 候选集上界、LIKE 转义与 JDBC 超时。
+            String kw = "%" + escapeLike(headerKeyword.trim()) + "%";
+            w.apply("request_headers LIKE {0} ESCAPE '" + LIKE_ESCAPE + "'", kw);
         }
 
         w.orderByDesc(RequestPayloadEntity::getCreateTime)

@@ -5,7 +5,7 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
- * 报文详情（含三个正文列的全文）。
+ * 报文详情（含请求头快照及三个正文列的全文）。
  *
  * <p>只在<b>单条</b>查询时返回。列表接口一律走 {@link PayloadListVO}，
  * 详情与列表分成两个 VO 就是为了在类型层面堵死"列表顺手把 LONGTEXT 带出来"这条路。
@@ -21,6 +21,8 @@ public class PayloadDetailVO {
     private String        appId;
     private String        modelId;
     private Boolean       isStream;
+    /** 仅包含配置白名单内请求头的 JSON；凭证类 Header 永不记录 */
+    private String        requestHeaders;
     /** 请求报文原文（JSON）。⚠️ 含用户原始 prompt，脱敏方案待定 */
     private String        requestBody;
     /** 响应原文：流式为完整 SSE 流（含 data: 前缀与全部分帧），非流式为原始 JSON */

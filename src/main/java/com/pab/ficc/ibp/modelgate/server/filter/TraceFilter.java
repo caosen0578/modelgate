@@ -123,7 +123,8 @@ public class TraceFilter implements GlobalFilter, Ordered {
                         if (appId != null && modelId != null && responseBytes != null
                                 && capture.isFullMode()
                                 && modelAuthService.isPayloadLogEnabled(appId, modelId)) {
-                            payloadService.submit(traceId, appId, modelId, requestBytes, responseBytes,
+                            payloadService.submit(traceId, appId, modelId,
+                                    exchange.getRequest().getHeaders(), requestBytes, responseBytes,
                                     stream, Boolean.TRUE.equals(exchange.getAttribute(
                                             PayloadCaptureFilter.ATTR_RESPONSE_TRUNCATED)),
                                     httpStatus);

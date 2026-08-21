@@ -1,11 +1,14 @@
 package com.pab.ficc.ibp.modelgate.server.service;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.RequestPayloadEntity;
 import com.pab.ficc.ibp.modelgate.server.mapper.RequestPayloadMapper;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpHeaders;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -13,6 +16,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -42,6 +46,8 @@ public class PayloadService {
 
     private final RequestPayloadMapper payloadMapper;
     private final UpstreamResponseParser responseParser;
+    private final ObjectMapper objectMapper;
+    private final RequestHeaderSnapshotter requestHeaderSnapshotter;
 
     /** 全局总开关。授权级开关控制"哪些 app×模型记"，本开关是磁盘告警时的一键止血手段。 */
     @Value("${modelgate.payload-log.enabled:true}")
@@ -70,6 +76,7 @@ public class PayloadService {
      * <p>入队的是<b>原始字节</b>而非解析结果——解析要留到消费端做，这是不阻塞的关键。
      */
     private record PendingPayload(String traceId, String appId, String modelId,
+                                  Map<String, String> requestHeaders,
                                   byte[] requestBytes, byte[] responseBytes,
                                   boolean stream, boolean truncated, Integer upstreamStatus,
                                   LocalDateTime createTime) {}
@@ -87,15 +94,20 @@ public class PayloadService {
     /**
      * 提交一条报文（非阻塞，可在响应式链路的任意线程调用）。
      *
-     * <p>本方法只做入队，<b>不做任何解析</b>，耗时为 O(1)。
+     * <p>本方法只做固定白名单的有界字符串快照与入队，<b>不遍历全部 Header、
+     * 不做 JSON 序列化或报文解析</b>。开销只与白名单项数及配置的字符上限有关，
+     * 不随请求头总数或请求/响应报文体积增长。
      */
     public void submit(String traceId, String appId, String modelId,
+                       HttpHeaders requestHeaders,
                        byte[] requestBytes, byte[] responseBytes,
                        boolean stream, boolean truncated, Integer upstreamStatus) {
         if (!enabled) {
             return;
         }
-        boolean offered = queue.offer(new PendingPayload(traceId, appId, modelId,
+        // 只在报文开关已命中后做白名单快照；不遍历全部 Header，也不在请求线程做 JSON 序列化。
+        Map<String, String> headerSnapshot = requestHeaderSnapshotter.capture(requestHeaders);
+        boolean offered = queue.offer(new PendingPayload(traceId, appId, modelId, headerSnapshot,
                 requestBytes, responseBytes, stream, truncated, upstreamStatus, LocalDateTime.now()));
         if (!offered) {
             // 满了就丢，绝不阻塞业务线程；累计数打出来，否则报文断流时无人知晓
@@ -206,6 +218,7 @@ public class PayloadService {
         e.setAppId(p.appId());
         e.setModelId(p.modelId());
         e.setIsStream(p.stream());
+        e.setRequestHeaders(toJson(p.requestHeaders()));
         e.setRequestBody(toText(p.requestBytes()));
         e.setResponseRaw(toText(p.responseBytes()));
         e.setResponseText(parsed.responseText());
@@ -218,6 +231,18 @@ public class PayloadService {
 
     private static String toText(byte[] bytes) {
         return bytes == null || bytes.length == 0 ? null : new String(bytes, StandardCharsets.UTF_8);
+    }
+
+    /** JSON 序列化只在定时消费线程执行，不占用 Netty EventLoop。 */
+    private String toJson(Map<String, String> headers) {
+        if (headers == null || headers.isEmpty()) return null;
+        try {
+            return objectMapper.writeValueAsString(headers);
+        } catch (JsonProcessingException e) {
+            // Header 都是 String，正常不会失败；即使遇到框架异常也只丢本字段，不丢整条报文。
+            log.warn("[PayloadService] 请求头序列化失败，已跳过请求头字段: {}", e.getMessage());
+            return null;
+        }
     }
 
     /** 供监控/排查：当前积压与累计丢弃数。 */

@@ -38,6 +38,12 @@ public class RequestPayloadEntity {
     /** 是否 SSE 流式响应，决定 response_raw 的结构 */
     private Boolean isStream;
 
+    /**
+     * 白名单请求头的 JSON 快照。严禁保存 Authorization/Cookie/API Key，
+     * 具体白名单由 modelgate.payload-log.request-header-allowlist 控制。
+     */
+    private String requestHeaders;
+
     /** 请求报文原文（JSON）。⚠️ 含用户原始 prompt，脱敏方案待定 */
     private String requestBody;
 

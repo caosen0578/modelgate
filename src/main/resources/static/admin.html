@@ -445,18 +445,23 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
             <input type="datetime-local" id="pl_start" style="width:200px"/>
             <span style="font-size:12px;color:#94a3b8">至</span>
             <input type="datetime-local" id="pl_end" style="width:200px"/>
-            <input type="text" id="pl_keyword" placeholder="请求报文关键字（如用户 ID）" style="width:250px"/>
+            <select id="pl_keyword_scope" style="width:120px" onchange="updatePayloadKeywordUi()">
+              <option value="request">请求报文</option>
+              <option value="headers">请求头</option>
+            </select>
+            <input type="text" id="pl_keyword" placeholder="请求报文关键字（全模糊）" style="width:250px"/>
           </div>
           <div class="toolbar-right">
             <button class="btn btn-neutral" onclick="resetPayloadFilters()">重置</button>
             <button class="btn btn-primary" data-api="GET /modelgate/payload" onclick="loadPayload()">查询</button>
           </div>
         </div>
-        <!-- 关键字为何有约束：LONGTEXT 上的 LIKE '%x%' 走不了索引，单独使用就是全表扫描。
+        <!-- 关键字为何有约束：大文本列上的 LIKE '%x%' 走不了索引，单独使用就是全表扫描。
              后端会直接拒绝这种请求，这里提前把规则说清楚，免得用户点了才吃报错。 -->
         <div class="hint" style="margin-top:8px">
-          请求报文关键字为模糊匹配，可用于按用户 ID 定位调用；<b>必须</b>搭配「TraceID（≥8 位）」或「两端齐全且跨度 ≤24 小时的时间范围」——
-          单独按关键字查会在 LONGTEXT 上全表扫描，后端会拒绝该请求。
+          请求报文/请求头关键字均为<b>全模糊匹配</b>；请求头只搜索后端配置白名单中实际留档的 Header。
+          两种检索都<b>必须</b>搭配「TraceID（≥8 位）」或「两端齐全且跨度 ≤24 小时的时间范围」——
+          单独按关键字查会在大文本列上全表扫描，后端会拒绝该请求。
           「系统 / 模型」<b>不算</b>收窄条件：主力系统常占全表七成以上，加上它仍是近乎全表扫描；
           「类型 / 上游状态码 / 结束原因 / 完整性」同样不算（无索引且区分度过低）。
           TraceID 支持前缀匹配，可直接粘贴列表上显示的截断值。
@@ -476,13 +481,14 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
                 <th>上游状态</th>
                 <th>结束原因</th>
                 <th>Tokens（入/出）</th>
+                <th>请求头</th>
                 <th>请求报文</th>
                 <th>响应正文</th>
                 <th>操作</th>
               </tr>
             </thead>
             <tbody id="payloadTbody">
-              <tr class="empty-row"><td colspan="11">暂无报文数据</td></tr>
+              <tr class="empty-row"><td colspan="12">暂无报文数据</td></tr>
             </tbody>
           </table>
           <div id="payloadPager"></div>
@@ -849,7 +855,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
 </div>
 
 <!-- ========== MODAL: 报文详情 ==========
-     三个正文分三个 tab，不同时铺开：单条报文可达几 MB，一次性塞进 DOM 会把页面卡死。
+     请求头与三个正文分四个 tab，不同时铺开：单条报文可达几 MB，一次性塞进 DOM 会把页面卡死。
      切 tab 时只渲染当前那一份，数据本身已在 openPayloadDetail 里取回，不重复请求。 -->
 <div class="modal-backdrop" id="payloadDetailModal">
   <div class="modal modal-xl">
@@ -861,6 +867,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
       <div class="rmeta" id="pd_meta" style="flex:none">-</div>
       <div class="flex gap-8" style="margin:12px 0 8px;flex:none;align-items:center">
         <button class="btn btn-neutral btn-sm" id="pd_tab_request"  onclick="setPayloadTab('request')">请求报文</button>
+        <button class="btn btn-neutral btn-sm" id="pd_tab_headers"  onclick="setPayloadTab('headers')">请求头</button>
         <button class="btn btn-neutral btn-sm" id="pd_tab_text"     onclick="setPayloadTab('text')">响应正文</button>
         <button class="btn btn-neutral btn-sm" id="pd_tab_raw"      onclick="setPayloadTab('raw')">响应原文</button>
         <span class="hint" id="pd_tabHint" style="margin-left:4px"></span>
@@ -3219,11 +3226,15 @@ async function loadPayloadMeta(){
     if(!isOk(j)){ bar.textContent = '保留期信息获取失败：' + errMsg(j); return; }
     const m = j.data || {};
     const mb = m.maxCaptureBytes ? (m.maxCaptureBytes/1024/1024).toFixed(0) + 'MB' : '不限';
+    const headerAllowlist = Array.isArray(m.requestHeaderAllowlist) ? m.requestHeaderAllowlist : [];
+    const headerInfo = headerAllowlist.length
+      ? `请求头仅记录白名单：<code>${headerAllowlist.map(escHtml).join('</code>、<code>')}</code>。`
+      : `<b style="color:#b45309">请求头白名单为空，当前不会记录任何请求头。</b>`;
     bar.innerHTML = m.enabled === false
       ? `⛔ 报文记录<b>全局总开关已关闭</b>（modelgate.payload-log.enabled=false），当前不再产生新记录，下方只能查到历史数据。`
       : `📨 报文<b>仅对开启了「报文记录」开关的「接入系统 × 模型」授权</b>产生（在接入系统的授权配置里开启）；
          记录保留 <b>${m.retentionDays} 天</b>，由定时任务 <code>${escHtml(m.cleanupCron||'')}</code> 分批物理删除，
-         超期数据不可找回。单条响应采集上限 ${mb}，超出部分标记为「响应被截」。`;
+         超期数据不可找回。单条响应采集上限 ${mb}，超出部分标记为「响应被截」。${headerInfo}`;
   }catch(e){
     console.warn('[ModelGate] 报文配置获取异常', e);
     bar.textContent = '📨 报文按保留期定期清理，具体天数以 modelgate.payload-log.retention-days 配置为准。';
@@ -3267,6 +3278,14 @@ function payloadUseLast24h(){
   loadPayload();
 }
 
+/** 请求正文与请求头共用一个输入框，切换范围可避免一次查询同时扫描两个大字段。 */
+function updatePayloadKeywordUi(){
+  const headers = $('pl_keyword_scope').value === 'headers';
+  $('pl_keyword').placeholder = headers
+    ? '请求头关键字（如用户 ID，至少 3 字符）'
+    : '请求报文关键字（全模糊）';
+}
+
 /** 一键把关键字挪到 TraceID 框（前缀匹配），然后重查 */
 function payloadKeywordAsTrace(){
   $('pl_trace').value = $('pl_keyword').value.trim();
@@ -3284,11 +3303,11 @@ function payloadKeywordAsTrace(){
 function renderPayloadNeedNarrow(kw){
   const looksLikeTrace = /^[0-9a-fA-F]{8,64}$/.test(kw);
   $('payloadTbody').innerHTML = `
-    <tr><td colspan="11" style="padding:22px;text-align:left;color:#475569">
-      <div style="font-weight:600;color:#b45309;margin-bottom:6px">⚠️ 正文关键字需要先收窄查询范围</div>
+    <tr><td colspan="12" style="padding:22px;text-align:left;color:#475569">
+      <div style="font-weight:600;color:#b45309;margin-bottom:6px">⚠️ 模糊关键字需要先收窄查询范围</div>
       <div style="font-size:13px;line-height:1.7">
-        关键字是 LONGTEXT 上的模糊匹配，走不了索引，单独使用会全表扫描并把所有报文正文读进内存，
-        足以拖垮在线业务的数据库，因此必须搭配
+        关键字是大文本列上的前导通配符匹配，走不了普通索引；单独使用会扫描全表并抢占数据库 I/O，
+        足以影响在线业务，因此必须搭配
         <b>TraceID（≥8 位）</b> 或 <b>两端齐全且跨度 ≤24 小时的时间范围</b>。<br>
         <span style="color:#94a3b8">「系统 / 模型」不算收窄条件：内网通常只接个位数的系统，主力系统常占全表七成以上，
         加上它仍然是近乎全表扫描。「类型 / 上游状态码 / 结束原因 / 完整性」同样不算——无索引且区分度太低。</span>
@@ -3310,7 +3329,14 @@ async function loadPayload(resetPage = true){
   // 前置拦截：条件不合法就不发请求，直接给出可点击的补救路径
   const kw = $('pl_keyword').value.trim();
   if(kw && !payloadNarrowed()){ renderPayloadNeedNarrow(kw); return; }
+  if(kw && $('pl_keyword_scope').value === 'headers' && kw.length < 3){
+    toast('请求头关键字至少需要 3 个字符，避免低区分度查询扫描大量记录','error'); return;
+  }
+  if(kw && $('pl_keyword_scope').value === 'headers' && kw.length > 256){
+    toast('请求头关键字不能超过 256 个字符','error'); return;
+  }
   try{
+    const searchHeaders = $('pl_keyword_scope').value === 'headers';
     const qs = pageQuery('payload', {
       appId:          $('pl_app').value,
       modelId:        $('pl_model').value,
@@ -3322,17 +3348,18 @@ async function loadPayload(resetPage = true){
       // datetime-local 给出的是 "2026-08-18T10:30"，后端 @DateTimeFormat(ISO.DATE_TIME) 直接可解析
       startTime:      $('pl_start').value,
       endTime:        $('pl_end').value,
-      // 页面只查 request_body；旧 API 的 keyword（请求+响应）继续保留给已有调用方，避免破坏兼容性。
-      requestKeyword: $('pl_keyword').value,
+      // 一个输入框只激活一种模糊检索，避免同一查询重复扫描请求头和请求正文。
+      requestKeyword: searchHeaders ? '' : $('pl_keyword').value,
+      headerKeyword:  searchHeaders ? $('pl_keyword').value : '',
     });
     const r = await fetch(apiUrl(`/modelgate/payload?${qs}`), {headers:hdrs()});
     const j = await r.json();
     if(!isOk(j)){
       // 关键字缺少收窄条件时后端会拒绝，错误文案本身就是操作指引，原样弹出来
       toast('查询报文失败: '+errMsg(j),'error');
-      // colspan 必须跟表头列数（11）一致，否则错误提示横不满、最右列空一格；
+      // colspan 必须跟表头列数（12）一致，否则错误提示横不满、最右列空一格；
       // 分页条也要清掉，否则停留在上一次成功查询的「共 2727 条」，点下一页会基于错误页码继续发请求
-      tbody.innerHTML = `<tr class="empty-row"><td colspan="11" style="color:#ef4444">${escHtml(errMsg(j))}</td></tr>`;
+      tbody.innerHTML = `<tr class="empty-row"><td colspan="12" style="color:#ef4444">${escHtml(errMsg(j))}</td></tr>`;
       $('payloadPager').innerHTML = '';
       return;
     }
@@ -3341,7 +3368,7 @@ async function loadPayload(resetPage = true){
     setStatus(true);
   }catch(e){
     console.warn('[ModelGate] 报文查询异常', e);
-    tbody.innerHTML = `<tr class="empty-row"><td colspan="11" style="color:#f59e0b">请求异常: ${escHtml(e.message)}</td></tr>`;
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="12" style="color:#f59e0b">请求异常: ${escHtml(e.message)}</td></tr>`;
     $('payloadPager').innerHTML = '';
   }
 }
@@ -3353,6 +3380,8 @@ function payloadSize(n){ pageState.payload.pageSize = parseInt(n)||20; loadPaylo
 function resetPayloadFilters(reload = true){
   ['pl_app','pl_model','pl_trace','pl_stream','pl_status','pl_finish','pl_truncated',
    'pl_start','pl_end','pl_keyword'].forEach(id => { const el = $(id); if(el) el.value = ''; });
+  $('pl_keyword_scope').value = 'request';
+  updatePayloadKeywordUi();
   if(reload) loadPayload();
 }
 
@@ -3379,7 +3408,7 @@ async function fillPayloadFilters(){
 function renderPayload(data){
   const tbody = $('payloadTbody');
   if(!data.length){
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="11">没有符合条件的报文（报文只对开启了记录开关的授权产生，且超过保留期会被清理）</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="12">没有符合条件的报文（报文只对开启了记录开关的授权产生，且超过保留期会被清理）</td></tr>';
     return;
   }
   tbody.innerHTML = data.map(p=>`
@@ -3394,6 +3423,8 @@ function renderPayload(data){
       <td>${statusTag(p.upstreamStatus)}</td>
       <td>${finishTag(p.finishReason)}</td>
       <td style="font-size:12px;white-space:nowrap">${tokenCell(p)}</td>
+      <td style="font-size:12px;color:#475569;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+          title="${escHtml(p.requestHeadersPreview||'')}${p.requestHeadersLen?`（共 ${fmtLen(p.requestHeadersLen)}）`:''}">${escHtml(p.requestHeadersPreview||'-')}</td>
       <td style="font-size:12px;color:#475569;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
           title="${escHtml(p.requestPreview||'')}${p.requestLen?`（共 ${fmtLen(p.requestLen)}）`:''}">${escHtml(p.requestPreview||'-')}</td>
       <td style="font-size:12px;color:#475569;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
@@ -3513,15 +3544,15 @@ function payloadToAudit(traceId){
 /**
  * 切换正文 tab。
  *
- * 三份内容分别是：
- *   request — 请求 JSON；响应正文 text — 人可直读的最终回答；
+ * 四份内容分别是：
+ *   request — 请求 JSON；headers — 请求头白名单 JSON；响应正文 text — 人可直读的最终回答；
  *   raw     — 流式时是带 data: 前缀的完整 SSE 分帧原文，用于复现上游到底怎么返回的。
  * JSON 尝试美化（失败就原样显示，绝不因为格式化失败让人看不到内容）；SSE 原文不动它，
  * 分帧结构本身就是要看的东西。
  */
 function setPayloadTab(tab){
   _payloadTab = tab;
-  ['request','text','raw'].forEach(t=>{
+  ['request','headers','text','raw'].forEach(t=>{
     const btn = $('pd_tab_'+t);
     if(btn) btn.className = 'btn btn-sm ' + (t===tab ? 'btn-primary' : 'btn-neutral');
   });
@@ -3530,6 +3561,9 @@ function setPayloadTab(tab){
   if(tab==='request'){
     content = prettyJson(d.requestBody);
     hint = '请求原文（含用户 prompt）';
+  }else if(tab==='headers'){
+    content = prettyJson(d.requestHeaders);
+    hint = '请求头白名单快照（凭证类 Header 永不记录）';
   }else if(tab==='text'){
     content = d.responseText;
     hint = d.isStream ? '各帧 delta 拼接后的最终文本' : 'choices[0].message.content';

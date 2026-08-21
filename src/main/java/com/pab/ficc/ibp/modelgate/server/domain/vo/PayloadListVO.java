@@ -61,12 +61,16 @@ public class PayloadListVO {
 
     /** 请求报文字符数（CHAR_LENGTH，非字节数），用于在预览的 tooltip 上提示报文规模 */
     private Long          requestLen;
+    /** 白名单请求头 JSON 字符数 */
+    private Long          requestHeadersLen;
     /** 响应原文字符数 */
     private Long          responseRawLen;
     /** 响应正文字符数 */
     private Long          responseTextLen;
     /** 请求报文前 160 字，用于在列表上直接看出这次调用问了什么 */
     private String        requestPreview;
+    /** 白名单请求头 JSON 前 160 字，用于快速辨认用户信息 */
+    private String        requestHeadersPreview;
     /** 响应正文前 160 字，用于在列表上快速辨认 */
     private String        responsePreview;
 }

@@ -14,8 +14,8 @@ import java.time.LocalDateTime;
  * 后者的排查入口更杂——按结束原因找被截断的回答、按流式与否找 SSE 拼接问题、
  * 按上游状态码找非 200 的原始错误体，都是审计表看不出来的。
  *
- * <p><b>正文关键字的使用约束</b>：正文检索是 {@code LIKE '%x%'}，在 LONGTEXT 上无法走索引，
- * 单独使用等于全表扫描并把几十 GB 正文拖进内存。故要求必须与足够长的 traceId 前缀，
+ * <p><b>模糊关键字的使用约束</b>：请求头/正文检索是 {@code LIKE '%x%'}，在大文本列上无法走索引，
+ * 单独使用等于全表扫描。故要求必须与足够长的 traceId 前缀，
  * 或两端齐全且跨度不超过 24 小时的时间范围同时使用（在 Controller 中校验）。
  * appId / modelId 只能定位、不能给候选行数设上界，不能单独作为正文检索的准入条件。
  */
@@ -68,6 +68,18 @@ public class PayloadQueryBO extends BaseBo {
     /** 请求报文关键字，只匹配 request_body。⚠️ 必须搭配收窄条件，见类注释。 */
     private String requestKeyword;
 
+    /**
+     * 请求头关键字，全模糊匹配白名单快照 request_headers。
+     * 只支持已配置采集的 Header，且必须搭配收窄条件。
+     */
+    private String headerKeyword;
+
+    /** 过短的 Header 片段区分度太低，容易把 24 小时窗口退化成大范围扫描。 */
+    private static final int HEADER_KEYWORD_MIN_LENGTH = 3;
+
+    /** 防止异常长 URL 参数放大 SQL 参数与日志；用户标识不需要更长。 */
+    private static final int HEADER_KEYWORD_MAX_LENGTH = 256;
+
     /** traceId 前缀至少要这么长才算"能收窄"——见 {@link #hasNarrowingFilter()}。 */
     private static final int TRACE_PREFIX_MIN = 8;
 
@@ -117,7 +129,9 @@ public class PayloadQueryBO extends BaseBo {
         if (startTime == null || endTime == null || endTime.isBefore(startTime)) {
             return false;
         }
-        return java.time.Duration.between(startTime, endTime).toHours() <= TIME_SPAN_MAX_HOURS;
+        // 不能用 Duration.toHours()：它会向下取整，24小时59分也会得到 24，悄悄绕过窗口上限。
+        return java.time.Duration.between(startTime, endTime)
+                .compareTo(java.time.Duration.ofHours(TIME_SPAN_MAX_HOURS)) <= 0;
     }
 
     /** 供错误文案引用，避免提示里写死的数字与校验逻辑漂移 */
@@ -127,6 +141,14 @@ public class PayloadQueryBO extends BaseBo {
 
     public static long timeSpanMaxHours() {
         return TIME_SPAN_MAX_HOURS;
+    }
+
+    public static int headerKeywordMinLength() {
+        return HEADER_KEYWORD_MIN_LENGTH;
+    }
+
+    public static int headerKeywordMaxLength() {
+        return HEADER_KEYWORD_MAX_LENGTH;
     }
 
     private static boolean notBlank(String s) {

@@ -4,6 +4,7 @@ import com.pab.ficc.ibp.modelgate.server.common.BusinessException;
 import com.pab.ficc.ibp.modelgate.server.domain.bo.CreateAppRequestBO;
 import com.pab.ficc.ibp.modelgate.server.domain.bo.PayloadQueryBO;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.AppInfoEntity;
+import com.pab.ficc.ibp.modelgate.server.service.RequestHeaderSnapshotter;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -25,6 +26,10 @@ public class PayloadAndAppQueryTest {
         oldClientFallsBackToAppName();
         requestKeywordNeedsNarrowing();
         requestKeywordAcceptsBoundedWindow();
+        headerKeywordNeedsNarrowing();
+        shortHeaderKeywordIsRejected();
+        headerKeywordAcceptsBoundedWindow();
+        windowOver24HoursIsRejectedWithoutRoundingLoophole();
         twoKeywordModesCannotBeCombined();
 
         System.out.println("通过 " + pass + " / " + (pass + fail));
@@ -70,6 +75,35 @@ public class PayloadAndAppQueryTest {
         check("新旧关键字参数禁止同时传入", validationFails(q));
     }
 
+    private static void headerKeywordNeedsNarrowing() throws Exception {
+        PayloadQueryBO q = new PayloadQueryBO();
+        q.setHeaderKeyword("user-10086");
+        check("请求头全模糊检索不能单独执行", validationFails(q));
+    }
+
+    private static void shortHeaderKeywordIsRejected() throws Exception {
+        PayloadQueryBO q = new PayloadQueryBO();
+        q.setHeaderKeyword("ab");
+        q.setTraceId("12345678");
+        check("请求头关键字不足 3 字符仍被拒绝", validationFails(q));
+    }
+
+    private static void headerKeywordAcceptsBoundedWindow() throws Exception {
+        PayloadQueryBO q = new PayloadQueryBO();
+        q.setHeaderKeyword("user-10086");
+        q.setStartTime(LocalDateTime.of(2026, 8, 20, 8, 0));
+        q.setEndTime(LocalDateTime.of(2026, 8, 20, 20, 0));
+        check("请求头全模糊检索接受 24 小时内窗口", !validationFails(q));
+    }
+
+    private static void windowOver24HoursIsRejectedWithoutRoundingLoophole() throws Exception {
+        PayloadQueryBO q = new PayloadQueryBO();
+        q.setHeaderKeyword("user-10086");
+        q.setStartTime(LocalDateTime.of(2026, 8, 20, 8, 0));
+        q.setEndTime(LocalDateTime.of(2026, 8, 21, 8, 1));
+        check("24 小时零 1 分不能被 Duration 向下取整后放行", validationFails(q));
+    }
+
     private static CreateAppRequestBO baseAppRequest() {
         CreateAppRequestBO req = new CreateAppRequestBO();
         req.setAppId("crm-service");
@@ -80,7 +114,8 @@ public class PayloadAndAppQueryTest {
     }
 
     private static boolean validationFails(PayloadQueryBO q) throws Exception {
-        PayloadController controller = new PayloadController(null);
+        PayloadController controller = new PayloadController(null,
+                new RequestHeaderSnapshotter("X-User-Id", 8192, 16384));
         Method validate = PayloadController.class.getDeclaredMethod("validate", PayloadQueryBO.class);
         validate.setAccessible(true);
         try {
