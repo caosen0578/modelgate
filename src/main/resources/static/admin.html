@@ -47,6 +47,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Micr
 table{width:100%;border-collapse:collapse}
 th{background:#f8fafc;padding:9px 12px;text-align:left;font-size:11px;color:#64748b;font-weight:600;border-bottom:1px solid #e5e7eb;white-space:nowrap}
 td{padding:11px 12px;font-size:13px;border-bottom:1px solid #f1f5f9;vertical-align:middle}
+/* 请求头只是排障入口，列表保留短预览即可；固定窄列，把横向空间让给请求/响应正文。 */
+#page-payload .payload-headers-col{width:140px;max-width:140px}
 tr:last-child td{border-bottom:none}
 tr:hover td{background:#fafbff}
 .empty-row td{text-align:center;color:#94a3b8;padding:48px!important;background:none!important}
@@ -481,7 +483,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
                 <th>上游状态</th>
                 <th>结束原因</th>
                 <th>Tokens（入/出）</th>
-                <th>请求头</th>
+                <th class="payload-headers-col">请求头</th>
                 <th>请求报文</th>
                 <th>响应正文</th>
                 <th>操作</th>
@@ -3421,7 +3423,7 @@ function renderPayload(data){
       <td>${statusTag(p.upstreamStatus)}</td>
       <td>${finishTag(p.finishReason)}</td>
       <td style="font-size:12px;white-space:nowrap">${tokenCell(p)}</td>
-      <td style="font-size:12px;color:#475569;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+      <td class="payload-headers-col" style="font-size:12px;color:#475569;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
           title="${escHtml(p.requestHeadersPreview||'')}${p.requestHeadersLen?`（共 ${fmtLen(p.requestHeadersLen)}）`:''}">${escHtml(p.requestHeadersPreview||'-')}</td>
       <td style="font-size:12px;color:#475569;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
           title="${escHtml(p.requestPreview||'')}${p.requestLen?`（共 ${fmtLen(p.requestLen)}）`:''}">${escHtml(p.requestPreview||'-')}</td>
