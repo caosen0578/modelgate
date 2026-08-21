@@ -1,7 +1,7 @@
--- ModelGate 2026-08-21：报文记录增加请求头白名单快照。
+-- ModelGate 2026-08-21：报文记录增加请求头安全快照。
 --
 -- 生产约束：
---   1. 只保存 modelgate.payload-log.request-header-allowlist 中的 Header；
+--   1. 未配置/留空 request-header-allowlist 时保存全部非敏感 Header；配置后只保存名单字段；
 --   2. Authorization/Cookie/API Key/Credential/Token/JWT/Session-ID/签名类 Header 在代码中有
 --      硬拒绝名单，即使误配置也不落库；白名单 Header 的值本身也不得夹带密钥；
 --   3. request_headers 使用 MEDIUMTEXT 是为了容纳 JSON 转义后的极端值，代码仍将原始快照限制为
@@ -21,7 +21,7 @@ SET @has_request_headers := (
 );
 SET @add_request_headers_sql := IF(
     @has_request_headers = 0,
-    'ALTER TABLE mg_request_payload ADD COLUMN request_headers MEDIUMTEXT NULL COMMENT ''请求头白名单 JSON 快照（严禁凭证类 Header；代码限制采集总长度）''',
+    'ALTER TABLE mg_request_payload ADD COLUMN request_headers MEDIUMTEXT NULL COMMENT ''请求头安全 JSON 快照（默认全部非敏感，allowlist 可收窄；凭证头硬拒绝，代码限制字段数与总长度）''',
     'SELECT ''mg_request_payload.request_headers already exists'''
 );
 PREPARE add_request_headers_stmt FROM @add_request_headers_sql;

@@ -18,13 +18,14 @@ import java.util.regex.Pattern;
 /**
  * 对需要留档的请求头做安全、有界快照。
  *
- * <p><b>为什么不是把 {@link HttpHeaders} 整体序列化</b>：入站请求必然带 Authorization/API Key，
- * 全量落库会把可直接调用网关的凭证长期明文保存在 {@code mg_request_payload}，风险不可接受。
- * 本类只读取显式白名单，并对已知凭证头设置不可绕过的硬拒绝名单。
+ * <p><b>为什么不是把 {@link HttpHeaders} 整体直接序列化</b>：入站请求必然带 Authorization/API Key，
+ * 原样落库会把可直接调用网关的凭证长期明文保存在 {@code mg_request_payload}，风险不可接受。
+ * 未配置白名单时本类采集全部<b>非敏感</b> Header；显式配置后只采集名单内字段。
+ * 两种模式都先执行不可绕过的凭证头硬拒绝规则。
  *
- * <p><b>热路径约束</b>：调用方只在报文记录已开启时调用本类；工作量与白名单数量成正比，
- * 不遍历全部请求头、不做 JSON 序列化。这里只复制少量字符串，JSON 序列化仍在
- * {@link PayloadService} 的定时消费线程完成。
+ * <p><b>热路径约束</b>：调用方只在报文记录已开启时调用本类。白名单模式只做定点查找；
+ * 默认模式单次遍历 Header，且字段数、单值与总字符数都有硬上限。这里只复制有界字符串，
+ * 不做 JSON 序列化；JSON 序列化仍在 {@link PayloadService} 的定时消费线程完成。
  */
 @Slf4j
 @Component
@@ -41,72 +42,86 @@ public class RequestHeaderSnapshotter {
     );
 
     private static final String TRUNCATED_MARKER = "…[truncated]";
-    /** 防止误把长名单配置成“近似全量采集”，让每请求查找次数始终有硬上界。 */
-    private static final int HARD_MAX_HEADER_COUNT = 16;
+    /** 默认全量模式也必须有硬上界；64 项足以覆盖正常 HTTP 请求，同时挡住异常 Header 风暴。 */
+    private static final int HARD_MAX_HEADER_COUNT = 64;
     private static final int HARD_MAX_HEADER_NAME_CHARS = 128;
     private static final int HARD_MAX_VALUE_CHARS = 16_384;
     private static final int HARD_MAX_TOTAL_CHARS = 32_768;
 
+    private final boolean captureAllSafeHeaders;
     private final List<String> allowedHeaders;
     private final int maxValueChars;
     private final int maxTotalChars;
 
     public RequestHeaderSnapshotter(
-            @Value("${modelgate.payload-log.request-header-allowlist:X-User-Id,X-User-Name,X-User-Info}")
+            @Value("${modelgate.payload-log.request-header-allowlist:}")
             String allowlist,
             @Value("${modelgate.payload-log.request-header-max-value-chars:8192}") int maxValueChars,
             @Value("${modelgate.payload-log.request-headers-max-total-chars:16384}") int maxTotalChars) {
-        this.allowedHeaders = parseAllowlist(allowlist);
+        this.captureAllSafeHeaders = allowlist == null || allowlist.isBlank();
+        this.allowedHeaders = captureAllSafeHeaders ? List.of() : parseAllowlist(allowlist);
         this.maxValueChars = clamp("request-header-max-value-chars", maxValueChars,
                 TRUNCATED_MARKER.length(), HARD_MAX_VALUE_CHARS);
         this.maxTotalChars = clamp("request-headers-max-total-chars", maxTotalChars,
                 256, HARD_MAX_TOTAL_CHARS);
-        log.info("[PayloadHeaders] 请求头采集白名单={}, 单值上限={}字符, 单条总上限={}字符",
-                this.allowedHeaders, this.maxValueChars, this.maxTotalChars);
+        if (captureAllSafeHeaders) {
+            log.info("[PayloadHeaders] 采集模式=全部非敏感请求头, 字段上限={}, 单值上限={}字符, 单条总上限={}字符",
+                    HARD_MAX_HEADER_COUNT, this.maxValueChars, this.maxTotalChars);
+        } else {
+            log.info("[PayloadHeaders] 采集模式=显式白名单, 有效白名单={}, 单值上限={}字符, 单条总上限={}字符",
+                    this.allowedHeaders, this.maxValueChars, this.maxTotalChars);
+            if (this.allowedHeaders.isEmpty()) {
+                log.warn("[PayloadHeaders] 已配置 request-header-allowlist，但没有任何有效字段；"
+                        + "当前不会记录请求头。删除或留空该配置可采集全部非敏感请求头");
+            }
+        }
     }
 
     /**
-     * 从请求头中复制白名单字段；返回值不再引用原 HttpHeaders，可安全放入异步队列。
+     * 复制需要留档的安全字段；返回值不再引用原 HttpHeaders，可安全放入异步队列。
      *
      * <p>同名多值用换行连接。模糊检索面向整段 JSON，因此用户信息位于值的中间也能命中。
      */
     public Map<String, String> capture(HttpHeaders headers) {
-        if (headers == null || headers.isEmpty() || allowedHeaders.isEmpty()) {
+        if (headers == null || headers.isEmpty()
+                || (!captureAllSafeHeaders && allowedHeaders.isEmpty())) {
             return Map.of();
         }
 
-        Map<String, String> captured = new LinkedHashMap<>();
-        int remaining = maxTotalChars;
-        boolean truncated = false;
-
-        for (String headerName : allowedHeaders) {
-            List<String> values = headers.get(headerName);
-            if (values == null || values.isEmpty()) {
-                continue;
+        CaptureBuffer buffer = new CaptureBuffer(maxValueChars, maxTotalChars);
+        if (captureAllSafeHeaders) {
+            // 默认模式只遍历一次，并在 64 项/总字符上限处停止；凭证类 Header 始终先过滤。
+            for (Map.Entry<String, List<String>> entry : headers.entrySet()) {
+                String headerName = entry.getKey();
+                if (headerName == null || isForbidden(headerName.toLowerCase(Locale.ROOT))) {
+                    continue;
+                }
+                if (headerName.length() > HARD_MAX_HEADER_NAME_CHARS
+                        || !VALID_HEADER_NAME.matcher(headerName).matches()) {
+                    buffer.markTruncated();
+                    continue;
+                }
+                if (!buffer.add(headerName, entry.getValue())) {
+                    break;
+                }
             }
-            int available = Math.min(maxValueChars, remaining - headerName.length());
-            if (available <= 0) {
-                truncated = true;
-                break;
+        } else {
+            // 白名单模式不遍历入站 Header，只按配置名称做大小写不敏感的定点查找。
+            for (String headerName : allowedHeaders) {
+                if (!buffer.add(headerName, headers.get(headerName))) {
+                    break;
+                }
             }
-            String value = joinBounded(values, available);
-            if (value == null) {
-                continue;
-            }
-            if (value.endsWith(TRUNCATED_MARKER)) {
-                truncated = true;
-            }
-            captured.put(headerName, value);
-            remaining -= headerName.length() + value.length();
         }
+        return buffer.finish();
+    }
 
-        // 总上限导致后续白名单字段没机会采集时也要显式可见，不能静默伪装成“请求没带”。
-        if (truncated) {
-            captured.put("_modelgate_capture_truncated", "true");
-        }
-        return captured.isEmpty()
-                ? Map.of()
-                : Collections.unmodifiableMap(captured);
+    public String captureMode() {
+        return captureAllSafeHeaders ? "all_safe" : "allowlist";
+    }
+
+    public boolean capturesAllSafeHeaders() {
+        return captureAllSafeHeaders;
     }
 
     public List<String> allowedHeaders() {
@@ -123,6 +138,49 @@ public class RequestHeaderSnapshotter {
 
     public int maxHeaderCount() {
         return HARD_MAX_HEADER_COUNT;
+    }
+
+    /** 单次快照的有界累加器；截断必须显式写入，不能伪装成“请求没有这个 Header”。 */
+    private static final class CaptureBuffer {
+        private final Map<String, String> captured = new LinkedHashMap<>();
+        private final int maxValueChars;
+        private int remaining;
+        private boolean truncated;
+
+        private CaptureBuffer(int maxValueChars, int maxTotalChars) {
+            this.maxValueChars = maxValueChars;
+            this.remaining = maxTotalChars;
+        }
+
+        private boolean add(String headerName, List<String> values) {
+            if (values == null || values.isEmpty()) return true;
+            if (captured.size() >= HARD_MAX_HEADER_COUNT) {
+                truncated = true;
+                return false;
+            }
+            int available = Math.min(maxValueChars, remaining - headerName.length());
+            if (available <= 0) {
+                truncated = true;
+                return false;
+            }
+            String value = joinBounded(values, available);
+            if (value == null) return true;
+            if (value.endsWith(TRUNCATED_MARKER)) truncated = true;
+            captured.put(headerName, value);
+            remaining -= headerName.length() + value.length();
+            return true;
+        }
+
+        private void markTruncated() {
+            truncated = true;
+        }
+
+        private Map<String, String> finish() {
+            if (truncated) captured.put("_modelgate_capture_truncated", "true");
+            return captured.isEmpty()
+                    ? Map.of()
+                    : Collections.unmodifiableMap(captured);
+        }
     }
 
     private static List<String> parseAllowlist(String raw) {

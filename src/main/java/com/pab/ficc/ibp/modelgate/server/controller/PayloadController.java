@@ -106,7 +106,8 @@ public class PayloadController {
         m.put("retentionDays", retentionDays);
         m.put("cleanupCron", cleanupCron);
         m.put("maxCaptureBytes", maxCaptureBytes);
-        // 页面必须知道哪些 Header 真正会被记录，否则输入一个未入白名单的用户头只会得到空结果。
+        // 页面必须知道当前是“全部非敏感”还是“显式白名单”，否则空名单会被误解为不采集。
+        m.put("requestHeaderCaptureMode", requestHeaderSnapshotter.captureMode());
         m.put("requestHeaderAllowlist", requestHeaderSnapshotter.allowedHeaders());
         m.put("requestHeaderMaxCount", requestHeaderSnapshotter.maxHeaderCount());
         m.put("requestHeaderMaxValueChars", requestHeaderSnapshotter.maxValueChars());

@@ -94,9 +94,9 @@ public class PayloadService {
     /**
      * 提交一条报文（非阻塞，可在响应式链路的任意线程调用）。
      *
-     * <p>本方法只做固定白名单的有界字符串快照与入队，<b>不遍历全部 Header、
-     * 不做 JSON 序列化或报文解析</b>。开销只与白名单项数及配置的字符上限有关，
-     * 不随请求头总数或请求/响应报文体积增长。
+     * <p>本方法只做有界安全快照与入队，<b>不做 JSON 序列化或报文解析</b>。
+     * 白名单模式为定点查找；默认全量模式至多单次遍历 64 个非敏感 Header，且受总字符上限约束，
+     * 开销不随请求/响应报文体积增长。
      */
     public void submit(String traceId, String appId, String modelId,
                        HttpHeaders requestHeaders,
@@ -105,7 +105,7 @@ public class PayloadService {
         if (!enabled) {
             return;
         }
-        // 只在报文开关已命中后做白名单快照；不遍历全部 Header，也不在请求线程做 JSON 序列化。
+        // 只在报文开关已命中后做有界安全快照；默认模式单次遍历，JSON 序列化仍留在消费线程。
         Map<String, String> headerSnapshot = requestHeaderSnapshotter.capture(requestHeaders);
         boolean offered = queue.offer(new PendingPayload(traceId, appId, modelId, headerSnapshot,
                 requestBytes, responseBytes, stream, truncated, upstreamStatus, LocalDateTime.now()));

@@ -21,7 +21,7 @@ public class PayloadDetailVO {
     private String        appId;
     private String        modelId;
     private Boolean       isStream;
-    /** 仅包含配置白名单内请求头的 JSON；凭证类 Header 永不记录 */
+    /** 请求头安全快照 JSON；凭证类 Header 永不记录，配置 allowlist 后仅含名单字段 */
     private String        requestHeaders;
     /** 请求报文原文（JSON）。⚠️ 含用户原始 prompt，脱敏方案待定 */
     private String        requestBody;

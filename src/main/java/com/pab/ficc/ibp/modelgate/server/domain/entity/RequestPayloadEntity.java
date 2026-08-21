@@ -39,8 +39,8 @@ public class RequestPayloadEntity {
     private Boolean isStream;
 
     /**
-     * 白名单请求头的 JSON 快照。严禁保存 Authorization/Cookie/API Key，
-     * 具体白名单由 modelgate.payload-log.request-header-allowlist 控制。
+     * 安全请求头 JSON 快照。未配置 allowlist 时采集全部非敏感 Header；
+     * 严禁保存 Authorization/Cookie/API Key 等凭证字段。
      */
     private String requestHeaders;
 
