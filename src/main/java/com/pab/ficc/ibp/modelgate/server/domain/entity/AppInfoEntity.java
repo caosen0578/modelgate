@@ -16,6 +16,9 @@ public class AppInfoEntity {
     @TableId(type = IdType.AUTO)
     private Long id;
     private String appId;
+    /** 所属业务系统中文名；与应用中文名分开，避免一个系统下多个应用无法区分。 */
+    private String systemName;
+    /** 调用方应用中文名，对应应用级 appId/appCode。 */
     private String appName;
     private String sysCode;
     private String appCode;

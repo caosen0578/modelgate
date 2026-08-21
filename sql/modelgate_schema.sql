@@ -84,6 +84,7 @@ CREATE TABLE IF NOT EXISTS mg_model_credential (
 CREATE TABLE IF NOT EXISTS mg_app (
     id           BIGINT       NOT NULL AUTO_INCREMENT             COMMENT '主键，自增',
     app_id       VARCHAR(64)  NOT NULL                           COMMENT '应用唯一标识（业务唯一键）',
+    system_name  VARCHAR(128) NOT NULL                           COMMENT '所属业务系统中文名称',
     app_name     VARCHAR(128) NOT NULL                           COMMENT '应用名称',
     sys_code     VARCHAR(64)  NOT NULL                           COMMENT '所属系统编码，如 CRM、BI',
     app_code     VARCHAR(64)  NOT NULL                           COMMENT '应用编码（系统内唯一）',

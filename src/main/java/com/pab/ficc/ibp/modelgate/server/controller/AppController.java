@@ -33,7 +33,7 @@ public class AppController {
     private final ModelAuthService modelAuthService;
     private final CredentialService credentialService;
 
-    @Operation(summary = "分页查询接入系统（pageIndex 从 1 开始，pageSize 上限 200；keyword 模糊匹配 appId/appName/sysCode）")
+    @Operation(summary = "分页查询接入系统（pageIndex 从 1 开始，pageSize 上限 200；keyword 模糊匹配 appId/systemName/appName/sysCode）")
     @GetMapping(UrlConstant.ROOT)
     public Mono<Result<PageVo<AppVO>>> page(AppQueryBO query) {
         PageSupport.validate(query, "接入系统");

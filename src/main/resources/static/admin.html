@@ -78,6 +78,9 @@ tr:hover td{background:#fafbff}
 .toolbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:12px;flex-wrap:wrap}
 .toolbar-left{display:flex;align-items:center;gap:8px}
 .toolbar-right{display:flex;align-items:center;gap:8px}
+/* 通用 select 默认 width:100%，分页下拉若沿用会撑满父容器并把“每页 / 条”挤成多行。 */
+.pager-size{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+.pager-size select{width:auto;min-width:58px;padding:3px 24px 3px 8px}
 
 /* ===== Form ===== */
 .form-grid{display:grid;gap:14px}
@@ -289,10 +292,10 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
     <div class="panel" id="page-apps">
       <div class="toolbar">
         <div class="toolbar-left">
-          <span style="font-size:14px;font-weight:600;color:#1e1b4b">共 <span id="appCount">0</span> 个系统</span>
+          <span style="font-size:14px;font-weight:600;color:#1e1b4b">共 <span id="appCount">0</span> 个应用</span>
         </div>
         <div class="toolbar-right">
-          <input type="text" id="appSearch" placeholder="搜索系统 ID / 名称..." style="width:220px" oninput="searchApps()"/>
+          <input type="text" id="appSearch" placeholder="搜索系统 / 应用 ID / 名称..." style="width:240px" oninput="searchApps()"/>
           <button class="btn btn-primary" data-api="POST /modelgate/apps" onclick="openAppModal()">+ 新增系统</button>
         </div>
       </div>
@@ -303,6 +306,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
               <tr>
                 <th>系统名称</th>
                 <th>系统编码</th>
+                <th>应用名称</th>
                 <th>应用 appId</th>
                 <th>应用编码</th>
                 <th>负责人</th>
@@ -313,7 +317,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
               </tr>
             </thead>
             <tbody id="appsTbody">
-              <tr class="empty-row"><td colspan="9">加载中…</td></tr>
+              <tr class="empty-row"><td colspan="10">加载中…</td></tr>
             </tbody>
           </table>
           <div id="appsPager"></div>
@@ -441,7 +445,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
             <input type="datetime-local" id="pl_start" style="width:200px"/>
             <span style="font-size:12px;color:#94a3b8">至</span>
             <input type="datetime-local" id="pl_end" style="width:200px"/>
-            <input type="text" id="pl_keyword" placeholder="正文关键字（匹配请求与响应）" style="width:230px"/>
+            <input type="text" id="pl_keyword" placeholder="请求报文关键字（如用户 ID）" style="width:250px"/>
           </div>
           <div class="toolbar-right">
             <button class="btn btn-neutral" onclick="resetPayloadFilters()">重置</button>
@@ -451,7 +455,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
         <!-- 关键字为何有约束：LONGTEXT 上的 LIKE '%x%' 走不了索引，单独使用就是全表扫描。
              后端会直接拒绝这种请求，这里提前把规则说清楚，免得用户点了才吃报错。 -->
         <div class="hint" style="margin-top:8px">
-          正文关键字为模糊匹配，<b>必须</b>搭配「TraceID（≥8 位）」或「两端齐全且跨度 ≤24 小时的时间范围」——
+          请求报文关键字为模糊匹配，可用于按用户 ID 定位调用；<b>必须</b>搭配「TraceID（≥8 位）」或「两端齐全且跨度 ≤24 小时的时间范围」——
           单独按关键字查会在 LONGTEXT 上全表扫描，后端会拒绝该请求。
           「系统 / 模型」<b>不算</b>收窄条件：主力系统常占全表七成以上，加上它仍是近乎全表扫描；
           「类型 / 上游状态码 / 结束原因 / 完整性」同样不算（无索引且区分度过低）。
@@ -566,9 +570,10 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
         系统编码归属关系：<strong id="di_sysCodeLabel" style="color:#1e1b4b"></strong> → 应用 <strong id="di_appIdLabel" style="color:#6366f1"></strong>
       </div>
       <div class="form-grid form-grid-2">
-        <div class="form-group"><label>系统名称</label><input type="text" id="di_appName"/></div>
+        <div class="form-group"><label>系统名称</label><input type="text" id="di_systemName"/></div>
         <div class="form-group"><label>系统编码</label><input type="text" id="di_sysCode"/></div>
         <div class="form-group"><label>应用 appId</label><input type="text" id="di_appId" readonly style="background:#f8fafc"/></div>
+        <div class="form-group"><label>应用名称</label><input type="text" id="di_appName"/></div>
         <div class="form-group"><label>应用编码</label><input type="text" id="di_appCode"/></div>
         <div class="form-group"><label>负责人</label><input type="text" id="di_owner"/></div>
         <div class="form-group"><label>备注</label><input type="text" id="di_remark"/></div>
@@ -991,7 +996,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
       <div class="form-grid form-grid-2">
         <div class="form-group">
           <label>系统名称 <span style="color:red">*</span></label>
-          <input type="text" id="a_appName" placeholder="客户关系管理系统"/>
+          <input type="text" id="a_systemName" placeholder="客户关系管理系统"/>
         </div>
         <div class="form-group">
           <label>系统编码 <span style="color:red">*</span></label>
@@ -1002,6 +1007,11 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
           <label>应用 appId <span style="color:red">*</span></label>
           <input type="text" id="a_appId" placeholder="crm-service"/>
           <span class="hint">英文标识，全局唯一，创建后不可修改</span>
+        </div>
+        <div class="form-group">
+          <label>应用名称 <span style="color:red">*</span></label>
+          <input type="text" id="a_appName" placeholder="CRM 智能助手"/>
+          <span class="hint">应用中文名称，用于区分同一系统下的多个接入应用</span>
         </div>
         <div class="form-group">
           <label>应用编码 <span style="color:red">*</span></label>
@@ -1381,8 +1391,8 @@ function renderPager(key, containerId, reloadFn){
     <div style="display:flex;align-items:center;gap:10px;justify-content:flex-end;
                 padding:10px 2px;font-size:13px;color:#475569;flex-wrap:wrap">
       <span>共 <b>${st.total}</b> 条${st.total?`，当前 ${from}-${to}`:''}</span>
-      <span>每页
-        <select onchange="${reloadFn}Size(this.value)" style="padding:3px 6px">
+      <span class="pager-size">每页
+        <select onchange="${reloadFn}Size(this.value)">
           ${PAGE_SIZES.map(n=>`<option value="${n}" ${n===st.pageSize?'selected':''}>${n}</option>`).join('')}
         </select> 条
       </span>
@@ -1594,7 +1604,7 @@ function renderModelAuthApps(data){
   tbody.innerHTML = data.map(a=>`
     <tr>
       <td><strong>${escapeHtml(a.appName||'-')}</strong>
-          <div style="font-size:11px;color:#94a3b8"><code>${escapeHtml(a.appId)}</code></div></td>
+          <div style="font-size:11px;color:#94a3b8">${escapeHtml(a.systemName||'-')} · <code>${escapeHtml(a.appId)}</code></div></td>
       <td>${escapeHtml(a.sysCode||'-')}</td>
       <td>${escapeHtml(a.owner||'-')}</td>
       <td>${a.effective
@@ -2123,11 +2133,12 @@ const searchApps = debounce(()=>{ pageState.apps.pageIndex = 1; loadApps(); }, 3
 
 function renderApps(data){
   const tbody = $('appsTbody');
-  if(!data.length){ tbody.innerHTML=`<tr class="empty-row"><td colspan="9">暂无接入系统</td></tr>`; return; }
+  if(!data.length){ tbody.innerHTML=`<tr class="empty-row"><td colspan="10">暂无接入系统</td></tr>`; return; }
   tbody.innerHTML = data.map(a=>`
     <tr>
-      <td><strong>${a.appName}</strong></td>
+      <td><strong>${escapeHtml(a.systemName||'-')}</strong></td>
       <td><span class="tag tag-blue">${a.sysCode||'-'}</span></td>
+      <td><strong>${escapeHtml(a.appName||'-')}</strong></td>
       <td><code>${a.appId}</code> <span onclick="copyText('${a.appId}')" style="cursor:pointer;color:#6366f1;font-size:11px">复制</span></td>
       <td><span class="tag tag-gray">${a.appCode||'-'}</span></td>
       <td>${a.owner}</td>
@@ -2148,12 +2159,13 @@ function renderApps(data){
 // 原 filterApps 已由服务端 keyword 查询取代，理由同 searchModels。
 
 function openAppModal(){
-  ['a_appName','a_sysCode','a_appId','a_appCode','a_owner','a_remark'].forEach(id=>$(id).value='');
+  ['a_systemName','a_appName','a_sysCode','a_appId','a_appCode','a_owner','a_remark'].forEach(id=>$(id).value='');
   openModal('appModal');
 }
 
 async function submitApp(){
   const body = {
+    systemName: $('a_systemName').value.trim(),
     appName: $('a_appName').value.trim(),
     sysCode: $('a_sysCode').value.trim(),
     appId:   $('a_appId').value.trim(),
@@ -2161,7 +2173,7 @@ async function submitApp(){
     owner:   $('a_owner').value.trim(),
     remark:  $('a_remark').value.trim(),
   };
-  if(!body.appName||!body.sysCode||!body.appId||!body.appCode||!body.owner){ toast('系统名称、系统编码、应用 appId、应用编码、负责人均不能为空','error'); return; }
+  if(!body.systemName||!body.appName||!body.sysCode||!body.appId||!body.appCode||!body.owner){ toast('系统名称、系统编码、应用名称、应用 appId、应用编码、负责人均不能为空','error'); return; }
   try{
     const r = await fetch(apiUrl('/modelgate/apps'), {method:'POST', headers:hdrs(), body:JSON.stringify(body)});
     const j = await r.json();
@@ -2211,6 +2223,7 @@ function openDrawer(appId, tab='info'){
     : '<span class="tag tag-red">禁用</span>';
 
   // 填写系统信息
+  $('di_systemName').value = currentApp.systemName||'';
   $('di_appName').value    = currentApp.appName||'';
   $('di_sysCode').value    = currentApp.sysCode||'';
   $('di_appId').value      = currentApp.appId||'';
@@ -2249,6 +2262,7 @@ function switchSubtab(tab){
 async function saveAppInfo(){
   if(!currentApp) return;
   const body = {
+    systemName: $('di_systemName').value.trim(),
     appName: $('di_appName').value.trim(),
     sysCode: $('di_sysCode').value.trim(),
     appCode: $('di_appCode').value.trim(),
@@ -2256,6 +2270,9 @@ async function saveAppInfo(){
     remark:  $('di_remark').value.trim(),
     enabled: $('di_enabled').value === 'true',
   };
+  if(!body.systemName||!body.appName||!body.sysCode||!body.appCode||!body.owner){
+    toast('系统名称、系统编码、应用名称、应用编码、负责人均不能为空','error'); return;
+  }
   try{
     const r = await fetch(apiUrl('/modelgate/apps/update'), {method:'PUT', headers:hdrs(), body:JSON.stringify({...body, appId:currentApp.appId})});
     const j = await r.json();
@@ -3305,7 +3322,8 @@ async function loadPayload(resetPage = true){
       // datetime-local 给出的是 "2026-08-18T10:30"，后端 @DateTimeFormat(ISO.DATE_TIME) 直接可解析
       startTime:      $('pl_start').value,
       endTime:        $('pl_end').value,
-      keyword:        $('pl_keyword').value,
+      // 页面只查 request_body；旧 API 的 keyword（请求+响应）继续保留给已有调用方，避免破坏兼容性。
+      requestKeyword: $('pl_keyword').value,
     });
     const r = await fetch(apiUrl(`/modelgate/payload?${qs}`), {headers:hdrs()});
     const j = await r.json();
@@ -3932,9 +3950,9 @@ const DEMO_MODELS = [
 ];
 
 const DEMO_APPS = [
-  {appId:'crm-service', sysCode:'CRM',  appCode:'CRM001',  appName:'客户关系管理系统', owner:'张三', enabled:true,  authCount:2,credCount:2,createTime:'2026-01-15T10:00:00'},
-  {appId:'bi-platform', sysCode:'BI',   appCode:'BI001',   appName:'BI 数据平台',      owner:'李四', enabled:true,  authCount:1,credCount:1,createTime:'2026-02-01T09:00:00'},
-  {appId:'risk-engine', sysCode:'RISK', appCode:'RISK001', appName:'风控引擎',          owner:'王五', enabled:true,  authCount:3,credCount:2,createTime:'2026-03-10T14:00:00'},
+  {appId:'crm-service', sysCode:'CRM',  appCode:'CRM001',  systemName:'客户关系管理系统', appName:'CRM 智能助手', owner:'张三', enabled:true,  authCount:2,credCount:2,createTime:'2026-01-15T10:00:00'},
+  {appId:'bi-platform', sysCode:'BI',   appCode:'BI001',   systemName:'BI 数据平台',      appName:'BI 模型应用',   owner:'李四', enabled:true,  authCount:1,credCount:1,createTime:'2026-02-01T09:00:00'},
+  {appId:'risk-engine', sysCode:'RISK', appCode:'RISK001', systemName:'风控系统',          appName:'风控引擎',      owner:'王五', enabled:true,  authCount:3,credCount:2,createTime:'2026-03-10T14:00:00'},
 ];
 
 const DEMO_CREDS = {

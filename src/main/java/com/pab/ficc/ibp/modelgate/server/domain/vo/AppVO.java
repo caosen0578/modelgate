@@ -9,6 +9,7 @@ import java.time.LocalDateTime;
 public class AppVO {
 
     private String        appId;
+    private String        systemName;
     private String        appName;
     private String        sysCode;
     private String        appCode;
@@ -34,6 +35,7 @@ public class AppVO {
     public static AppVO of(AppInfoEntity e) {
         AppVO vo = new AppVO();
         vo.appId     = e.getAppId();
+        vo.systemName = e.getSystemName();
         vo.appName   = e.getAppName();
         vo.sysCode   = e.getSysCode();
         vo.appCode   = e.getAppCode();

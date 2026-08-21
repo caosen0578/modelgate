@@ -14,10 +14,10 @@ import java.time.LocalDateTime;
  * 后者的排查入口更杂——按结束原因找被截断的回答、按流式与否找 SSE 拼接问题、
  * 按上游状态码找非 200 的原始错误体，都是审计表看不出来的。
  *
- * <p><b>keyword 的使用约束</b>：正文检索是 {@code LIKE '%x%'}，在 LONGTEXT 上无法走索引，
- * 单独使用等于全表扫描并把几十 GB 正文拖进内存。故要求必须与
- * appId / modelId / traceId / 时间范围 中的至少一项同时使用（在 Controller 中校验），
- * 让 MySQL 能先用 {@code idx_app_model_time} / {@code idx_create_time} 把候选集收窄。
+ * <p><b>正文关键字的使用约束</b>：正文检索是 {@code LIKE '%x%'}，在 LONGTEXT 上无法走索引，
+ * 单独使用等于全表扫描并把几十 GB 正文拖进内存。故要求必须与足够长的 traceId 前缀，
+ * 或两端齐全且跨度不超过 24 小时的时间范围同时使用（在 Controller 中校验）。
+ * appId / modelId 只能定位、不能给候选行数设上界，不能单独作为正文检索的准入条件。
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
@@ -59,8 +59,14 @@ public class PayloadQueryBO extends BaseBo {
     @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
     private LocalDateTime endTime;
 
-    /** 正文关键字，同时匹配 request_body 与 response_text。⚠️ 必须搭配其它条件，见类注释。 */
+    /**
+     * 兼容旧调用方的正文关键字，同时匹配 request_body 与 response_text。
+     * 新页面按用户 ID 排查时改传 {@link #requestKeyword}，避免无意义地扫描响应正文。
+     */
     private String keyword;
+
+    /** 请求报文关键字，只匹配 request_body。⚠️ 必须搭配收窄条件，见类注释。 */
+    private String requestKeyword;
 
     /** traceId 前缀至少要这么长才算"能收窄"——见 {@link #hasNarrowingFilter()}。 */
     private static final int TRACE_PREFIX_MIN = 8;

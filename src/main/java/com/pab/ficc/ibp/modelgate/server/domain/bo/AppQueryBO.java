@@ -13,7 +13,7 @@ import lombok.EqualsAndHashCode;
 @EqualsAndHashCode(callSuper = true)
 public class AppQueryBO extends BaseBo {
 
-    /** 模糊匹配 appId / appName / sysCode，为空表示不过滤。 */
+    /** 模糊匹配 appId / systemName / appName / sysCode，为空表示不过滤。 */
     private String keyword;
 
     /** 按启用状态过滤，null 表示不过滤。 */

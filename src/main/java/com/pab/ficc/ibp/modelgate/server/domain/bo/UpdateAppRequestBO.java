@@ -9,6 +9,8 @@ import jakarta.validation.constraints.NotBlank;
 public class UpdateAppRequestBO {
 
     @NotBlank private String appId;
+    /** 旧调用方未传时回退 appName，保证前后端滚动发布期间不因新增字段失败。 */
+    private String systemName;
     @NotBlank private String appName;
     @NotBlank private String sysCode;
     @NotBlank private String appCode;
@@ -18,6 +20,7 @@ public class UpdateAppRequestBO {
 
     public AppInfoEntity toEntity() {
         var a = new AppInfoEntity();
+        a.setSystemName(systemName == null || systemName.isBlank() ? appName : systemName);
         a.setAppName(appName);
         a.setSysCode(sysCode);
         a.setAppCode(appCode);

@@ -46,7 +46,7 @@ public class AppService {
      *
      * <p><b>必须有稳定排序</b>：无 ORDER BY 时 MySQL 不保证行序，翻页会重复/漏行。
      *
-     * <p>keyword 非空时模糊匹配 appId / appName / sysCode；enabled 为 null 则不过滤。
+     * <p>keyword 非空时模糊匹配 appId / systemName / appName / sysCode；enabled 为 null 则不过滤。
      */
     public IPage<AppInfoEntity> page(AppQueryBO query) {
         AppQueryBO q = query != null ? query : new AppQueryBO();
@@ -57,6 +57,7 @@ public class AppService {
         return appMapper.selectPage(new Page<>(q.getPageIndex(), q.getPageSize()),
                 new LambdaQueryWrapper<AppInfoEntity>()
                         .and(hasKeyword, w -> w.like(AppInfoEntity::getAppId, keyword.trim())
+                                .or().like(AppInfoEntity::getSystemName, keyword.trim())
                                 .or().like(AppInfoEntity::getAppName, keyword.trim())
                                 .or().like(AppInfoEntity::getSysCode, keyword.trim()))
                         .eq(enabled != null, AppInfoEntity::getEnabled, enabled)
@@ -91,8 +92,8 @@ public class AppService {
         // 此处不得手动 set（05 §10）——strictInsertFill 仅在字段为 null 时填充，手动 set 会架空自动填充
         app.setEnabled(true);
         appMapper.insert(app);
-        log.info("[App] 新增接入系统: appId={}, appName={}, sysCode={}, owner={}",
-                app.getAppId(), app.getAppName(), app.getSysCode(), app.getOwner());
+        log.info("[App] 新增接入系统: appId={}, systemName={}, appName={}, sysCode={}, owner={}",
+                app.getAppId(), app.getSystemName(), app.getAppName(), app.getSysCode(), app.getOwner());
         return app;
     }
 
@@ -102,8 +103,8 @@ public class AppService {
         appMapper.update(updates, new LambdaQueryWrapper<AppInfoEntity>().eq(AppInfoEntity::getAppId, appId));
         // 系统可能在本次更新里被停用，凭证准入状态随之改变，必须失效相关缓存
         evictAppScopedCache(appId);
-        log.info("[App] 更新接入系统: appId={}, appName={}, owner={}, enabled={}",
-                appId, updates.getAppName(), updates.getOwner(), updates.getEnabled());
+        log.info("[App] 更新接入系统: appId={}, systemName={}, appName={}, owner={}, enabled={}",
+                appId, updates.getSystemName(), updates.getAppName(), updates.getOwner(), updates.getEnabled());
         return findByAppId(appId);
     }
 

@@ -16,6 +16,8 @@ import java.time.LocalDateTime;
 public class ModelAuthorizedAppVO {
 
     private String        appId;
+    /** 所属业务系统中文名；与 appName 一起返回，避免模型授权反查页丢失新增维度。 */
+    private String        systemName;
     private String        appName;
     private String        sysCode;
     /** 负责人：模型要下线/调整时找谁 */
@@ -54,6 +56,7 @@ public class ModelAuthorizedAppVO {
         vo.createTime    = auth.getCreateTime();
 
         if (app != null) {
+            vo.systemName = app.getSystemName();
             vo.appName    = app.getAppName();
             vo.sysCode    = app.getSysCode();
             vo.owner      = app.getOwner();

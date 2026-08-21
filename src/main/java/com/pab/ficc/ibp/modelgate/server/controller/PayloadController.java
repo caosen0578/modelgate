@@ -125,11 +125,13 @@ public class PayloadController {
     /**
      * 入参校验。
      *
-     * <p>三件事，每件都对应一条能把数据库拖垮或把人误导的真实路径：
+     * <p>四件事，每件都对应一条能把数据库拖垮或把人误导的真实路径：
      * <ol>
      *   <li><b>关键字必须搭配收窄条件</b>——正文检索是 LONGTEXT 上的 {@code LIKE '%x%'}，
      *       无法走索引。单独使用就是一轮全表扫描 + 把全部正文读进 buffer pool，
      *       连带把网关热数据（凭证/授权等小表）挤出缓冲池，这是"管理面拖垮转发"最隐蔽的路径。</li>
+     *   <li><b>两种正文关键字不能同时传</b>——新参数 requestKeyword 只搜请求，旧参数 keyword
+     *       为兼容调用方仍搜请求与响应；同时传入的 AND 语义极易制造误判，直接拒绝更明确。</li>
      *   <li><b>pageSize 必须封顶</b>——{@code BaseBo.setPageSize} 是个裸 setter，不做任何收敛。
      *       实测 {@code pageSize=5000} 会被原样接受。一个 GET 就能让 MySQL 吐出几千行带正文预览
      *       的结果并长时间占住一条 Druid 连接（池上限 100），是最廉价的自伤方式。</li>
@@ -140,7 +142,14 @@ public class PayloadController {
      */
     private void validate(PayloadQueryBO q) {
         String keyword = q.getKeyword();
-        if (keyword != null && !keyword.isBlank() && !q.hasNarrowingFilter()) {
+        String requestKeyword = q.getRequestKeyword();
+        boolean hasKeyword = notBlank(keyword);
+        boolean hasRequestKeyword = notBlank(requestKeyword);
+        if (hasKeyword && hasRequestKeyword) {
+            throw new BusinessException(ErrorCode.INVALID_PARAMETER,
+                    "keyword 与 requestKeyword 不能同时指定；按用户 ID 查请求报文请只使用 requestKeyword");
+        }
+        if ((hasKeyword || hasRequestKeyword) && !q.hasNarrowingFilter()) {
             throw new BusinessException(ErrorCode.INVALID_PARAMETER, String.format(
                     "正文关键字检索必须同时指定：TraceID（至少 %d 位前缀），"
                             + "或两端齐全且跨度不超过 %d 小时的时间范围。"
@@ -177,6 +186,7 @@ public class PayloadController {
         String finishReason = q.getFinishReason();
         String truncated    = q.getTruncated();
         String keyword      = q.getKeyword();
+        String requestKeyword = q.getRequestKeyword();
 
         LambdaQueryWrapper<RequestPayloadEntity> w = new LambdaQueryWrapper<RequestPayloadEntity>()
                 .eq(notBlank(appId),        RequestPayloadEntity::getAppId,          appId)
@@ -203,6 +213,13 @@ public class PayloadController {
             w.and(x -> x.apply("request_body LIKE {0} ESCAPE '"  + LIKE_ESCAPE + "'", kw)
                         .or()
                         .apply("response_text LIKE {0} ESCAPE '" + LIKE_ESCAPE + "'", kw));
+        }
+
+        if (notBlank(requestKeyword)) {
+            // 用户 ID 定位只需要请求报文。与旧 keyword 的 request+response OR 相比少扫一个 LONGTEXT，
+            // 在候选窗口相同的前提下显著减少大字段读取；前置的 TraceID/24h 护栏仍不可绕过。
+            String kw = "%" + escapeLike(requestKeyword.trim()) + "%";
+            w.apply("request_body LIKE {0} ESCAPE '" + LIKE_ESCAPE + "'", kw);
         }
 
         w.orderByDesc(RequestPayloadEntity::getCreateTime)
