@@ -15,6 +15,7 @@ import com.pab.ficc.ibp.modelgate.server.domain.entity.RequestPayloadEntity;
 import com.pab.ficc.ibp.modelgate.server.domain.vo.PayloadDetailVO;
 import com.pab.ficc.ibp.modelgate.server.domain.vo.PayloadListVO;
 import com.pab.ficc.ibp.modelgate.server.mapper.RequestPayloadMapper;
+import com.pab.ficc.ibp.modelgate.server.service.AppScopeResolver;
 import com.pab.ficc.ibp.modelgate.server.service.RequestHeaderSnapshotter;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -47,7 +48,7 @@ import java.util.Set;
  *   <li>GET /modelgate/payload/meta   — 保留期等配置回显，页面据此提示"只能查最近 N 天"</li>
  * </ul>
  */
-@Tag(name = "报文记录", description = "查询模型调用的请求/响应报文，支持按系统、模型、traceId、时间、正文关键字检索")
+@Tag(name = "报文记录", description = "查询模型调用的请求/响应报文，支持按 appId、应用编码、模型、traceId、时间、正文关键字检索")
 @RestController
 @RequestMapping(UrlConstant.MG_PAYLOAD)
 @RequiredArgsConstructor
@@ -55,6 +56,7 @@ public class PayloadController {
 
     private final RequestPayloadMapper payloadMapper;
     private final RequestHeaderSnapshotter requestHeaderSnapshotter;
+    private final AppScopeResolver appScopeResolver;
 
     @Value("${modelgate.payload-log.enabled:true}")
     private boolean payloadLogEnabled;
@@ -201,7 +203,6 @@ public class PayloadController {
      * 必须补一个唯一列做次级排序。
      */
     private IPage<PayloadListVO> doQuery(PayloadQueryBO q) {
-        String appId        = q.getAppId();
         String modelId      = q.getModelId();
         String traceId      = q.getTraceId();
         String finishReason = q.getFinishReason();
@@ -210,8 +211,19 @@ public class PayloadController {
         String requestKeyword = q.getRequestKeyword();
         String headerKeyword = q.getHeaderKeyword();
 
+        // appId + 应用编码 → 报文表上可执行的条件。报文表没有 app_code 列，
+        // 由 AppScopeResolver 先在小表 mg_app 解析，理由见该类注释。
+        AppScopeResolver.AppScope scope = appScopeResolver.resolve(q.getAppId(), q.getAppCode());
+        if (scope.matchNothing()) {
+            // 条件注定命中不了任何行。⚠️ 必须直接返回空页：漏掉这一分支等于"不加 app 过滤"，
+            // 会把全部系统的报文当成该应用编码的报文返回——报文里是用户原始 prompt，
+            // 这种越界展示比查不到严重得多。
+            return new Page<>(q.getPageIndex(), q.getPageSize());
+        }
+
         LambdaQueryWrapper<RequestPayloadEntity> w = new LambdaQueryWrapper<RequestPayloadEntity>()
-                .eq(notBlank(appId),        RequestPayloadEntity::getAppId,          appId)
+                .eq(scope.eqAppId() != null,  RequestPayloadEntity::getAppId,          scope.eqAppId())
+                .in(scope.inAppIds() != null, RequestPayloadEntity::getAppId,          scope.inAppIds())
                 .eq(notBlank(modelId),      RequestPayloadEntity::getModelId,        modelId)
                 .eq(notBlank(finishReason), RequestPayloadEntity::getFinishReason,   finishReason)
                 .eq(notBlank(truncated),    RequestPayloadEntity::getTruncated,      truncated)

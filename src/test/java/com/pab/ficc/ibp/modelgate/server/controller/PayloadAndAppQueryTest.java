@@ -114,8 +114,10 @@ public class PayloadAndAppQueryTest {
     }
 
     private static boolean validationFails(PayloadQueryBO q) throws Exception {
+        // validate() 只看入参本身，不碰 mapper / AppScopeResolver，故后两个依赖传 null 即可。
+        // AppScopeResolver 是 2026-08-24「按应用编码筛选」新增的第三个构造参数。
         PayloadController controller = new PayloadController(null,
-                new RequestHeaderSnapshotter(8192, 16384));
+                new RequestHeaderSnapshotter(8192, 16384), null);
         Method validate = PayloadController.class.getDeclaredMethod("validate", PayloadQueryBO.class);
         validate.setAccessible(true);
         try {

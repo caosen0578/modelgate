@@ -371,7 +371,15 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
       <div class="card">
         <div class="toolbar">
           <div class="toolbar-left" style="flex-wrap:wrap;gap:8px">
-            <select id="auditApp" style="width:140px"><option value="">全部系统</option></select>
+            <!-- 下拉只是"挑一个 appId"的便捷入口，真正提交的是右边的 appId 输入框：
+                 下拉一次只拉 200 个应用（pageSize=200），应用多了之后想筛的那个可能压根不在里面；
+                 而排查时手上通常直接就有 appId / 应用编码。两个控件同时提交同一个参数会互相打架，
+                 所以这里把下拉做成"选了就回填输入框"，输入框是唯一的提交来源。 -->
+            <select id="auditApp" style="width:140px" onchange="pickAuditApp(this.value)"><option value="">全部系统</option></select>
+            <input type="text" id="auditAppId" placeholder="appId（精确）" style="width:150px"
+                   oninput="syncAuditAppSelect()" title="接入系统 appId，精确匹配"/>
+            <input type="text" id="auditAppCode" placeholder="应用编码（精确）" style="width:140px"
+                   title="mg_app.app_code，精确匹配。一个编码可能对应多个应用，会一并查出；与 appId 同时填写按「与」处理"/>
             <select id="auditModel" style="width:140px"><option value="">全部模型</option></select>
             <select id="auditStatus" style="width:110px">
               <option value="">全部状态</option>
@@ -425,7 +433,12 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
       <div class="card">
         <div class="toolbar">
           <div class="toolbar-left" style="flex-wrap:wrap;gap:8px">
-            <select id="pl_app" style="width:150px"><option value="">全部系统</option></select>
+            <!-- 与审计页同一套逻辑：下拉只负责回填 appId 输入框，输入框才是提交来源。理由见审计页注释。 -->
+            <select id="pl_app" style="width:150px" onchange="pickPayloadApp(this.value)"><option value="">全部系统</option></select>
+            <input type="text" id="pl_appId" placeholder="appId（精确）" style="width:150px"
+                   oninput="syncPayloadAppSelect()" title="接入系统 appId，精确匹配"/>
+            <input type="text" id="pl_appCode" placeholder="应用编码（精确）" style="width:140px"
+                   title="mg_app.app_code，精确匹配。一个编码可能对应多个应用，会一并查出；与 appId 同时填写按「与」处理"/>
             <select id="pl_model" style="width:150px"><option value="">全部模型</option></select>
             <input type="text" id="pl_trace" placeholder="TraceID（支持前缀）" style="width:170px"/>
             <select id="pl_stream" style="width:110px">
@@ -3096,10 +3109,15 @@ async function deleteAccessRule(id){
 // ============================================================
 
 /** 加载统计摘要卡片 — GET /modelgate/stats/usage */
-async function loadStats(appId, modelId){
+/**
+ * 统计卡片。**必须与下方审计列表同口径**：卡片少传一个筛选条件，
+ * 用户就会拿"全量汇总"去解释"按应用编码筛出来的列表"。appCode 是 2026-08-24 补上的。
+ */
+async function loadStats(appId, appCode, modelId){
   try{
     const params = new URLSearchParams();
     if(appId)   params.set('appId',   appId);
+    if(appCode) params.set('appCode', appCode);
     if(modelId) params.set('modelId', modelId);
     const r = await fetch(apiUrl('/modelgate/stats/usage?')+params, {headers:hdrs()});
     const j = await r.json();
@@ -3135,10 +3153,12 @@ function fmtNum(n){
 async function loadAudit(resetPage = true){
   if(resetPage) pageState.audit.pageIndex = 1;
   // 查询时同步刷新统计摘要（按当前筛选条件）
-  loadStats($('auditApp').value, $('auditModel').value);
+  loadStats($('auditAppId').value.trim(), $('auditAppCode').value.trim(), $('auditModel').value);
   try{
     const qs = pageQuery('audit', {
-      appId:   $('auditApp').value,
+      // appId 取输入框而非下拉：下拉只是回填输入框的挑选器，见筛选区注释
+      appId:   $('auditAppId').value.trim(),
+      appCode: $('auditAppCode').value.trim(),
       modelId: $('auditModel').value,
       status:  $('auditStatus').value,
       traceId: $('auditTrace').value,
@@ -3182,6 +3202,26 @@ async function fillAuditFilters(){
   }catch(e){
     console.warn('[ModelGate] 审计筛选下拉填充失败', e);
   }
+}
+
+/**
+ * 下拉与 appId 输入框的联动。两个控件提交同一个后端参数，必须只有一个是"真值"，
+ * 否则会出现"下拉显示 A、输入框写着 B、实际查的是 B"这种对不上的状态。
+ * 约定：**输入框是唯一提交来源**，下拉只负责往里回填。
+ */
+function pickAuditApp(v){ $('auditAppId').value = v || ''; }
+
+/** 手输 appId 后，若与下拉当前选中值不一致，把下拉复位到「全部系统」，避免显示矛盾。 */
+function syncAuditAppSelect(){
+  const sel = $('auditApp');
+  if(sel && sel.value !== $('auditAppId').value.trim()) sel.value = '';
+}
+
+function pickPayloadApp(v){ $('pl_appId').value = v || ''; }
+
+function syncPayloadAppSelect(){
+  const sel = $('pl_app');
+  if(sel && sel.value !== $('pl_appId').value.trim()) sel.value = '';
 }
 
 function renderAudit(data){
@@ -3353,7 +3393,9 @@ async function loadPayload(resetPage = true){
   try{
     const searchHeaders = $('pl_keyword_scope').value === 'headers';
     const qs = pageQuery('payload', {
-      appId:          $('pl_app').value,
+      // appId 取输入框而非下拉：下拉只是回填输入框的挑选器，见筛选区注释
+      appId:          $('pl_appId').value.trim(),
+      appCode:        $('pl_appCode').value.trim(),
       modelId:        $('pl_model').value,
       traceId:        $('pl_trace').value,
       isStream:       $('pl_stream').value,
@@ -3393,7 +3435,7 @@ function payloadSize(n){ pageState.payload.pageSize = parseInt(n)||20; loadPaylo
 
 /** 清空全部筛选条件。reload=false 时只清不查（供 payloadOfTrace 先清后填再查）。 */
 function resetPayloadFilters(reload = true){
-  ['pl_app','pl_model','pl_trace','pl_stream','pl_status','pl_finish','pl_truncated',
+  ['pl_app','pl_appId','pl_appCode','pl_model','pl_trace','pl_stream','pl_status','pl_finish','pl_truncated',
    'pl_start','pl_end','pl_keyword'].forEach(id => { const el = $(id); if(el) el.value = ''; });
   $('pl_keyword_scope').value = 'request';
   updatePayloadKeywordUi();
@@ -3555,7 +3597,10 @@ async function openPayloadDetail(id){
 function payloadToAudit(traceId){
   closeModal('payloadDetailModal');
   navTo('audit', true);
-  $('auditApp').value = ''; $('auditModel').value = ''; $('auditStatus').value = '';
+  // 按 traceId 精确定位这一条，其余筛选必须全清——漏清 appId/应用编码会与 traceId 取交集，
+  // 结果是"点了跳转却什么都没有"，而用户并不知道是被上一次的筛选条件挡掉的
+  $('auditApp').value = ''; $('auditAppId').value = ''; $('auditAppCode').value = '';
+  $('auditModel').value = ''; $('auditStatus').value = '';
   $('auditTrace').value = traceId || '';
   loadAudit();
 }

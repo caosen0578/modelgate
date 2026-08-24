@@ -12,6 +12,7 @@ import com.pab.ficc.ibp.modelgate.server.domain.bo.AuditQueryBO;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.AuditLogEntity;
 import com.pab.ficc.ibp.modelgate.server.domain.vo.AuditLogVO;
 import com.pab.ficc.ibp.modelgate.server.mapper.AuditLogMapper;
+import com.pab.ficc.ibp.modelgate.server.service.AppScopeResolver;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -24,13 +25,14 @@ import reactor.core.publisher.Mono;
  * 审计日志查询接口
  * GET /modelgate/audit — 原始审计明细，分页返回，按 create_time + id 倒序
  */
-@Tag(name = "审计日志", description = "查询 API 调用明细，支持按系统、模型、状态码、traceId 筛选")
+@Tag(name = "审计日志", description = "查询 API 调用明细，支持按 appId、应用编码、模型、状态码、traceId 筛选")
 @RestController
 @RequestMapping(UrlConstant.MG_AUDIT)
 @RequiredArgsConstructor
 public class AuditLogController {
 
     private final AuditLogMapper auditLogMapper;
+    private final AppScopeResolver appScopeResolver;
 
     @Operation(summary = "分页查询审计日志（pageIndex 从 1 开始，pageSize 上限 200；按时间倒序）")
     @GetMapping
@@ -56,14 +58,24 @@ public class AuditLogController {
      */
     private IPage<AuditLogEntity> doQuery(AuditQueryBO query) {
         AuditQueryBO q = query != null ? query : new AuditQueryBO();
-        String appId   = q.getAppId();
         String modelId = q.getModelId();
         Integer status = q.getStatus();
         String traceId = q.getTraceId();
 
+        // appId + 应用编码 → 审计表上可执行的条件。审计表没有 app_code 列，
+        // 由 AppScopeResolver 先在小表 mg_app 解析，理由见该类注释。
+        AppScopeResolver.AppScope scope = appScopeResolver.resolve(q.getAppId(), q.getAppCode());
+        if (scope.matchNothing()) {
+            // 条件注定命中不了任何行（编码查无此应用 / appId 与编码矛盾）。
+            // ⚠️ 必须直接返回空页：漏掉这一分支就等于"不加 app 过滤"，
+            // 会把全部系统的审计当成该应用编码的审计返回，是最误导人的一种错。
+            return new Page<>(q.getPageIndex(), q.getPageSize());
+        }
+
         return auditLogMapper.selectPage(new Page<>(q.getPageIndex(), q.getPageSize()),
                 new LambdaQueryWrapper<AuditLogEntity>()
-                        .eq(appId   != null && !appId.isBlank(),   AuditLogEntity::getAppId,      appId)
+                        .eq(scope.eqAppId() != null,               AuditLogEntity::getAppId,      scope.eqAppId())
+                        .in(scope.inAppIds() != null,              AuditLogEntity::getAppId,      scope.inAppIds())
                         .eq(modelId != null && !modelId.isBlank(), AuditLogEntity::getModelId,    modelId)
                         .eq(status  != null,                       AuditLogEntity::getHttpStatus, status)
                         .eq(traceId != null && !traceId.isBlank(), AuditLogEntity::getTraceId,    traceId)

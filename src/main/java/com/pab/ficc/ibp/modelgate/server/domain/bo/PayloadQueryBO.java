@@ -26,6 +26,16 @@ public class PayloadQueryBO extends BaseBo {
     /** 接入系统 appId，为空不过滤。走 idx_app_model_time 前缀。 */
     private String appId;
 
+    /**
+     * 应用编码（{@code mg_app.app_code}），为空不过滤。<b>精确匹配</b>。
+     *
+     * <p>报文表里没有这一列，由 {@code AppScopeResolver} 先在 {@code mg_app} 解析成一组 appId
+     * 再以 {@code app_id IN (...)} 查询；与 {@code appId} 同时给出时取交集。
+     *
+     * <p>⚠️ 与 appId 一样，<b>不能</b>充当模糊关键字检索的收窄条件，见 {@link #hasNarrowingFilter()}。
+     */
+    private String appCode;
+
     /** 模型 ID，为空不过滤。 */
     private String modelId;
 
@@ -90,12 +100,13 @@ public class PayloadQueryBO extends BaseBo {
      *
      * <p><b>只认两个</b>：足够长的 traceId 前缀（近乎唯一），或有界的时间范围。
      *
-     * <p><b>appId / modelId 刻意不算</b>（这一版收紧了）。它们能走 {@code idx_app_model_time}
+     * <p><b>appId / appCode / modelId 刻意不算</b>（这一版收紧了）。它们能走 {@code idx_app_model_time}
      * 做<b>定位</b>，但不给候选集任何<b>上界</b>：内网网关通常只接个位数的系统，
      * 主力 appId 往往占全表七成到十成——{@code keyword=xxx&appId=主力系统} 通过校验后，
      * 实际执行的仍然是近乎全表的 LONGTEXT 扫描。在"能不能收窄"这件事上，
      * 单独的 appId 和被显式拒绝的 {@code upstreamStatus=200} 是同一档，不该区别对待。
      * 它们仍然是有用的<b>过滤条件</b>，只是不能单独充当 keyword 的准入券。
+     * <b>{@code appCode} 同理</b>——它最终就是被翻译成一组 appId，收窄能力只会比单个 appId 更弱。
      *
      * <p>{@code isStream} / {@code upstreamStatus} / {@code finishReason} / {@code truncated}
      * 同样不算：无索引且区分度极低。

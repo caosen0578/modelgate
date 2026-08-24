@@ -14,8 +14,17 @@ import lombok.EqualsAndHashCode;
 @EqualsAndHashCode(callSuper = true)
 public class AuditQueryBO extends BaseBo {
 
-    /** 系统 ID，为空不过滤。 */
+    /** 接入系统 appId，为空不过滤。走 {@code idx_app_id}。 */
     private String appId;
+
+    /**
+     * 应用编码（{@code mg_app.app_code}），为空不过滤。<b>精确匹配</b>。
+     *
+     * <p>审计表里没有这一列，由 {@code AppScopeResolver} 先在 {@code mg_app} 解析成一组 appId
+     * 再以 {@code app_id IN (...)} 查询；与 {@code appId} 同时给出时取交集。
+     * 详见该类注释（含"为什么不把 app_code 冗余进审计表"的取舍）。
+     */
+    private String appCode;
 
     /** 模型 ID，为空不过滤。 */
     private String modelId;
