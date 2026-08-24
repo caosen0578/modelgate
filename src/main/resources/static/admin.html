@@ -3496,9 +3496,12 @@ function tokenCell(p){
 // 详情弹窗当前数据与 tab。数据一次取回、本地切 tab，不为切 tab 重复打接口。
 let _payloadDetail = null;
 let _payloadTab = 'request';
+// 工具调用只在用户查看“响应正文”时从 responseRaw 懒解析一次；不进入网关转发或报文落库热路径。
+let _payloadToolCalls = null;
 
 async function openPayloadDetail(id){
   _payloadDetail = null;
+  _payloadToolCalls = null;
   $('pd_trace').textContent = '';
   $('pd_meta').textContent = '加载中…';
   $('pd_body').textContent = '';
@@ -3545,7 +3548,7 @@ function payloadToAudit(traceId){
  * 切换正文 tab。
  *
  * 四份内容分别是：
- *   request — 请求 JSON；headers — 全部请求头 JSON；响应正文 text — 人可直读的最终回答；
+ *   request — 请求 JSON；headers — 全部请求头 JSON；响应正文 text — 最终回答 + 解析后的工具调用；
  *   raw     — 流式时是带 data: 前缀的完整 SSE 分帧原文，用于复现上游到底怎么返回的。
  * JSON 尝试美化（失败就原样显示，绝不因为格式化失败让人看不到内容）；SSE 原文不动它，
  * 分帧结构本身就是要看的东西。
@@ -3565,8 +3568,9 @@ function setPayloadTab(tab){
     content = prettyJson(d.requestHeaders);
     hint = '全部入站请求头（包含 Authorization/Cookie/API Key/Token/JWT/签名等凭证字段）';
   }else if(tab==='text'){
-    content = d.responseText;
-    hint = d.isStream ? '各帧 delta 拼接后的最终文本' : 'choices[0].message.content';
+    const formatted = formatPayloadResponse(d, payloadToolCalls(d));
+    content = formatted.content;
+    hint = formatted.hint;
   }else{
     content = d.isStream ? d.responseRaw : prettyJson(d.responseRaw);
     hint = d.isStream ? '完整 SSE 流（保留 data: 前缀与全部分帧）' : '上游返回的原始 JSON';
@@ -3579,6 +3583,145 @@ function setPayloadTab(tab){
   $('pd_size').textContent = empty ? '' :
     `当前内容 ${content.length.toLocaleString()} 字符${content.length > 20000 ? '（较大，渲染可能略慢）' : ''}`;
   applyPayloadWrap();
+}
+
+/** 返回当前详情的工具调用解析结果；反复切换 tab 不重复扫描大段 SSE。 */
+function payloadToolCalls(detail){
+  if(_payloadToolCalls === null){
+    _payloadToolCalls = parsePayloadToolCalls(detail.responseRaw, !!detail.isStream);
+  }
+  return _payloadToolCalls;
+}
+
+/** 统一拼装“assistant 正文 + 工具调用”，确保纯工具调用时不会被空正文遮掉。 */
+function formatPayloadResponse(detail, calls){
+  const answer = detail.responseText == null ? '' : String(detail.responseText);
+  const tools = calls.length
+    ? `【工具调用（${calls.length}）】\n${JSON.stringify(calls, null, 2)}`
+    : '';
+  return {
+    content: answer && tools ? `${answer}\n\n${tools}` : (answer || tools),
+    hint: detail.isStream
+      ? `各帧 assistant delta 拼接文本${calls.length ? `，并从 SSE 解析 ${calls.length} 个工具调用` : ''}`
+      : `assistant 正文${calls.length ? `，并解析 ${calls.length} 个工具调用` : ''}`
+  };
+}
+
+/** 增量字段可能被拆成多帧；兼容“分片追加”和“后帧重复完整值”两种上游实现。 */
+function appendToolDelta(current, delta){
+  if(typeof delta !== 'string' || !delta) return current || '';
+  if(!current || delta.startsWith(current)) return delta;
+  if(current === delta || current.endsWith(delta)) return current;
+  return current + delta;
+}
+
+/** 参数拼接后优先还原 JSON；流被截断或参数非 JSON 时保留原字符串供排障。 */
+function decodeToolArguments(raw, fallback){
+  if(typeof raw === 'string' && raw.trim()){
+    try{ return JSON.parse(raw); }catch(_){ return raw; }
+  }
+  return fallback == null ? {} : fallback;
+}
+
+/**
+ * 从已落库的响应原文解析工具调用，不改变后端存储口径。
+ *
+ * OpenAI SSE 的 tool_calls 按 index 分散在多个 delta 中，function.arguments 也是字符串分片；
+ * Anthropic 由 content_block_start(tool_use) 给出 id/name，再由 input_json_delta 追加参数。
+ * 这里按行扫描而不用 split() 构造整份行数组，避免管理页查看大报文时产生额外峰值内存。
+ */
+function parsePayloadToolCalls(raw, stream){
+  if(raw == null || raw === '') return [];
+  const calls = new Map();
+
+  function merge(key, part){
+    let call = calls.get(key);
+    if(!call){
+      call = {order:calls.size, index:part.index, id:'', type:part.type||'function', name:'', args:'', input:null};
+      calls.set(key, call);
+    }
+    if(part.id) call.id = part.id;
+    if(part.type) call.type = part.type;
+    if(part.name) call.name = appendToolDelta(call.name, part.name);
+    if(typeof part.args === 'string') call.args += part.args;
+    if(part.input != null) call.input = part.input;
+  }
+
+  function consumeOpenAi(node){
+    const choice = node && node.choices && node.choices[0];
+    const delta = choice && (choice.delta || choice.message);
+    if(!delta) return;
+    const toolCalls = Array.isArray(delta.tool_calls) ? delta.tool_calls : [];
+    toolCalls.forEach((tool, position)=>{
+      const index = Number.isInteger(tool.index) ? tool.index : position;
+      const fn = tool.function || {};
+      merge(`openai:${index}`, {index, id:tool.id, type:tool.type||'function', name:fn.name, args:fn.arguments});
+    });
+    // 兼容旧版 OpenAI function_call（没有 tool_calls 数组）。
+    if(delta.function_call){
+      const fn = delta.function_call;
+      merge('openai:0', {index:0, type:'function', name:fn.name, args:fn.arguments});
+    }
+  }
+
+  function consumeAnthropic(node){
+    const index = Number.isInteger(node && node.index) ? node.index : 0;
+    const block = node && node.content_block;
+    if(block && block.type === 'tool_use'){
+      merge(`anthropic:${index}`, {index, id:block.id, type:'tool_use', name:block.name, input:block.input});
+    }
+    const delta = node && node.delta;
+    if(delta && delta.type === 'input_json_delta'){
+      merge(`anthropic:${index}`, {index, type:'tool_use', args:delta.partial_json||''});
+    }
+  }
+
+  function consume(node){
+    consumeOpenAi(node);
+    consumeAnthropic(node);
+  }
+
+  if(stream){
+    const text = String(raw);
+    let start = 0;
+    while(start <= text.length){
+      let end = text.indexOf('\n', start);
+      if(end < 0) end = text.length;
+      const line = text.slice(start, end).trim();
+      start = end + 1;
+      if(line.startsWith('data:')){
+        const payload = line.slice(5).trim();
+        // 长对话可能有成千上万条纯文本帧；先做廉价字段名判断，只 JSON.parse 工具相关帧。
+        const toolFrame = payload.includes('"tool_calls"') || payload.includes('"function_call"')
+          || payload.includes('"tool_use"') || payload.includes('"input_json_delta"');
+        if(payload && payload !== '[DONE]' && toolFrame){
+          try{ consume(JSON.parse(payload)); }catch(_){}
+        }
+      }
+      if(end === text.length) break;
+    }
+  }else{
+    try{
+      const root = JSON.parse(String(raw));
+      consumeOpenAi(root);
+      const content = Array.isArray(root.content) ? root.content : [];
+      content.forEach((block, index)=>{
+        if(block && block.type === 'tool_use'){
+          merge(`anthropic:${index}`, {index, id:block.id, type:'tool_use', name:block.name, input:block.input});
+        }
+      });
+    }catch(_){}
+  }
+
+  return Array.from(calls.values())
+    .sort((a,b)=>a.order-b.order)
+    .map(call=>{
+      const result = {index:call.index, type:call.type};
+      if(call.id) result.id = call.id;
+      if(call.name) result.name = call.name;
+      result.arguments = decodeToolArguments(call.args, call.input);
+      return result;
+    });
 }
 
 /** 换行开关。不换行时用 pre 的默认行为，超长行横向滚动。 */
