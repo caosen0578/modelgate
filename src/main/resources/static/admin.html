@@ -113,6 +113,20 @@ textarea{resize:vertical;min-height:80px;font-family:monospace}
           display:flex;flex-direction:column;overflow:hidden}
 .modal-xl .modal-body{flex:1;min-height:0;display:flex;flex-direction:column;gap:0}
 .modal-xl .modal-header,.modal-xl .modal-footer{flex:none}
+/* 报文响应正文采用结构化阅读：消息、协议校验、工具调用分区，不再混成一段 JSON 文本。 */
+.payload-response-view{display:none;flex:1;min-height:0;overflow:auto;background:#f8fafc;
+  border:1px solid #e2e8f0;border-radius:8px;padding:14px}
+.payload-response-section{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:14px;margin-bottom:12px}
+.payload-response-section:last-child{margin-bottom:0}
+.payload-response-title{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;color:#1e293b;margin-bottom:9px}
+.payload-response-pre{background:#1e293b;color:#e2e8f0;border-radius:7px;padding:12px 14px;margin:0;
+  font-family:ui-monospace,Consolas,Menlo,monospace;font-size:13px;line-height:1.65;
+  white-space:pre-wrap;overflow-wrap:anywhere;word-break:normal;overflow:auto}
+.payload-tool-card{border:1px solid #cbd5e1;border-radius:8px;padding:12px;margin-top:10px;background:#f8fafc}
+.payload-tool-meta{display:grid;grid-template-columns:minmax(120px,1fr) minmax(120px,1fr) minmax(180px,2fr);gap:10px;margin-bottom:10px}
+.payload-tool-meta>div{min-width:0;font-size:12px;color:#64748b}
+.payload-tool-meta code{display:block;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#334155}
+.payload-protocol-list{margin:8px 0 0 20px;font-size:12px;line-height:1.7;color:#475569}
 @keyframes slideUp{from{transform:translateY(20px);opacity:0}to{transform:none;opacity:1}}
 .modal-header{padding:20px 24px 16px;border-bottom:1px solid #f1f5f9;display:flex;align-items:center;justify-content:space-between}
 .modal-header h3{font-size:16px;font-weight:600;color:#1e1b4b}
@@ -887,11 +901,12 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
            font-family:ui-monospace,Consolas,Menlo,monospace;font-size:13px;line-height:1.7;
            flex:1;min-height:0;overflow:auto;margin:0;
            white-space:pre-wrap;overflow-wrap:anywhere;word-break:normal"></pre>
+      <div id="pd_response_structured" class="payload-response-view"></div>
     </div>
     <div class="modal-footer">
       <span id="pd_size" style="flex:1;font-size:12px;color:#94a3b8"></span>
       <button class="btn btn-neutral" onclick="closeModal('payloadDetailModal')">关闭</button>
-      <button class="btn btn-primary" onclick="copyText($('pd_body').textContent)">复制当前内容</button>
+      <button class="btn btn-primary" onclick="copyPayloadCurrentContent()">复制当前内容</button>
     </div>
   </div>
 </div>
@@ -3496,15 +3511,16 @@ function tokenCell(p){
 // 详情弹窗当前数据与 tab。数据一次取回、本地切 tab，不为切 tab 重复打接口。
 let _payloadDetail = null;
 let _payloadTab = 'request';
-// 工具调用只在用户查看“响应正文”时从 responseRaw 懒解析一次；不进入网关转发或报文落库热路径。
-let _payloadToolCalls = null;
+// 响应分析只在用户查看“响应正文”时执行一次；结果含工具调用与基础协议校验，不进入网关热路径。
+let _payloadResponseAnalysis = null;
 
 async function openPayloadDetail(id){
   _payloadDetail = null;
-  _payloadToolCalls = null;
+  _payloadResponseAnalysis = null;
   $('pd_trace').textContent = '';
   $('pd_meta').textContent = '加载中…';
   $('pd_body').textContent = '';
+  $('pd_response_structured').innerHTML = '';
   openModal('payloadDetailModal');
   try{
     const r = await fetch(apiUrl(`/modelgate/payload/detail?id=${encodeURIComponent(id)}`), {headers:hdrs()});
@@ -3560,6 +3576,9 @@ function setPayloadTab(tab){
     if(btn) btn.className = 'btn btn-sm ' + (t===tab ? 'btn-primary' : 'btn-neutral');
   });
   const d = _payloadDetail || {};
+  const structured = tab === 'text';
+  $('pd_body').style.display = structured ? 'none' : 'block';
+  $('pd_response_structured').style.display = structured ? 'block' : 'none';
   let content, hint;
   if(tab==='request'){
     content = prettyJson(d.requestBody);
@@ -3568,16 +3587,20 @@ function setPayloadTab(tab){
     content = prettyJson(d.requestHeaders);
     hint = '全部入站请求头（包含 Authorization/Cookie/API Key/Token/JWT/签名等凭证字段）';
   }else if(tab==='text'){
-    const formatted = formatPayloadResponse(d, payloadToolCalls(d));
+    const analysis = payloadResponseAnalysis(d);
+    const formatted = formatPayloadResponse(d, analysis.calls);
     content = formatted.content;
-    hint = formatted.hint;
+    hint = `${formatted.hint}；OpenAI 工具调用基础校验：${analysis.protocol.label}`;
+    renderPayloadResponse(d, analysis);
   }else{
     content = d.isStream ? d.responseRaw : prettyJson(d.responseRaw);
     hint = d.isStream ? '完整 SSE 流（保留 data: 前缀与全部分帧）' : '上游返回的原始 JSON';
   }
   $('pd_tabHint').textContent = hint;
   const empty = (content == null || content === '');
-  $('pd_body').textContent = empty ? '（无内容）' : content;
+  if(!structured){
+    $('pd_body').textContent = empty ? '（无内容）' : content;
+  }
   // 底部显示当前这份内容的规模：报文有大有小，滚动条长度并不直观，
   // 尤其"看起来空空的"到底是内容少还是取回来就是空，要能一眼区分。
   $('pd_size').textContent = empty ? '' :
@@ -3585,12 +3608,12 @@ function setPayloadTab(tab){
   applyPayloadWrap();
 }
 
-/** 返回当前详情的工具调用解析结果；反复切换 tab 不重复扫描大段 SSE。 */
-function payloadToolCalls(detail){
-  if(_payloadToolCalls === null){
-    _payloadToolCalls = parsePayloadToolCalls(detail.responseRaw, !!detail.isStream);
+/** 返回当前详情的响应分析结果；反复切换 tab 不重复扫描大段 SSE。 */
+function payloadResponseAnalysis(detail){
+  if(_payloadResponseAnalysis === null){
+    _payloadResponseAnalysis = analyzePayloadToolCalls(detail.responseRaw, !!detail.isStream);
   }
-  return _payloadToolCalls;
+  return _payloadResponseAnalysis;
 }
 
 /** 统一拼装“assistant 正文 + 工具调用”，确保纯工具调用时不会被空正文遮掉。 */
@@ -3605,6 +3628,76 @@ function formatPayloadResponse(detail, calls){
       ? `各帧 assistant delta 拼接文本${calls.length ? `，并从 SSE 解析 ${calls.length} 个工具调用` : ''}`
       : `assistant 正文${calls.length ? `，并解析 ${calls.length} 个工具调用` : ''}`
   };
+}
+
+/** 协议状态沿用全站 tag 配色；“警告”表示可展示但存在兼容实现或收尾字段缺失。 */
+function payloadProtocolTag(protocol){
+  const style = {
+    pass:['tag-green','通过'], warning:['tag-yellow','警告'], fail:['tag-red','不通过'],
+    not_applicable:['tag-gray','非 OpenAI'], none:['tag-gray','未检测到工具调用']
+  }[protocol.status] || ['tag-gray','未知'];
+  return `<span class="tag ${style[0]}">${style[1]}</span>`;
+}
+
+/**
+ * “响应正文”结构化展示：先放 assistant 消息，再给协议校验，最后逐项列出工具与参数。
+ * 所有上游动态值均先转义后进入 innerHTML；参数代码块不会执行其中的 HTML/脚本。
+ */
+function renderPayloadResponse(detail, analysis){
+  const answer = detail.responseText == null ? '' : String(detail.responseText);
+  const protocol = analysis.protocol;
+  const messages = protocol.messages.length
+    ? `<ul class="payload-protocol-list">${protocol.messages.map(m=>`<li>${escHtml(m)}</li>`).join('')}</ul>`
+    : '<div style="font-size:12px;color:#64748b">未发现工具调用结构问题。</div>';
+
+  const tools = analysis.calls.length ? analysis.calls.map((call, position)=>{
+    const issues = call._issues || [];
+    const args = typeof call.arguments === 'string'
+      ? call.arguments
+      : JSON.stringify(call.arguments, null, 2);
+    return `<div class="payload-tool-card">
+      <div class="payload-response-title" style="margin-bottom:10px">
+        <span>工具调用 #${position + 1}</span>
+        ${issues.length
+          ? `<span class="tag tag-red" title="${escHtml(issues.join('；'))}">结构异常</span>`
+          : '<span class="tag tag-green">结构正常</span>'}
+      </div>
+      <div class="payload-tool-meta">
+        <div>调用 ID<code title="${escHtml(call.id||'')}">${escHtml(call.id||'-')}</code></div>
+        <div>类型<code>${escHtml(call.type||'-')}</code></div>
+        <div>调用工具<code title="${escHtml(call.name||'')}">${escHtml(call.name||'-')}</code></div>
+      </div>
+      <div style="font-size:12px;font-weight:600;color:#475569;margin-bottom:6px">调用参数
+        ${call._argumentsValid ? '' : '<span class="tag tag-red" style="margin-left:6px">非合法 JSON</span>'}
+      </div>
+      <pre class="payload-response-pre">${escHtml(args||'{}')}</pre>
+    </div>`;
+  }).join('') : '<div style="font-size:12px;color:#94a3b8">未检测到工具调用。</div>';
+
+  $('pd_response_structured').innerHTML = `
+    <section class="payload-response-section">
+      <div class="payload-response-title">消息内容 <span class="tag tag-blue">assistant</span></div>
+      ${answer
+        ? `<pre class="payload-response-pre">${escHtml(answer)}</pre>`
+        : '<div style="font-size:12px;color:#94a3b8">（无 assistant 文本内容，本次响应可能只包含工具调用）</div>'}
+    </section>
+    <section class="payload-response-section">
+      <div class="payload-response-title">工具调用 <span class="tag tag-purple">${analysis.calls.length} 项</span></div>
+      ${tools}
+    </section>
+    <section class="payload-response-section">
+      <div class="payload-response-title">OpenAI 工具调用基础校验 ${payloadProtocolTag(protocol)}</div>
+      <div style="font-size:11px;color:#94a3b8;margin-bottom:6px">
+        校验 tool_calls/id/type/function.name/arguments、finish_reason 与 SSE [DONE]；不是完整 OpenAI Schema 校验。
+      </div>
+      ${messages}
+    </section>`;
+}
+
+/** 复制当前可见 tab；结构化响应正文复制的是消息、校验结果、工具与参数的可读文本。 */
+function copyPayloadCurrentContent(){
+  const target = _payloadTab === 'text' ? $('pd_response_structured') : $('pd_body');
+  copyText(target.innerText || target.textContent || '');
 }
 
 /** 增量字段可能被拆成多帧；兼容“分片追加”和“后帧重复完整值”两种上游实现。 */
@@ -3630,8 +3723,12 @@ function decodeToolArguments(raw, fallback){
  * Anthropic 由 content_block_start(tool_use) 给出 id/name，再由 input_json_delta 追加参数。
  * 这里按行扫描而不用 split() 构造整份行数组，避免管理页查看大报文时产生额外峰值内存。
  */
-function parsePayloadToolCalls(raw, stream){
-  if(raw == null || raw === '') return [];
+function analyzePayloadToolCalls(raw, stream){
+  const meta = {openAi:false, anthropic:false, legacy:false, finishReason:null,
+    sawDone:!stream, malformedToolFrames:0};
+  if(raw == null || raw === ''){
+    return {calls:[], protocol:validateOpenAiToolProtocol([], meta, stream)};
+  }
   const calls = new Map();
 
   function merge(key, part){
@@ -3649,6 +3746,8 @@ function parsePayloadToolCalls(raw, stream){
 
   function consumeOpenAi(node){
     const choice = node && node.choices && node.choices[0];
+    if(Array.isArray(node && node.choices)) meta.openAi = true;
+    if(choice && typeof choice.finish_reason === 'string') meta.finishReason = choice.finish_reason;
     const delta = choice && (choice.delta || choice.message);
     if(!delta) return;
     const toolCalls = Array.isArray(delta.tool_calls) ? delta.tool_calls : [];
@@ -3659,6 +3758,7 @@ function parsePayloadToolCalls(raw, stream){
     });
     // 兼容旧版 OpenAI function_call（没有 tool_calls 数组）。
     if(delta.function_call){
+      meta.legacy = true;
       const fn = delta.function_call;
       merge('openai:0', {index:0, type:'function', name:fn.name, args:fn.arguments});
     }
@@ -3668,10 +3768,12 @@ function parsePayloadToolCalls(raw, stream){
     const index = Number.isInteger(node && node.index) ? node.index : 0;
     const block = node && node.content_block;
     if(block && block.type === 'tool_use'){
+      meta.anthropic = true;
       merge(`anthropic:${index}`, {index, id:block.id, type:'tool_use', name:block.name, input:block.input});
     }
     const delta = node && node.delta;
     if(delta && delta.type === 'input_json_delta'){
+      meta.anthropic = true;
       merge(`anthropic:${index}`, {index, type:'tool_use', args:delta.partial_json||''});
     }
   }
@@ -3691,11 +3793,15 @@ function parsePayloadToolCalls(raw, stream){
       start = end + 1;
       if(line.startsWith('data:')){
         const payload = line.slice(5).trim();
+        if(payload === '[DONE]') meta.sawDone = true;
         // 长对话可能有成千上万条纯文本帧；先做廉价字段名判断，只 JSON.parse 工具相关帧。
-        const toolFrame = payload.includes('"tool_calls"') || payload.includes('"function_call"')
-          || payload.includes('"tool_use"') || payload.includes('"input_json_delta"');
-        if(payload && payload !== '[DONE]' && toolFrame){
-          try{ consume(JSON.parse(payload)); }catch(_){}
+        const openAiToolFrame = payload.includes('"tool_calls"') || payload.includes('"function_call"');
+        const anthropicToolFrame = payload.includes('"tool_use"') || payload.includes('"input_json_delta"');
+        const relevantFrame = openAiToolFrame || anthropicToolFrame || payload.includes('"finish_reason"');
+        if(openAiToolFrame) meta.openAi = true;
+        if(anthropicToolFrame) meta.anthropic = true;
+        if(payload && payload !== '[DONE]' && relevantFrame){
+          try{ consume(JSON.parse(payload)); }catch(_){ meta.malformedToolFrames++; }
         }
       }
       if(end === text.length) break;
@@ -3707,36 +3813,110 @@ function parsePayloadToolCalls(raw, stream){
       const content = Array.isArray(root.content) ? root.content : [];
       content.forEach((block, index)=>{
         if(block && block.type === 'tool_use'){
+          meta.anthropic = true;
           merge(`anthropic:${index}`, {index, id:block.id, type:'tool_use', name:block.name, input:block.input});
         }
       });
-    }catch(_){}
+    }catch(_){ meta.malformedToolFrames++; }
   }
 
-  return Array.from(calls.values())
+  const normalized = Array.from(calls.values())
     .sort((a,b)=>a.order-b.order)
     .map(call=>{
+      let argumentsValid = true;
+      const argumentsPresent = !!(call.args && call.args.trim()) || call.input != null;
+      if(call.args && call.args.trim()){
+        try{ JSON.parse(call.args); }catch(_){ argumentsValid = false; }
+      }
       const result = {index:call.index, type:call.type};
       if(call.id) result.id = call.id;
       if(call.name) result.name = call.name;
       result.arguments = decodeToolArguments(call.args, call.input);
+      // 校验元数据不参与 JSON.stringify/复制内容，只供结构化页面打标。
+      Object.defineProperty(result, '_argumentsValid', {value:argumentsValid, enumerable:false});
+      Object.defineProperty(result, '_argumentsPresent', {value:argumentsPresent, enumerable:false});
+      Object.defineProperty(result, '_issues', {value:[], enumerable:false});
       return result;
     });
+  return {calls:normalized, protocol:validateOpenAiToolProtocol(normalized, meta, stream)};
+}
+
+/** 保留纯解析入口供回归测试或其它只需要工具数组的页面代码使用。 */
+function parsePayloadToolCalls(raw, stream){
+  return analyzePayloadToolCalls(raw, stream).calls;
+}
+
+/**
+ * OpenAI 工具调用基础校验，不冒充完整 JSON Schema 验证。
+ * Anthropic 原生 tool_use 明确标为“不适用”，避免拿 OpenAI 规则误报其它协议。
+ */
+function validateOpenAiToolProtocol(calls, meta, stream){
+  const messages = [];
+  let errors = 0, warnings = 0;
+  if(!meta.openAi){
+    return meta.anthropic
+      ? {status:'not_applicable', label:'非 OpenAI 协议', messages:['检测到 Anthropic tool_use，已按其原生结构展示。']}
+      : {status:'none', label:'未检测到工具调用', messages:[]};
+  }
+
+  if(meta.malformedToolFrames){
+    errors++;
+    messages.push(`${meta.malformedToolFrames} 个工具相关帧不是合法 JSON。`);
+  }
+  if(!calls.length && meta.finishReason === 'tool_calls'){
+    errors++;
+    messages.push('finish_reason=tool_calls，但没有解析到任何 tool_calls 项。');
+  }
+  calls.forEach((call, position)=>{
+    const issues = call._issues;
+    if(!meta.legacy && !call.id) issues.push('缺少调用 ID（id）');
+    if(call.type !== 'function') issues.push(`type 应为 function，实际为 ${call.type||'空'}`);
+    if(!call.name) issues.push('缺少 function.name');
+    if(!call._argumentsPresent) issues.push('缺少 function.arguments');
+    else if(!call._argumentsValid) issues.push('function.arguments 不是合法 JSON');
+    if(issues.length){
+      errors += issues.length;
+      messages.push(`工具调用 #${position + 1}：${issues.join('；')}。`);
+    }
+  });
+  if(meta.legacy){
+    warnings++;
+    messages.push('检测到旧版 function_call；可展示，但不是当前 tool_calls 数组格式。');
+  }
+  if(calls.length && meta.finishReason !== 'tool_calls'){
+    warnings++;
+    messages.push(`存在工具调用，但 finish_reason=${meta.finishReason||'空'}，标准值应为 tool_calls。`);
+  }
+  if(stream && !meta.sawDone){
+    warnings++;
+    messages.push('SSE 未检测到 data: [DONE] 结束标记。');
+  }
+  if(!messages.length){
+    messages.push(`tool_calls 共 ${calls.length} 项，关键字段、参数 JSON、finish_reason 与 [DONE] 均符合基础检查。`);
+  }
+  const status = errors ? 'fail' : warnings ? 'warning' : 'pass';
+  return {status, label:status==='pass'?'通过':status==='warning'?'警告':'不通过', messages};
 }
 
 /** 换行开关。不换行时用 pre 的默认行为，超长行横向滚动。 */
 function applyPayloadWrap(){
   const on = $('pd_wrap').checked;
-  const el = $('pd_body');
-  el.style.whiteSpace   = on ? 'pre-wrap' : 'pre';
-  el.style.overflowWrap = on ? 'anywhere' : 'normal';
+  const body = $('pd_body');
+  const fontSize = body.style.fontSize || '13px';
+  [body, ...$('pd_response_structured').querySelectorAll('pre')].forEach(el=>{
+    el.style.whiteSpace   = on ? 'pre-wrap' : 'pre';
+    el.style.overflowWrap = on ? 'anywhere' : 'normal';
+    el.style.fontSize = fontSize;
+  });
 }
 
 /** 字号增减，钳在 11–20px。报文常要逐字比对，能放大读一段是实用需求。 */
 function payloadFontStep(delta){
-  const el = $('pd_body');
-  const cur = parseInt(el.style.fontSize) || 13;
-  el.style.fontSize = Math.min(20, Math.max(11, cur + delta)) + 'px';
+  const body = $('pd_body');
+  const cur = parseInt(body.style.fontSize) || 13;
+  const next = Math.min(20, Math.max(11, cur + delta)) + 'px';
+  body.style.fontSize = next;
+  $('pd_response_structured').querySelectorAll('pre').forEach(el=>el.style.fontSize=next);
 }
 
 /** JSON 美化；不是合法 JSON 就原样返回——看到原文永远比看到"解析失败"有用 */
