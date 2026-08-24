@@ -24,6 +24,14 @@ public class PayloadListVO {
     private Long          id;
     private String        traceId;
     private String        appId;
+    /**
+     * 应用编码（{@code mg_app.app_code}）。
+     *
+     * <p><b>不是 {@code selectListPage} 查出来的</b>——报文表只存 app_id，
+     * 由 Controller 用 {@code AppScopeResolver} 按当前页 appId 批量反查后回填。
+     * 刻意不在列表 SQL 里 JOIN {@code mg_app}，理由见该方法注释。
+     */
+    private String        appCode;
     private String        modelId;
     /** 是否 SSE 流式，决定 responseRaw 的结构（详情页据此选择展示方式） */
     private Boolean       isStream;

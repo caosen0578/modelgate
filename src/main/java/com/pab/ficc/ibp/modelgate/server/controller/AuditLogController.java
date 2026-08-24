@@ -21,6 +21,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
 
+import java.util.Map;
+
 /**
  * 审计日志查询接口
  * GET /modelgate/audit — 原始审计明细，分页返回，按 create_time + id 倒序
@@ -40,7 +42,18 @@ public class AuditLogController {
         // mg_audit_log 保留 90 天、是全库增长最快的表，这里的护栏最要紧：
         // 实测未加护栏时 pageSize=100000 会返回整张表（HTTP 200 / 2.8s / 1.7MB）
         PageSupport.validate(query, "审计日志");
-        return Mono.fromCallable(() -> PageVo.of(doQuery(query), AuditLogVO::of))
+        return Mono.fromCallable(() -> {
+                    IPage<AuditLogEntity> page = doQuery(query);
+                    // 应用编码不在审计表里，按当前页 appId 一次性批量反查后回填（不是 N+1）。
+                    // 查不到（应用已删除 / 鉴权失败行 appId 为空）时留 null，页面显示 "-"。
+                    Map<String, String> codes = appScopeResolver.appCodeByAppId(
+                            page.getRecords().stream().map(AuditLogEntity::getAppId).toList());
+                    return PageVo.of(page, e -> {
+                        AuditLogVO vo = AuditLogVO.of(e);
+                        vo.setAppCode(codes.get(e.getAppId()));
+                        return vo;
+                    });
+                })
                 .subscribeOn(AdminScheduler.get())
                 .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .map(Result::success);

@@ -270,7 +270,16 @@ public class PayloadController {
     }
 
     /** 列表 VO 已是最终形态，无需再映射，这里只做 PageVo 包装。 */
-    private static PageVo<PayloadListVO> toPageVo(IPage<PayloadListVO> page) {
+    /**
+     * 列表行加工：回填「应用编码」列。
+     *
+     * <p>应用编码不在报文表里，按当前页 appId 一次性批量反查（不是 N+1，也没在列表 SQL 里 JOIN，
+     * 理由见 {@code AppScopeResolver.appCodeByAppId}）。查不到时留 null，页面显示 "-"。
+     */
+    private PageVo<PayloadListVO> toPageVo(IPage<PayloadListVO> page) {
+        Map<String, String> codes = appScopeResolver.appCodeByAppId(
+                page.getRecords().stream().map(PayloadListVO::getAppId).toList());
+        page.getRecords().forEach(v -> v.setAppCode(codes.get(v.getAppId())));
         return PageVo.of(page, v -> v);
     }
 

@@ -11,6 +11,13 @@ public class AuditLogVO {
     private Long          id;
     private String        traceId;
     private String        appId;
+    /**
+     * 应用编码（{@code mg_app.app_code}）。
+     *
+     * <p><b>不来自审计表</b>——审计表只存 app_id。由 Controller 用 {@code AppScopeResolver}
+     * 按当前页的 appId 一次性批量反查后回填，应用已删除时为 null，前端显示为 "-"。
+     */
+    private String        appCode;
     private String        modelId;
     private String        credType;
     private String        clientIp;

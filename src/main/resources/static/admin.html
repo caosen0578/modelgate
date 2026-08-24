@@ -401,7 +401,8 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
               <tr>
                 <th>时间</th>
                 <th>TraceID</th>
-                <th>接入系统</th>
+                <th>应用 appId</th>
+                <th>应用编码</th>
                 <th>模型</th>
                 <th>客户端 IP</th>
                 <th>状态</th>
@@ -411,7 +412,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
               </tr>
             </thead>
             <tbody id="auditTbody">
-              <tr class="empty-row"><td colspan="9">暂无审计数据</td></tr>
+              <tr class="empty-row"><td colspan="10">暂无审计数据</td></tr>
             </tbody>
           </table>
           <div id="auditPager"></div>
@@ -504,7 +505,8 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
               <tr>
                 <th>时间</th>
                 <th>TraceID</th>
-                <th>接入系统</th>
+                <th>应用 appId</th>
+                <th>应用编码</th>
                 <th>模型</th>
                 <th>类型</th>
                 <th>上游状态</th>
@@ -517,7 +519,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
               </tr>
             </thead>
             <tbody id="payloadTbody">
-              <tr class="empty-row"><td colspan="12">暂无报文数据</td></tr>
+              <tr class="empty-row"><td colspan="13">暂无报文数据</td></tr>
             </tbody>
           </table>
           <div id="payloadPager"></div>
@@ -3226,12 +3228,15 @@ function syncPayloadAppSelect(){
 
 function renderAudit(data){
   const tbody = $('auditTbody');
-  if(!data.length){ tbody.innerHTML='<tr class="empty-row"><td colspan="9">暂无审计数据</td></tr>'; return; }
+  // colspan 必须与表头列数（10，2026-08-24 加「应用编码」列后由 9 变 10）一致，
+  // 否则空态提示横不满、最右列空一格
+  if(!data.length){ tbody.innerHTML='<tr class="empty-row"><td colspan="10">暂无审计数据</td></tr>'; return; }
   tbody.innerHTML = data.map(a=>`
     <tr>
       <td style="font-size:12px;white-space:nowrap">${fmtTime(a.createTime)}</td>
       <td><code style="font-size:11px" title="${escHtml(a.traceId||'')}">${(a.traceId||'').slice(0,12)}...</code></td>
       <td>${escHtml(a.appId||'-')}</td>
+      <td style="font-size:12px">${escHtml(a.appCode||'-')}</td>
       <td>${escHtml(a.modelId||'-')}</td>
       <td style="font-size:12px">${escHtml(a.clientIp||'-')}</td>
       <td>${statusTag(a.httpStatus)}</td>
@@ -3358,13 +3363,13 @@ function payloadKeywordAsTrace(){
 function renderPayloadNeedNarrow(kw){
   const looksLikeTrace = /^[0-9a-fA-F]{8,64}$/.test(kw);
   $('payloadTbody').innerHTML = `
-    <tr><td colspan="12" style="padding:22px;text-align:left;color:#475569">
+    <tr><td colspan="13" style="padding:22px;text-align:left;color:#475569">
       <div style="font-weight:600;color:#b45309;margin-bottom:6px">⚠️ 模糊关键字需要先收窄查询范围</div>
       <div style="font-size:13px;line-height:1.7">
         关键字是大文本列上的前导通配符匹配，走不了普通索引；单独使用会扫描全表并抢占数据库 I/O，
         足以影响在线业务，因此必须搭配
         <b>TraceID（≥8 位）</b> 或 <b>两端齐全且跨度 ≤24 小时的时间范围</b>。<br>
-        <span style="color:#94a3b8">「系统 / 模型」不算收窄条件：内网通常只接个位数的系统，主力系统常占全表七成以上，
+        <span style="color:#94a3b8">「应用 appId / 应用编码 / 模型」不算收窄条件：内网通常只接个位数的系统，主力系统常占全表七成以上，
         加上它仍然是近乎全表扫描。「类型 / 上游状态码 / 结束原因 / 完整性」同样不算——无索引且区分度太低。</span>
       </div>
       <div class="flex gap-8" style="margin-top:12px">
@@ -3416,7 +3421,7 @@ async function loadPayload(resetPage = true){
       toast('查询报文失败: '+errMsg(j),'error');
       // colspan 必须跟表头列数（12）一致，否则错误提示横不满、最右列空一格；
       // 分页条也要清掉，否则停留在上一次成功查询的「共 2727 条」，点下一页会基于错误页码继续发请求
-      tbody.innerHTML = `<tr class="empty-row"><td colspan="12" style="color:#ef4444">${escHtml(errMsg(j))}</td></tr>`;
+      tbody.innerHTML = `<tr class="empty-row"><td colspan="13" style="color:#ef4444">${escHtml(errMsg(j))}</td></tr>`;
       $('payloadPager').innerHTML = '';
       return;
     }
@@ -3425,7 +3430,7 @@ async function loadPayload(resetPage = true){
     setStatus(true);
   }catch(e){
     console.warn('[ModelGate] 报文查询异常', e);
-    tbody.innerHTML = `<tr class="empty-row"><td colspan="12" style="color:#f59e0b">请求异常: ${escHtml(e.message)}</td></tr>`;
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="13" style="color:#f59e0b">请求异常: ${escHtml(e.message)}</td></tr>`;
     $('payloadPager').innerHTML = '';
   }
 }
@@ -3465,7 +3470,7 @@ async function fillPayloadFilters(){
 function renderPayload(data){
   const tbody = $('payloadTbody');
   if(!data.length){
-    tbody.innerHTML = '<tr class="empty-row"><td colspan="12">没有符合条件的报文（报文只对开启了记录开关的授权产生，且超过保留期会被清理）</td></tr>';
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="13">没有符合条件的报文（报文只对开启了记录开关的授权产生，且超过保留期会被清理）</td></tr>';
     return;
   }
   tbody.innerHTML = data.map(p=>`
@@ -3475,6 +3480,7 @@ function renderPayload(data){
           <span onclick="copyText('${escHtml(p.traceId||'')}')" style="cursor:pointer;color:#6366f1;font-size:11px"
                 title="复制完整 TraceID">复制</span></td>
       <td style="font-size:12px">${escHtml(p.appId||'-')}</td>
+      <td style="font-size:12px">${escHtml(p.appCode||'-')}</td>
       <td style="font-size:12px">${escHtml(p.modelId||'-')}</td>
       <td>${p.isStream ? '<span class="tag tag-purple">流式</span>' : '<span class="tag tag-gray">非流式</span>'}</td>
       <td>${statusTag(p.upstreamStatus)}</td>

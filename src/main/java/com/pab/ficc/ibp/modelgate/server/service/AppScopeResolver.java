@@ -8,7 +8,10 @@ import com.pab.ficc.ibp.modelgate.server.mapper.AppMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 把管理面查询里的「appId + 应用编码」两个条件，翻译成审计/报文表上可执行的过滤条件。
@@ -115,6 +118,42 @@ public class AppScopeResolver {
             return appIds.contains(appId.trim()) ? AppScope.eq(appId.trim()) : AppScope.nothing();
         }
         return appIds.size() == 1 ? AppScope.eq(appIds.get(0)) : AppScope.in(appIds);
+    }
+
+    /**
+     * 批量反查 appId → 应用编码，供审计/报文列表展示「应用编码」列。
+     *
+     * <p><b>一次查询，不是 N+1</b>：把当前页的 appId 去重后一次 {@code IN} 查回来，
+     * 内存组 Map。列表页每页最多 200 行，去重后通常只有个位数个 appId。
+     *
+     * <p><b>为什么不在列表 SQL 里 JOIN {@code mg_app}</b>：审计与报文都是全库增长最快的表，
+     * 分页 SQL 已经带了标量子查询与 {@code CHAR_LENGTH}/{@code LEFT}，再挂一个 JOIN 会让
+     * 分页插件派生的 COUNT 语句也一起变复杂；而这里要的只是一次小表字典查询，
+     * 分开做既便宜又不影响主查询的执行计划。
+     *
+     * <p>查不到的 appId 不会出现在返回的 Map 里（应用已被删除、或审计行是鉴权失败时
+     * 写入的空 appId），调用方按"未知"处理即可，不要当成错误。
+     */
+    public Map<String, String> appCodeByAppId(Collection<String> appIds) {
+        if (appIds == null || appIds.isEmpty()) {
+            return Map.of();
+        }
+        List<String> distinct = appIds.stream()
+                .filter(id -> id != null && !id.isBlank())
+                .distinct()
+                .toList();
+        if (distinct.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, String> result = new HashMap<>();
+        for (AppInfoEntity e : appMapper.selectList(new LambdaQueryWrapper<AppInfoEntity>()
+                .select(AppInfoEntity::getAppId, AppInfoEntity::getAppCode)
+                .in(AppInfoEntity::getAppId, distinct))) {
+            if (e.getAppId() != null && e.getAppCode() != null) {
+                result.put(e.getAppId(), e.getAppCode());
+            }
+        }
+        return result;
     }
 
     /**
