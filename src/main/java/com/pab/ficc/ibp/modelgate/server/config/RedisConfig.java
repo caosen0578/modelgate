@@ -9,15 +9,17 @@ import redis.clients.jedis.JedisPool;
 import redis.clients.jedis.JedisPoolConfig;
 import redis.clients.jedis.params.SetParams;
 
-import java.util.List;
-
 /**
  * Redis {@link CacheProvider} 装配：jedis 直连，读 {@code redis.local.*}（application.yml）。
  *
  * <p>不再按 Profile 区分（决策：数据源与 Redis 统一直连，不再依赖内网 Redis 集群 SDK）。
  * 所有环境走同一个 Bean，差异只在 {@code redis.local.*} 配置值——
  * 部署到不同环境时直接改 application.yml 里对应的值即可，不依赖 Spring Profile 机制。
- * 仅实现本项目实际调用的 get/setex/del/eval 四个方法。
+ * 仅实现本项目实际调用的 get / setex / del / incr / incrBy / expire / set 七个方法。
+ *
+ * <p><b>⚠️ 已移除 eval / EVALSHA（2026-08-24）：内网 Redis 禁用 Lua 脚本</b>（内网实测结论）。
+ * 配额计数改为 INCR / INCRBY / EXPIRE 原生命令，详见 {@code RateLimitService}。
+ * 禁止在本类恢复 {@code eval} / {@code evalsha} / {@code scriptLoad} 任何一个方法。
  *
  * <p>池参数（{@code redis.local.pool.*}）externalize 到 application.yml（2026-08-18 压测优化后，
  * 便于生产环境直接改配置调整、不用重新编译）。{@code @Value} 里的默认值与 application.yml 当前写的
@@ -41,11 +43,15 @@ public class RedisConfig {
                 maxWaitMillis, timeBetweenEvictionRunsMillis, minEvictableIdleTimeMillis);
     }
 
-    static class JedisCacheProvider implements CacheProvider {
+    /**
+     * public 是为了让 {@code QuotaCounterTest} 能直接构造真实实现打真实 Redis 做回归——
+     * 本项目的测试不引入 Mock 框架，验证配额计数必须用真连接。
+     */
+    public static class JedisCacheProvider implements CacheProvider {
 
         private final JedisPool pool;
 
-        JedisCacheProvider(String host, int port, String password, int maxTotal, int maxIdle, int minIdle,
+        public JedisCacheProvider(String host, int port, String password, int maxTotal, int maxIdle, int minIdle,
                 int maxWaitMillis, long timeBetweenEvictionRunsMillis, long minEvictableIdleTimeMillis) {
             JedisPoolConfig config = new JedisPoolConfig();
             config.setMaxTotal(maxTotal);
@@ -92,58 +98,34 @@ public class RedisConfig {
         }
 
         /**
-         * 脚本正文 → SHA1 的本地缓存。
+         * INCR key。
          *
-         * <p>脚本都是类里的静态常量，数量是个位数，用 ConcurrentHashMap 存足够，
-         * 不需要淘汰策略。key 是脚本正文本身，天然去重。
-         */
-        private final java.util.concurrent.ConcurrentHashMap<String, String> scriptShaCache =
-                new java.util.concurrent.ConcurrentHashMap<>();
-
-        /**
-         * Lua 脚本执行，走 <b>EVALSHA + NOSCRIPT 回退</b>。
-         *
-         * <p>原实现直接 {@code jedis.eval(script, ...)}，也就是<b>每个请求都把整段脚本正文
-         * 完整传一遍</b>。配额检查脚本约 600 字节，而它在 {@code /v1/**} 热路径上每请求执行一次——
-         * 纯粹是白烧的带宽与 Redis 侧的解析开销。EVALSHA 只传 40 字节的 SHA1。
-         *
-         * <p>标准做法是先 {@code SCRIPT LOAD} 再 EVALSHA，这里用更省事也更健壮的等价写法：
-         * <b>本地算出 SHA1 直接 EVALSHA</b>，只有 Redis 说不认识（NOSCRIPT）时才回退到 EVAL
-         * 送一次正文——而 EVAL 本身会让 Redis 缓存住这段脚本，于是下一次 EVALSHA 就命中了。
-         * 这样"预热"是自动完成的，且天然覆盖 <b>Redis 重启 / SCRIPT FLUSH / 主从切换</b>
-         * 这些会让脚本缓存失效的场景：失效后第一个请求回退一次，之后继续走 EVALSHA。
-         *
-         * <p>SHA1 是 Redis 对脚本正文的标准寻址方式，本地算与服务端算结果一致，不存在歧义。
+         * <p><b>去 Lua 后配额计数的基石。</b>INCR 是单条原生命令，Redis 单线程执行，
+         * 天然原子——多实例并发下计数不会丢失，不需要分布式锁，也不需要 Lua 包一层。
+         * 原先用 Lua 的唯一理由是"INCR 与 EXPIRE 两步要原子"，见
+         * {@code RateLimitService} 里对这一点的重新论证（结论：本项目的 key 都带时间桶后缀，
+         * 两步非原子最多留下一个孤儿 key，不影响配额判定的正确性）。
          */
         @Override
-        public Object eval(String script, List<String> keys, List<String> args) {
-            String sha = scriptShaCache.computeIfAbsent(script, JedisCacheProvider::sha1Hex);
+        public Long incr(String key) {
             try (Jedis jedis = pool.getResource()) {
-                try {
-                    return jedis.evalsha(sha, keys, args);
-                } catch (redis.clients.jedis.exceptions.JedisNoScriptException e) {
-                    // Redis 侧没有这段脚本：首次调用、或 Redis 重启 / SCRIPT FLUSH 之后。
-                    // 用 EVAL 送一次正文，Redis 会顺带把它缓存起来，后续请求自动回到 EVALSHA。
-                    return jedis.eval(script, keys, args);
-                }
+                return jedis.incr(key);
             }
         }
 
-        /** 计算脚本的 SHA1（十六进制小写），与 Redis 内部的寻址方式一致 */
-        private static String sha1Hex(String script) {
-            try {
-                byte[] digest = java.security.MessageDigest.getInstance("SHA-1")
-                        .digest(script.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-                char[] hex = "0123456789abcdef".toCharArray();
-                char[] out = new char[digest.length * 2];
-                for (int i = 0; i < digest.length; i++) {
-                    int v = digest[i] & 0xFF;
-                    out[i * 2] = hex[v >>> 4];
-                    out[i * 2 + 1] = hex[v & 0x0F];
-                }
-                return new String(out);
-            } catch (java.security.NoSuchAlgorithmException e) {
-                throw new IllegalStateException("SHA-1 不可用，无法使用 EVALSHA", e);
+        /** INCRBY key increment，用于月度 Token 累加（由 AuditService 异步批量汇总后调用，不在转发热路径）。 */
+        @Override
+        public Long incrBy(String key, long increment) {
+            try (Jedis jedis = pool.getResource()) {
+                return jedis.incrBy(key, increment);
+            }
+        }
+
+        /** EXPIRE key seconds。只在计数器首次写入（INCR 返回 1）时调用，稳态下不产生额外往返。 */
+        @Override
+        public Long expire(String key, int seconds) {
+            try (Jedis jedis = pool.getResource()) {
+                return jedis.expire(key, seconds);
             }
         }
 

@@ -219,7 +219,7 @@ public class AuditService {
      *
      * <p>不在每条审计记录入队时单独累加，原因：
      * <ol>
-     *   <li>每次请求都写 Redis 会带来大量 EVAL 操作；</li>
+     *   <li>每次请求都写 Redis 会带来大量 INCRBY 往返（去 Lua 前是 EVAL，代价同理）；</li>
      *   <li>批量汇总后，同一 app+model 的多次请求只需一次 Redis INCRBY，I/O 显著减少。</li>
      * </ol>
      */

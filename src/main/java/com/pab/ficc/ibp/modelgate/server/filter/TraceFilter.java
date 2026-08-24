@@ -94,7 +94,7 @@ public class TraceFilter implements GlobalFilter, Ordered {
                         boolean stream = PayloadCaptureFilter.isStreamResponse(exchange);
 
                         // Token 解析**不受报文开关控制**，始终执行：
-                        // 月度配额（QuotaFilter.checkMonthlyTokens）与全部用量统计都依赖它。
+                        // 月度配额（RateLimitService.checkAllQuotas 的月 Token 层）与全部用量统计都依赖它。
                         // 此前这两个参数是硬编码的 0，导致审计表 token 恒为 0、月度配额从未生效过。
                         // 只取 usage 不拼正文，成本可忽略——2026-08-18 前 parseUsageOnly 名不副实，
                         // 实际会全量拼正文，压测证实是并发升高时拖慢事件循环线程的主因之一，已修复为

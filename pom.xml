@@ -113,7 +113,10 @@
 
         <!-- ===== Redis =====
              内网 com.pab.framework:redis 无法外网解析，已用精简源码桩 CacheProvider.java（仅
-             get/setex/del/eval）替代。合入内网时删桩并恢复：
+             get/setex/del/incr/incrBy/expire/set）替代。桩上只允许出现 Redis 原生命令的标准签名
+             （内网 CacheProvider 底层就是 jedis，照抄 jedis 签名），加内网没有的方法会导致合入时编译失败。
+             ⚠️ 内网 Redis 禁用 Lua，桩里已无 eval，禁止恢复（见 spec/05 §2.3、spec/11 §31）。
+             合入内网时删桩并恢复：
         <dependency>
             <groupId>com.pab.framework</groupId>
             <artifactId>redis</artifactId>

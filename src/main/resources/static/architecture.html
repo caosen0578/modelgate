@@ -129,7 +129,7 @@ svg{display:block}
 <rect x="435" y="322" width="128" height="50" rx="8" fill="#fff" stroke="#bbf7d0" stroke-width="1"/>
 <text x="450" y="342" font-size="18">⚡</text>
 <text x="492" y="342" font-size="11" fill="#1f2937" font-weight="600">Redis</text>
-<text x="492" y="358" font-size="9" fill="#64748b">Lua配额计数（非L2）</text>
+<text x="492" y="358" font-size="9" fill="#64748b">INCR配额计数（非L2）</text>
 
 <!-- 审计异步落库（无 Kafka） -->
 <rect x="295" y="384" width="128" height="50" rx="8" fill="#fff" stroke="#bbf7d0" stroke-width="1"/>
@@ -288,7 +288,7 @@ svg{display:block}
 <rect x="220" y="370" width="560" height="48" rx="9" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.5" filter="url(#sh2)"/>
 <text x="280" y="391" font-size="10" fill="#1e3a8a" font-weight="700">order=-160</text>
 <text x="360" y="391" font-size="12" fill="#1f2937" font-weight="700">RateLimitFilter</text>
-<text x="360" y="407" font-size="10" fill="#64748b">Redis Lua 令牌桶（每秒滑动窗口），key=app_id，QPS 来自授权配置或全局默认</text>
+<text x="360" y="407" font-size="10" fill="#64748b">Redis INCR 秒级滑动窗口（禁用 Lua），key=app_id，QPS 来自授权配置或全局默认</text>
 <text x="735" y="394" font-size="10" fill="#1e3a8a" text-anchor="end">→ 429</text>
 
 <line x1="500" y1="419" x2="500" y2="434" stroke="#6366f1" stroke-width="1.5" marker-end="url(#arr2)"/>

@@ -73,7 +73,7 @@
 <mxCell id="31" value="🗄️ &lt;b&gt;MySQL 8&lt;/b&gt;&lt;br&gt;模型/App/凭证/配置/审计" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#bbf7d0;fontSize=11;" vertex="1" parent="30">
   <mxGeometry x="20" y="45" width="285" height="65" as="geometry"/>
 </mxCell>
-<mxCell id="32" value="⚡ &lt;b&gt;Redis&lt;/b&gt;&lt;br&gt;Lua 配额计数器（非配置 L2）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#bbf7d0;fontSize=11;" vertex="1" parent="30">
+<mxCell id="32" value="⚡ &lt;b&gt;Redis&lt;/b&gt;&lt;br&gt;INCR 配额计数器（非配置 L2，禁用 Lua）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#bbf7d0;fontSize=11;" vertex="1" parent="30">
   <mxGeometry x="345" y="45" width="285" height="65" as="geometry"/>
 </mxCell>
 <mxCell id="33" value="📨 &lt;b&gt;AuditService&lt;/b&gt;&lt;br&gt;内存队列 → MySQL 批量落库" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#bbf7d0;fontSize=11;" vertex="1" parent="30">
@@ -193,7 +193,7 @@
 </mxCell>
 
 <!-- F5: RateLimitFilter -->
-<mxCell id="114" value="&lt;font color='#1e3a8a'&gt;&lt;b&gt;order = -160&lt;/b&gt;&lt;/font&gt;　　&lt;b&gt;RateLimitFilter&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:10px'&gt;Redis Lua 令牌桶（每秒滑动窗口），key = app_id，QPS 取自授权配置；超限返回 429 + Retry-After&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eff6ff;strokeColor=#bfdbfe;fontSize=12;align=left;spacingLeft=12;" vertex="1" parent="101">
+<mxCell id="114" value="&lt;font color='#1e3a8a'&gt;&lt;b&gt;order = -160&lt;/b&gt;&lt;/font&gt;　　&lt;b&gt;RateLimitFilter&lt;/b&gt;&lt;br&gt;&lt;font style='font-size:10px'&gt;Redis INCR 秒级滑动窗口（禁用 Lua），key = app_id，QPS 取自授权配置；超限返回 429 + Retry-After&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eff6ff;strokeColor=#bfdbfe;fontSize=12;align=left;spacingLeft=12;" vertex="1" parent="101">
   <mxGeometry x="25" y="362" width="810" height="62" as="geometry"/>
 </mxCell>
 <mxCell id="114r" value="→ 429" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;fontColor=#1e3a8a;fontStyle=1;fontSize=11;" vertex="1" parent="101">
@@ -244,7 +244,7 @@
 <mxCell id="131" value="&lt;b&gt;L1 Caffeine（进程内）&lt;/b&gt;&lt;br&gt;凭证 60s&lt;br&gt;授权 60s&lt;br&gt;路由 30s&lt;br&gt;访问规则 60s" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fef3c7;strokeColor=#fcd34d;fontSize=11;" vertex="1" parent="130">
   <mxGeometry x="10" y="38" width="170" height="100" as="geometry"/>
 </mxCell>
-<mxCell id="132" value="&lt;b&gt;Redis 配额状态（非 L2）&lt;/b&gt;&lt;br&gt;QPS / 日调用 / 月 Token&lt;br&gt;Lua 原子计数&lt;br&gt;&lt;font color='#ef4444'&gt;故障时配额 fail-open&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eff6ff;strokeColor=#bfdbfe;fontSize=11;" vertex="1" parent="130">
+<mxCell id="132" value="&lt;b&gt;Redis 配额状态（非 L2）&lt;/b&gt;&lt;br&gt;QPS / 日调用 / 月 Token&lt;br&gt;INCR 原子计数（禁用 Lua）&lt;br&gt;&lt;font color='#ef4444'&gt;故障时配额 fail-open&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eff6ff;strokeColor=#bfdbfe;fontSize=11;" vertex="1" parent="130">
   <mxGeometry x="10" y="150" width="170" height="110" as="geometry"/>
 </mxCell>
 <mxCell id="133" value="&lt;b&gt;主动失效策略&lt;/b&gt;&lt;br&gt;当前实例提交后立即逐出&lt;br&gt;其它实例按 30/60s TTL 收敛" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f0fdf4;strokeColor=#86efac;fontSize=11;" vertex="1" parent="130">

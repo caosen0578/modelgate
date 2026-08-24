@@ -9,7 +9,7 @@
 | 语言 / 框架 | Java / Spring Boot | 17 / 3.5.6 |
 | 网关 | Spring Cloud Gateway（WebFlux 响应式，坐标 `spring-cloud-starter-gateway-server-webflux`） | Spring Cloud 2025.0.0 |
 | 持久化 | MyBatis Plus（Lambda API，无 XML）+ MySQL 8（生产 TDSQL + Druid） | 3.5.7 (spring-boot3 starter) |
-| 缓存 / 配额 | Caffeine L1（配置读取，miss 回源 MySQL）+ Redis（Lua 配额计数；不是 L2） | — |
+| 缓存 / 配额 | Caffeine L1（配置读取，miss 回源 MySQL）+ Redis（INCR/INCRBY/EXPIRE 原生命令计数，**内网禁用 Lua**；不是 L2） | — |
 | 熔断 | Resilience4j | 2.2.0 |
 | 配置 | 配置文件（apollo-client 已移除） | — |
 | 监控 / 探针 | Actuator health/info + 行内容器 detection 三接口；**不接 Prometheus/Grafana**，可观测性走日志 | — |

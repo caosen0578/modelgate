@@ -102,8 +102,9 @@ public class QuotaFilter implements GlobalFilter, Ordered {
         }
         if (auth == null) return null;
 
-        // 三层配额一次 Redis 往返完成（原先是三次串行 eval）。
-        // 短路语义不变：QPS 超限就不再动日计数器，日超限不再动月计数器。
+        // 三层配额检查。短路语义：QPS 超限就不再动日计数器，日超限不再动月计数器。
+        // ⚠️ 2026-08-24 内网禁用 Lua 后，这里由「一次 eval 往返」变成「按层最多 3 次原生命令往返」，
+        // 代价体现在 Jedis 连接借还次数而非端到端延迟，详见 RateLimitService 类注释。
         int verdict = rateLimitService.checkAllQuotas(appId, modelId,
                 auth.getQpsLimit(), auth.getDailyLimit(), auth.getMonthlyTokens());
         return switch (verdict) {

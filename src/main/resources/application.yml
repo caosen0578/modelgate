@@ -251,7 +251,7 @@ modelgate:
   # 默认限流配置（每个 appId 的兜底 QPS，单独授权的 appId+modelId 可在 mg_app_model_auth 表覆盖此值）
   # codebuddy 场景：用户操作间隔长（编码思考约 3~5 分钟），单用户连续触发 QPS 不高
   rate-limit:
-    default-rate: 5    # 每秒最大请求数（滑动窗口，Redis Lua 原子执行）
+    default-rate: 5    # 每秒最大请求数（秒级滑动窗口，Redis INCR 原子计数；内网禁用 Lua，不再走 EVAL）
     # 【已移除】default-burst —— RateLimitService 用的是滑动窗口，算法里根本没有"突发容量"这个概念，
     # 该配置从未被读取；留着会让人以为调它能放宽瞬时并发。
 
