@@ -51,6 +51,19 @@ public enum ErrorCode {
     MODEL_NOT_FOUND(404, "Model not found"),
     MODEL_FIELD_MISSING(400, "Request body missing 'model' field"),
 
+    // ===== 通用服务（/svc/** 流量）=====
+    // 与模型侧一一对应但**分开定义**：两条链路的拒绝原因语义不同，
+    // 复用 MODEL_* 会让调用方拿到 "Model not found" 却在调一个服务接口，极其误导。
+    //
+    // ⚠️ HTTP 状态取自本枚举的 code，拒绝时**不要写死 403**——
+    // 模型侧踩过这个坑：写死 403 会造成「状态码 403、响应体 code:404」的自相矛盾，
+    // 调用方按 403 去查授权与白名单，实际原因却是路径里的服务编码写错了。
+    SERVICE_NOT_FOUND(404, "Service not found"),
+    SERVICE_CODE_MISSING(404, "Request path missing service code, expected /svc/{serviceCode}/**"),
+    SERVICE_DISABLED(503, "Service is disabled"),
+    SERVICE_NOT_AUTHORIZED(403, "App is not authorized to use this service"),
+    SERVICE_AUTH_EXPIRED(403, "Service authorization has expired"),
+
     // ===== 业务通用 =====
     INVALID_PARAMETER(10003, "Invalid request parameter"),
     RESOURCE_NOT_FOUND(10004, "Resource not found"),

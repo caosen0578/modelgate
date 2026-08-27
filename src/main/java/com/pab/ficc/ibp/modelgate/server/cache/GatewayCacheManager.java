@@ -7,7 +7,10 @@ import com.pab.ficc.ibp.modelgate.server.domain.entity.AppInfoEntity;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.AppModelAuthEntity;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.AccessRuleEntity;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.ModelCredentialEntity;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.AppServiceAuthEntity;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.ModelInstanceEntity;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.ServiceCredentialEntity;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.ServiceEntity;
 import com.pab.framework.redis.CacheProvider;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -111,6 +114,29 @@ public class GatewayCacheManager {
      * 但相比此前"完全不缓存"，确实少了一层独立于其它缓存之外的实时兜底，是本轮明确接受的取舍。
      */
     private final Cache<String, AppInfoEntity> appInfoCache = Caffeine.newBuilder()
+            .expireAfterWrite(60, TimeUnit.SECONDS)
+            .maximumSize(5_000)
+            .build();
+
+    // ===== 通用服务（/svc/** 流量）三个缓存 =====
+    // TTL 与模型侧同名缓存逐一对齐：服务配置/凭证 30s、授权 60s。
+    // 对齐不是巧合——两条链路的变更频率与"配置改完多久生效"的心理预期是一样的，
+    // 取不同值只会让运营记两套规则。写操作一律 evict，TTL 只是兜底。
+
+    /** 服务配置缓存：key = serviceId，TTL 30s。空结果（Optional.empty）同样缓存，防无效编码刷库 */
+    private final Cache<String, Optional<ServiceEntity>> serviceCache = Caffeine.newBuilder()
+            .expireAfterWrite(30, TimeUnit.SECONDS)
+            .maximumSize(1_000)
+            .build();
+
+    /** 服务上游凭证缓存（含已解密 SK 与 extraHeaders）：key = serviceId，TTL 30s */
+    private final Cache<String, Optional<ServiceCredentialEntity>> serviceCredentialCache = Caffeine.newBuilder()
+            .expireAfterWrite(30, TimeUnit.SECONDS)
+            .maximumSize(1_000)
+            .build();
+
+    /** 服务授权缓存：key = appId，TTL 60s，与 modelAuthCache 对齐 */
+    private final Cache<String, List<AppServiceAuthEntity>> serviceAuthCache = Caffeine.newBuilder()
             .expireAfterWrite(60, TimeUnit.SECONDS)
             .maximumSize(5_000)
             .build();
@@ -219,6 +245,52 @@ public class GatewayCacheManager {
     /** 失效某 App 的接入系统信息缓存（增/改/启/禁/删时调用，见 AppService.evictAppScopedCache）。 */
     public void evictAppInfoCache(String appId) {
         appInfoCache.invalidate(appId);
+    }
+
+    // ===== 通用服务缓存（仅 L1，不存 Redis） =====
+
+    /**
+     * 服务配置，原子加载（{@code Cache.get(key, mappingFunction)}）——理由同 {@link #getCredential}：
+     * Caffeine 对同一 key 的并发 miss 只执行一次 loader，避免缓存过期瞬间并发打 DB。
+     * 空结果本身也缓存，防止用不存在的服务编码反复刷库。
+     */
+    public Optional<ServiceEntity> getService(String serviceId, Supplier<Optional<ServiceEntity>> dbLoader) {
+        return serviceCache.get(serviceId, k -> dbLoader.get());
+    }
+
+    public void evictServiceCache(String serviceId) {
+        serviceCache.invalidate(serviceId);
+    }
+
+    /** 服务上游凭证（已解密），原子加载，理由同上。 */
+    public Optional<ServiceCredentialEntity> getServiceCredential(
+            String serviceId, Supplier<Optional<ServiceCredentialEntity>> dbLoader) {
+        return serviceCredentialCache.get(serviceId, k -> dbLoader.get());
+    }
+
+    public void evictServiceCredentialCache(String serviceId) {
+        serviceCredentialCache.invalidate(serviceId);
+    }
+
+    /** 某 App 的服务授权列表，原子加载，理由同上。 */
+    public List<AppServiceAuthEntity> getServiceAuths(
+            String appId, Supplier<List<AppServiceAuthEntity>> dbLoader) {
+        return serviceAuthCache.get(appId, k -> dbLoader.get());
+    }
+
+    public void evictServiceAuthCache(String appId) {
+        serviceAuthCache.invalidate(appId);
+    }
+
+    /**
+     * 全清服务授权缓存。
+     *
+     * <p>删除服务时用：授权缓存按 appId 组织，删一个服务会影响所有授权过它的 app，
+     * 要精确失效就得先查出这些 appId。删服务是低频管理操作，全清的代价只是
+     * 各 app 下次请求多查一次 DB，比多一次查询+多一处可能漏掉的逻辑划算。
+     */
+    public void evictAllServiceAuthCache() {
+        serviceAuthCache.invalidateAll();
     }
 
     // ===== Redis 工具方法 =====

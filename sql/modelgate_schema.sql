@@ -18,7 +18,7 @@
 --   mg_audit_log       高频追加表，不含任何基础字段，按 create_time 物理清理
 --   mg_gateway_config  含其余基础字段但**无 is_del**：config_key 即主键，软删后同 key
 --                      无法重建（详见该表上方说明），改为物理删除
--- 建表顺序遵循外键依赖：先父表（mg_model / mg_app）后子表。
+-- 建表顺序遵循外键依赖：先父表（mg_model / mg_app / mg_service）后子表。
 -- ============================================================================
 
 -- ============================================================================
@@ -215,8 +215,10 @@ CREATE TABLE IF NOT EXISTS mg_gateway_config (
 CREATE TABLE IF NOT EXISTS mg_request_payload (
     id              BIGINT       NOT NULL AUTO_INCREMENT        COMMENT '主键，自增',
     trace_id        VARCHAR(64)  NOT NULL                       COMMENT '全链路追踪 ID，关联 mg_audit_log.trace_id',
+    traffic_type    VARCHAR(16)  NOT NULL DEFAULT 'model'       COMMENT '流量类型：model=模型流量 service=通用服务流量',
     app_id          VARCHAR(64)                                 COMMENT '调用方 appId（冗余自审计，便于按接入系统直接筛选）',
     model_id        VARCHAR(64)                                 COMMENT '模型 ID（冗余自审计，便于按模型直接筛选）',
+    service_id      VARCHAR(64)                                 COMMENT '服务编码（traffic_type=service 时写入，model 流量为 NULL）',
     is_stream       TINYINT(1)   NOT NULL DEFAULT 0             COMMENT '是否流式响应：1=SSE 流式，0=一次性返回',
     request_headers MEDIUMTEXT                                  COMMENT '全部入站请求头 JSON 快照，包含 Authorization/Cookie/API Key/Token/JWT/签名等凭证字段；代码限制单值与总字符数',
     request_body    LONGTEXT                                    COMMENT '请求报文原文（JSON）。⚠️ 含用户原始 prompt，脱敏方案待定',
@@ -233,6 +235,7 @@ CREATE TABLE IF NOT EXISTS mg_request_payload (
     PRIMARY KEY (id),
     KEY idx_trace_id        (trace_id),
     KEY idx_app_model_time  (app_id, model_id, create_time),
+    KEY idx_service_time    (service_id, create_time),
     KEY idx_create_time     (create_time)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='模型调用请求/响应报文留档（按授权开关记录，保留期独立于审计）';
 
@@ -248,8 +251,10 @@ ON DUPLICATE KEY UPDATE config_key = config_key;
 CREATE TABLE IF NOT EXISTS mg_audit_log (
     id             BIGINT        NOT NULL AUTO_INCREMENT          COMMENT '主键，自增',
     trace_id       VARCHAR(64)   NOT NULL                        COMMENT '全链路追踪 ID',
+    traffic_type   VARCHAR(16)   NOT NULL DEFAULT 'model'       COMMENT '流量类型：model=模型流量 service=通用服务流量',
     app_id         VARCHAR(64)                                   COMMENT '调用方 appId（鉴权通过后写入）',
     model_id       VARCHAR(64)                                   COMMENT '请求的模型 ID',
+    service_id     VARCHAR(64)                                   COMMENT '服务编码（traffic_type=service 时写入，model 流量为 NULL）',
     cred_type      VARCHAR(32)                                   COMMENT '凭证类型：api_key|ak_sk',
     client_ip      VARCHAR(64)                                   COMMENT '客户端 IP（X-Forwarded-For 优先）',
     caller_app_id  VARCHAR(64)                                   COMMENT '调用方系统标识（X-App-Id 请求头声明，非鉴权字段）',
@@ -265,5 +270,95 @@ CREATE TABLE IF NOT EXISTS mg_audit_log (
     KEY idx_trace_id    (trace_id),
     KEY idx_app_id      (app_id),
     KEY idx_model_id    (model_id),
+    KEY idx_service_id  (service_id),
     KEY idx_create_time (create_time)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='调用审计日志';
+
+-- ============================================================================
+-- 9. mg_service —— 通用服务注册（/svc/{service_id}/** 流量的上游目标）
+--    与 mg_model 平级但刻意分表：模型有 api_spec/default_params/force_params/param_mapping
+--    一整套专属字段，服务一个都用不上；两者路由键也本质不同（模型在 body 的 model 字段，
+--    服务在 path），合表迟早要靠 if(targetType) 分叉。详见 spec/modelgate/12 §1.1。
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS mg_service (
+    id             BIGINT       NOT NULL AUTO_INCREMENT           COMMENT '主键，自增',
+    -- 对外路径就是 /svc/{service_id}/**，因此它是 URL 的一部分：一经创建不可修改
+    -- （改名等于换 URL，接入方必须同步改代码，那是"新建+下线"而不是"改名"）。
+    -- 与 mg_model.model_id 的差别正在于此，后者是协议字段、支持 ON UPDATE CASCADE 改名。
+    service_id     VARCHAR(64)  NOT NULL                          COMMENT '服务编码（业务唯一键），对外路径 /svc/{service_id}/**；格式 ^[a-z0-9][a-z0-9-]{1,31}$，创建后不可修改',
+    service_name   VARCHAR(128) NOT NULL                          COMMENT '服务展示名称',
+    owner_system   VARCHAR(128)                                   COMMENT '所属业务系统中文名（与 mg_app.system_name 同口径，仅展示）',
+    upstream_url   VARCHAR(512) NOT NULL                          COMMENT '上游地址（协议+域名+端口[+固定前缀路径]，末尾斜杠由代码规范化去掉）',
+    strip_prefix   TINYINT(1)   NOT NULL DEFAULT 1                COMMENT '是否剥掉 /svc/{service_id} 再转发：1=剥掉（默认）0=完整路径原样转发',
+    -- 每服务独立超时，通过 Route metadata 的 response-timeout 下发给 NettyRoutingFilter。
+    -- 注意该值的真实语义是「等上游吐出响应头的最长时间」，管不到响应体（SSE 帧不受它约束）——
+    -- 与 mg_model.timeout_ms 只用于连通性测试不同，本字段是真正生效的。详见 12 §11.1。
+    timeout_ms     INT          NOT NULL DEFAULT 0                COMMENT '单请求超时（毫秒），0=沿用全局 httpclient.response-timeout',
+    sse            TINYINT(1)   NOT NULL DEFAULT 0                COMMENT '是否 SSE 服务：1=是（影响管理面展示与熔断配置选择，不影响转发本身）',
+    -- 报文开关放在服务本身而非授权行：模型侧放授权行是因为不同接入系统合规要求不同；
+    -- 服务侧的诉求是「每个接口录入时决定记不记」，粒度在接口本身，放这里更贴合且少一次查询。
+    payload_log_enabled TINYINT(1) NOT NULL DEFAULT 0             COMMENT '请求/响应报文记录开关：1=记录到 mg_request_payload，0=不记录（默认关闭）',
+    description    VARCHAR(512)                                   COMMENT '服务描述/备注',
+    enabled        TINYINT(1)   NOT NULL DEFAULT 1                COMMENT '是否启用：1=启用 0=禁用（禁用后请求该服务返回 503）',
+    creater        VARCHAR(50)  CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL COMMENT '创建人',
+    create_time    DATETIME     DEFAULT CURRENT_TIMESTAMP         COMMENT '创建时间',
+    updater        VARCHAR(50)  CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL COMMENT '修改人',
+    update_time    DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '修改时间',
+    is_del         VARCHAR(50)  CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT '0' COMMENT '删除标志：1=已删除 0=未删除（逻辑删除）',
+    creater_um     VARCHAR(100) DEFAULT NULL                      COMMENT '创建人 UM 账号',
+    updater_um     VARCHAR(100) DEFAULT NULL                      COMMENT '更新人 UM 账号',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_service_id (service_id, is_del)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='通用服务注册（/svc/** 流量的上游目标）';
+
+-- ============================================================================
+-- 10. mg_service_credential —— 服务上游鉴权凭证（与 mg_service 一对一）
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS mg_service_credential (
+    id            BIGINT       NOT NULL AUTO_INCREMENT            COMMENT '主键，自增',
+    service_id    VARCHAR(64)  NOT NULL                          COMMENT '关联 mg_service.service_id（一对一）',
+    auth_type     VARCHAR(32)  NOT NULL DEFAULT 'none'           COMMENT '上游鉴权类型：none=不注入 | api_key=Authorization Bearer | ak_sk=X-Access-Key/X-Secret-Key | custom_header=仅注入 extra_headers',
+    access_key    VARCHAR(256)                                   COMMENT 'AK（明文）；auth_type=custom_header/none 时不使用',
+    secret_key    VARCHAR(512)                                   COMMENT 'SK/密钥，加密存储（AES-256-GCM，CryptoService）',
+    -- 上游要求的固定自定义头，如 {"X-Tenant":"ficc","X-Channel":"gateway"}。
+    -- 整体加密：这些头里经常混着签名密钥、租户令牌一类的敏感值，不能明文落库。
+    extra_headers TEXT                                           COMMENT '附加上游请求头（JSON 对象，加密存储）',
+    creater       VARCHAR(50)  CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL COMMENT '创建人',
+    create_time   DATETIME     DEFAULT CURRENT_TIMESTAMP         COMMENT '创建时间',
+    updater       VARCHAR(50)  CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL COMMENT '修改人',
+    update_time   DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '修改时间',
+    is_del        VARCHAR(50)  CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT '0' COMMENT '删除标志：1=已删除 0=未删除（逻辑删除）',
+    creater_um    VARCHAR(100) DEFAULT NULL                      COMMENT '创建人 UM 账号',
+    updater_um    VARCHAR(100) DEFAULT NULL                      COMMENT '更新人 UM 账号',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_service_id (service_id, is_del),
+    CONSTRAINT fk_svccred_service FOREIGN KEY (service_id) REFERENCES mg_service (service_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='服务上游鉴权凭证';
+
+-- ============================================================================
+-- 11. mg_app_service_auth —— 接入系统对通用服务的调用授权
+--     唯一键含 is_del：软删行不占用 (app_id, service_id)，支持撤销后重新授权
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS mg_app_service_auth (
+    id             BIGINT      NOT NULL AUTO_INCREMENT            COMMENT '主键，自增',
+    app_id         VARCHAR(64) NOT NULL                          COMMENT '关联 mg_app.app_id',
+    service_id     VARCHAR(64) NOT NULL                          COMMENT '关联 mg_service.service_id',
+    enabled        TINYINT(1)  NOT NULL DEFAULT 1                COMMENT '是否启用：1=启用 0=禁用（禁用后该系统访问该服务返回 403）',
+    qps_limit      INT         NOT NULL DEFAULT 0                COMMENT '每秒请求数上限，0=不限',
+    daily_limit    INT         NOT NULL DEFAULT 0                COMMENT '每日请求数上限，0=不限',
+    -- 刻意**没有** monthly_tokens：服务不产生 Token，该维度对它无意义。
+    -- RateLimitService.checkAllQuotas 的月度参数传 0，方法内 ≤0 直接跳过、不发 Redis 命令。
+    expires_at     DATETIME                                      COMMENT '授权过期时间，NULL=永久授权（过期等同禁用）',
+    creater        VARCHAR(50)  CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL COMMENT '创建人',
+    create_time    DATETIME     DEFAULT CURRENT_TIMESTAMP        COMMENT '创建时间',
+    updater        VARCHAR(50)  CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL COMMENT '修改人',
+    update_time    DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '修改时间',
+    is_del         VARCHAR(50)  CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT '0' COMMENT '删除标志：1=已删除 0=未删除（逻辑删除）',
+    creater_um     VARCHAR(100) DEFAULT NULL                     COMMENT '创建人 UM 账号',
+    updater_um     VARCHAR(100) DEFAULT NULL                     COMMENT '更新人 UM 账号',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_app_service (app_id, service_id, is_del),
+    KEY idx_service_id (service_id),
+    CONSTRAINT fk_svcauth_app     FOREIGN KEY (app_id)     REFERENCES mg_app (app_id),
+    CONSTRAINT fk_svcauth_service FOREIGN KEY (service_id) REFERENCES mg_service (service_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='接入系统对通用服务的调用授权';

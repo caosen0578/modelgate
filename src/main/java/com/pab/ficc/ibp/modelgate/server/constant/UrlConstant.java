@@ -70,6 +70,10 @@ public interface UrlConstant {
 
     // ===== Controller 基础路径（class-level @RequestMapping）=====
     String MG_MODELS      = BASE + "/models";
+    /** 服务管理（通用服务注册），与 MG_MODELS 平级 */
+    String MG_SERVICES    = BASE + "/services";
+    /** 服务授权（接入系统 × 服务），与 MG_AUTH 平级 */
+    String MG_SERVICE_AUTH = BASE + "/service-auth";
     String MG_APPS        = BASE + "/apps";
     String MG_CREDENTIALS = BASE + "/credentials";
     String MG_AUTH        = BASE + "/auth";
