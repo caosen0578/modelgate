@@ -267,7 +267,6 @@ public class ModelRouteFilter implements GlobalFilter, Ordered {
 
             // 用 ServerHttpRequestDecorator 将新的 body 和 headers 重新注入请求链
             // 必须通过 decorator 而非直接修改，因为 ServerHttpRequest 是不可变对象
-            DataBuffer newBuffer = exchange.getResponse().bufferFactory().wrap(info.body());
             ServerHttpRequest mutatedRequest = new ServerHttpRequestDecorator(exchange.getRequest()) {
                 @Override
                 public URI getURI() {
@@ -281,9 +280,26 @@ public class ModelRouteFilter implements GlobalFilter, Ordered {
                     return buildUpstreamHeaders(super.getHeaders(), info.headers(), info.body().length);
                 }
 
+                /**
+                 * ⚠️ {@code DataBuffer} 必须在这里**每次新建**，不能提到方法外只 wrap 一次。
+                 *
+                 * <p>原写法把 {@code wrap(info.body())} 放在匿名类之外，本方法每次都返回
+                 * {@code Flux.just(同一个实例)}。单次转发没问题，但只要请求体被**重新订阅**
+                 * （Retry 过滤器重试、或将来任何 resubscribe 的链路），第二次拿到的就是一个
+                 * 已被 Netty {@code release()}、读指针也推到末尾的废 ByteBuf ——
+                 * 结果是 {@code IllegalReferenceCountException} 或发出一个空 body 的上游请求，
+                 * 把一个本可诊断的 502/504 变成莫名其妙的 500/400。
+                 *
+                 * <p>{@code wrap} 只是包一层、不复制字节数组，重复调用的代价可以忽略。
+                 * 同仓库的 {@code BodyParseFilter} 与 Spring 自己的
+                 * {@code ServerWebExchangeUtils}（每次 {@code retainedSlice()}）都是这个语义。
+                 *
+                 * <p>注：model-route 上的 Retry 已于 2026-08-26 删除，当前没有重订阅的调用方，
+                 * 但这条不能依赖"外部不重试"来成立——留着就是给后来人埋雷。
+                 */
                 @Override
                 public Flux<DataBuffer> getBody() {
-                    return Flux.just(newBuffer);
+                    return Flux.just(exchange.getResponse().bufferFactory().wrap(info.body()));
                 }
             };
 

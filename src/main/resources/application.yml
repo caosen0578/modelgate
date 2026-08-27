@@ -42,14 +42,52 @@ spring:
   application:
     name: modelgate
   lifecycle:
-    # 优雅停机的等待上限。取 30s 而不是更长：这段时间是"平台已经发了 SIGTERM 之后"的等待，
-    # 正常情况下平台先调 /actuator/detection/shutdown 摘流量，到这一步在途请求已经很少。
-    # 设得太长会拖慢每次发版，太短则会切断在途的长请求，30s 是两者的折中。
+    # 优雅停机的等待上限：平台发出 SIGTERM **之后**还愿意等在途请求多久。
+    #
+    # 【为什么从 30s 提到 600s（2026-08-26）】
+    #   旧值 30s 的前提是"到这一步在途请求已经很少"，但本网关的在途请求是 LLM 调用：
+    #   常规 30~180s，复杂问题实测可跑满 20 分钟。30s 到期后 Spring **只打一行 WARN 就继续往下走**，
+    #   随后 NettyWebServer.stop() 关闭全部连接 —— 一条已跑 10 分钟、还要再跑 10 分钟的 SSE
+    #   会被直接切断。而且响应头 10 分钟前就发出去了，**调用方看不到任何错误码**，
+    #   只表现为"回答突然截断、等不到 [DONE]"，上游那次推理的算力也白烧。
+    #
+    #   取 600s 而不是覆盖最长请求的 1260s：600s 已能覆盖绝大多数请求，
+    #   再长会让每次发版都可能干等 20 分钟。剩下的长尾靠**摘流量窗口**解决 ——
+    #   平台应在调 /actuator/detection/shutdown 之后等一段时间再发 SIGTERM，
+    #   排空窗口越长，这个硬上限越不会被撞上。
+    #
+    # ⚠️ 两个必须同时满足的外部前提，否则改这里等于没改：
+    #   1) 容器平台的 terminationGracePeriodSeconds（K8s 默认 30s）必须 ≥ 600s，
+    #      否则 Spring 还没等完就被 SIGKILL。**需在平台侧确认，不在本仓库。**
+    #   2) 平台要先摘流量再发 SIGTERM，见下方 modelgate.detection.available-always-200 的说明。
+    #
     # 注意这与 AuditService/PayloadService 的 15s 刷盘时限是两回事，后者在此之内完成。
-    timeout-per-shutdown-phase: 30s
+    timeout-per-shutdown-phase: 600s
   # ===== Spring Cloud Gateway 路由 =====
-  # 超时策略：response-timeout 570s < SLB 600s，Gateway 先超时返回 504；SSE 场景开启 tcp-keepalive
-  # F5 idle timeout 待运维确认，见 TODO：排查 F5 idle timeout
+  # 【超时策略（2026-08-26 核实后重写，旧描述是错的）】
+  #   旧注释写的是"response-timeout 570s < SLB 600s，Gateway 先超时返回 504"，
+  #   把它当成了**整个请求**的超时。核实字节码后确认并非如此：
+  #
+  #   · HttpClientFactory 对 responseTimeout 的引用数是 0 —— Spring Cloud Gateway
+  #     **从不调用** HttpClient.responseTimeout(...)，reactor-netty 那个
+  #     reactor.left.responseTimeoutHandler（本质是 netty 的 ReadTimeoutHandler）**从未被装配**。
+  #   · response-timeout 只以 NettyRoutingFilter 里一层 Flux.timeout 的形式存在，
+  #     而它包住的 Flux 在**收到响应头**时就发射唯一元素并 complete，定时器随即取消。
+  #
+  #   ⇒ 它的真实语义是「等上游吐出响应头的最长时间」，**管不到响应体**。
+  #     · 流式（stream:true）：响应头几秒就到，此后 SSE 帧跑多久都不受限 —— 20 分钟没问题。
+  #     · 非流式（stream:false）：上游生成完才吐响应头，**这个值就是它的实际超时**。
+  #
+  #   取 1800s（30 分钟）的理由：实测复杂问题可跑满 20 分钟才返回 [DONE]，
+  #   留 1.5 倍余量。不取 -1（关闭）是为了保留最后一道兜底 —— 上游若彻底假死、
+  #   永不吐响应头，关闭后连接会一直挂着，直到操作系统 TCP keepalive（Linux 默认约 2 小时）
+  #   才释放，期间白占连接池槽位。
+  #
+  #   ⚠️ **单靠这里改不够**：网关之外的 F5 / SLB 若仍是 600s idle timeout，
+  #      非流式的 20 分钟请求会在第 600 秒被网络设备砍断，网关这一侧无从规避。
+  #      TODO（运维）：确认 F5 / SLB 的 idle timeout 实际值并同步放宽。
+  #
+  #   SSE 场景开启 tcp-keepalive。
   #
   # 前缀说明：Spring Cloud Gateway 4.2 起，WebFlux 版配置迁移到
   #   spring.cloud.gateway.server.webflux.*（旧的 spring.cloud.gateway.* 仅作兼容别名保留）。
@@ -70,17 +108,26 @@ spring:
                 - name: RequestSize
                   args:
                     maxSize: 10MB
-                # 上游暂时不可用（502/503）时重试 1 次，LLM 场景不对超时重试（避免重复计费/重复推理）
-                - name: Retry
-                  args:
-                    retries: 1
-                    statuses: BAD_GATEWAY,SERVICE_UNAVAILABLE
-                    methods: POST
-                    backoff:
-                      firstBackoff: 1s
-                      maxBackoff: 3s
+                # 【已删除 Retry 过滤器（2026-08-26）——不要再加回来】
+                #   原配置只写了 statuses 和 methods，以为"只对 502/503 重试、不对超时重试"。
+                #   实际 RetryConfig 还有两个**未被覆盖的默认值**（构造器字节码可见）：
+                #     series     = [HttpStatus.Series.SERVER_ERROR]        → 任意 5xx 都重试
+                #     exceptions = [IOException, gateway TimeoutException] → **超时也重试**
+                #   于是非流式长请求在 response-timeout 触发后会退避 1 秒、
+                #   **让上游从头再跑一遍几十秒到 20 分钟的推理**，与原注释的意图完全相反，
+                #   而且重复计费、重复占用 NPU。
+                #
+                #   更糟的是这次重试**必定失败**：ModelRouteFilter 的
+                #   `DataBuffer newBuffer = ...wrap(info.body())` 曾定义在匿名 decorator 之外，
+                #   getBody() 每次返回同一个实例；首次转发后 Netty 已 release 该 ByteBuf、
+                #   读指针也到底，第二次 send 拿到的是废 buffer ——
+                #   结果是把一个可诊断的 504 变成莫名其妙的 500。（该复用问题已一并修复。）
+                #
+                #   结论：LLM 长请求场景重试的收益接近零，代价却是重复计费 + 掩盖真实错误。
+                #   若将来确有幂等的短接口需要重试，请按路由单独加，并**显式**写上
+                #   `series:` 与 `exceptions:` 置空，不要依赖默认值。
           httpclient:
-            response-timeout: 570s
+            response-timeout: 1800s
             connect-timeout: 5000
             tcp-keepalive: true
             pool:
@@ -236,6 +283,19 @@ modelgate:
     #   false：恢复标准语义，未就绪/退出中返回 503，平台据此自动停止派发新流量。
     # 确认平台"流量检查失败只摘流量、不重启"之后，改成 false 更好——
     # 恒 200 的代价是优雅退出期间平台不会主动停发新流量，只能靠平台自己的摘流量流程。
+    #
+    # 【2026-08-26：这一项是优雅停机方案 B 的另一半，已决定要改，但**卡在前提未确认**】
+    #   上面 spring.lifecycle.timeout-per-shutdown-phase 已从 30s 提到 600s。
+    #   方案 B 的完整形态还需要本项改为 false，这样 draining 期间流量检查返回 503、
+    #   平台自动停发新流量，要排空的在途请求就会少很多，600s 的硬上限也更不容易撞上。
+    #
+    #   **但在确认平台行为之前不能翻转**：若平台把"流量检查失败"当成不健康直接重启容器，
+    #   改成 false 会在优雅退出期间、以及启动稍慢时触发容器重启循环 ——
+    #   那正是本项当初取 true 要避免的问题，后果比现在严重得多。
+    #
+    #   TODO（运维）：确认行内容器平台对 /actuator/detection/available 返回非 200 的处理方式。
+    #     · 只摘流量、不重启 → 把下面这行改成 false，方案 B 完成
+    #     · 会重启容器       → 保持 true，改为要求平台在调 /shutdown 之后等 N 分钟再发 SIGTERM
     available-always-200: true
 
   payload-log:
