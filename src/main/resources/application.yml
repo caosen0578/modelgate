@@ -126,6 +126,25 @@ spring:
                 #   结论：LLM 长请求场景重试的收益接近零，代价却是重复计费 + 掩盖真实错误。
                 #   若将来确有幂等的短接口需要重试，请按路由单独加，并**显式**写上
                 #   `series:` 与 `exceptions:` 置空，不要依赖默认值。
+            # ===== 通用服务流量（/svc/{服务编码}/**）=====
+            # 与 model-route 并列的第二条业务路由。实际转发目标由 ServiceRouteFilter(-140)
+            # 按 mg_service.upstream_url 逐请求覆盖，下面的 uri 只是 Gateway 要求"路由必须有 uri"
+            # 的占位地址（与 model-route 同理）。
+            - id: service-route
+              uri: http://127.0.0.1:9090
+              predicates:
+                - Path=/svc/**
+              filters:
+                - PreserveHostHeader
+                - name: RequestSize
+                  args:
+                    maxSize: 10MB
+                # 【刻意不配 Retry】理由与 model-route 不同，且更强：
+                #   模型侧重试最多是"重复计费 + 重复推理"，通用服务的 POST 是**业务写操作**，
+                #   重试可能造成重复下单、重复提交。将来某个服务确实幂等且需要重试时，
+                #   请按服务单独下发，不要在这里对所有服务一刀切；
+                #   且必须显式写上 series: 与 exceptions: 置空，不能依赖默认值
+                #   （默认 series=[SERVER_ERROR]、exceptions=[IOException, gateway TimeoutException]）。
           httpclient:
             response-timeout: 1800s
             connect-timeout: 5000
@@ -206,6 +225,25 @@ management:
 # 状态流转：CLOSED（正常）→ OPEN（熔断）→ HALF_OPEN（探测）→ CLOSED（恢复）
 resilience4j:
   circuitbreaker:
+    # ===== 通用服务（/svc/**）的熔断配置模板 =====
+    # 服务侧按 serviceId 各自一个熔断器实例（名字 svc:xxx），全部取这套配置。
+    # CircuitBreakerFilter.resolveCircuitBreaker 用 registry.circuitBreaker(name, "serviceUpstream") 取。
+    #
+    # 与 modelUpstream 分开而不是共用：模型上游是 LLM，慢是常态；服务上游是普通业务系统，
+    # 失败率的含义也不同。但**慢调用熔断同样关闭**——理由完全一样，见 modelUpstream 那段：
+    # 服务侧同样有 SSE 长流（harness / agent 都是），而 CircuitBreakerFilter 量的是
+    # 响应体写完的时长，一条正常的长流会被记成一次超长调用。
+    configs:
+      serviceUpstream:
+        slidingWindowType: COUNT_BASED
+        slidingWindowSize: 20
+        failureRateThreshold: 50
+        slowCallRateThreshold: 100
+        slowCallDurationThreshold: 24h
+        # 比模型侧短：普通业务系统恢复通常比 LLM 快，30s 后就可以探一次
+        waitDurationInOpenState: 30s
+        permittedNumberOfCallsInHalfOpenState: 5
+        automaticTransitionFromOpenToHalfOpenEnabled: true
     instances:
       modelUpstream:
         # 滑动窗口类型：COUNT_BASED=按请求次数统计（取最近 N 次）

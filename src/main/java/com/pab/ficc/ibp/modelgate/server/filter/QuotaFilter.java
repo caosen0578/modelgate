@@ -6,7 +6,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pab.ficc.ibp.modelgate.server.common.ErrorCode;
 import com.pab.ficc.ibp.modelgate.server.common.Result;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.AppModelAuthEntity;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.AppServiceAuthEntity;
 import com.pab.ficc.ibp.modelgate.server.service.ModelAuthService;
+import com.pab.ficc.ibp.modelgate.server.service.ServiceAuthService;
 import com.pab.ficc.ibp.modelgate.server.service.RateLimitService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -40,6 +42,7 @@ public class QuotaFilter implements GlobalFilter, Ordered {
 
     private final RateLimitService rateLimitService;
     private final ModelAuthService modelAuthService;
+    private final ServiceAuthService serviceAuthService;
     private final ObjectMapper objectMapper;
 
     @Override
@@ -58,6 +61,21 @@ public class QuotaFilter implements GlobalFilter, Ordered {
         String appId = exchange.getRequest().getHeaders().getFirst("X-Mg-App");
         if (appId == null) {
             return chain.filter(exchange);
+        }
+
+        // 服务流量走 app × service 配额；模型流量走 app × model。两者 Redis key 前缀不同，
+        // 详见 checkQuota / checkServiceQuota。
+        if (TrafficType.resolve(exchange) == TrafficType.SERVICE) {
+            String serviceId = exchange.getAttribute(ServiceAuthFilter.ATTR_SERVICE_ID);
+            return Mono.fromCallable(() -> Optional.ofNullable(checkServiceQuota(appId, serviceId)))
+                    .subscribeOn(Schedulers.boundedElastic())
+                    .flatMap(result -> {
+                        ErrorCode error = result.orElse(null);
+                        if (error == null) return chain.filter(exchange);
+                        log.info("[QuotaFilter] 拒绝: appId={}, serviceId={}, reason={}",
+                                appId, serviceId, error.getMessage());
+                        return reject(exchange, error);
+                    });
         }
 
         String modelId = exchange.getAttribute("mg.modelId");
@@ -112,6 +130,49 @@ public class QuotaFilter implements GlobalFilter, Ordered {
             case RateLimitService.QUOTA_QPS_EXCEEDED -> ErrorCode.QUOTA_EXCEEDED_QPS;
             case RateLimitService.QUOTA_DAILY_EXCEEDED -> ErrorCode.QUOTA_EXCEEDED_DAILY;
             case RateLimitService.QUOTA_MONTHLY_EXCEEDED -> ErrorCode.QUOTA_EXCEEDED_MONTHLY;
+            default -> null;
+        };
+    }
+
+    /**
+     * 服务配额：QPS + 日调用量两层，<b>没有月 Token</b>——服务不产生 Token，该维度对它无意义。
+     *
+     * <p>月度参数传 0，{@code checkAllQuotas} 内 {@code ≤0} 直接跳过、<b>不发 Redis 命令</b>。
+     * 所以服务流量稳态下最多 2 次 Redis 往返，比模型侧还少一次。
+     *
+     * <p>target 传的是 {@code "svc:" + serviceId} 而不是裸 serviceId：Redis key 形如
+     * {@code rl:quota:qps:{appId}:{target}:{秒}}，若服务编码与某个 modelId 同名，
+     * 两条链路的计数就会串到同一个 key 上——一边的流量会吃掉另一边的配额，
+     * 而且这种串台在监控上完全看不出来。加前缀是一次性的、零成本的隔离。
+     */
+    private ErrorCode checkServiceQuota(String appId, String serviceId) {
+        if (serviceId == null) {
+            // ServiceAuthFilter(-170) 没解析出编码就已经拒了；到这里为 null 说明链路异常，
+            // 退回全局兜底限流而不是直接放行
+            if (!rateLimitService.isAllowed("app:" + appId, rateLimitService.getDefaultRate())) {
+                return ErrorCode.QUOTA_EXCEEDED_QPS;
+            }
+            return null;
+        }
+
+        // 普通 for 而非 stream，理由同 checkQuota：每请求都走的热路径，授权条目通常个位数
+        List<AppServiceAuthEntity> auths = serviceAuthService.listByAppIdCached(appId);
+        AppServiceAuthEntity auth = null;
+        for (AppServiceAuthEntity a : auths) {
+            if (serviceId.equals(a.getServiceId())) {
+                auth = a;
+                break;
+            }
+        }
+        // 授权不存在时不在这里拒——ServiceAuthFilter(-170) 已经拦过了，
+        // 走到这里说明链路被改动过，保持与模型侧同样的"不越权拒绝"语义
+        if (auth == null) return null;
+
+        int verdict = rateLimitService.checkAllQuotas(appId, "svc:" + serviceId,
+                auth.getQpsLimit(), auth.getDailyLimit(), 0L);
+        return switch (verdict) {
+            case RateLimitService.QUOTA_QPS_EXCEEDED -> ErrorCode.QUOTA_EXCEEDED_QPS;
+            case RateLimitService.QUOTA_DAILY_EXCEEDED -> ErrorCode.QUOTA_EXCEEDED_DAILY;
             default -> null;
         };
     }

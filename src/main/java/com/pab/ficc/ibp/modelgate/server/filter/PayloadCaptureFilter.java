@@ -4,6 +4,7 @@ import com.pab.ficc.ibp.modelgate.server.common.TrafficType;
 import lombok.extern.slf4j.Slf4j;
 import org.reactivestreams.Publisher;
 import com.pab.ficc.ibp.modelgate.server.service.ModelAuthService;
+import com.pab.ficc.ibp.modelgate.server.service.ServiceRegistryService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
@@ -54,6 +55,7 @@ public class PayloadCaptureFilter implements GlobalFilter, Ordered {
 
     /** 判断某个 app×model 是否开了报文记录，决定本次是全量缓冲还是只留尾部 */
     private final ModelAuthService modelAuthService;
+    private final ServiceRegistryService serviceRegistryService;
 
     private static final int ORDER = -145;
 
@@ -176,6 +178,25 @@ public class PayloadCaptureFilter implements GlobalFilter, Ordered {
         if (!payloadLogEnabled) {
             return ResponseCapture.tailOnly();
         }
+        // 服务流量的开关在**服务本身**（mg_service.payload_log_enabled），不在授权行上——
+        // 与模型侧不同。模型侧放授权行是因为不同接入系统合规要求不同；服务侧的诉求是
+        // "每个接口录入时决定记不记"，粒度在接口本身，放服务表更贴合且少一次查询。
+        if (TrafficType.resolve(exchange) == TrafficType.SERVICE) {
+            String serviceId = exchange.getAttribute(ServiceAuthFilter.ATTR_SERVICE_ID);
+            if (serviceId == null) {
+                return ResponseCapture.tailOnly();
+            }
+            try {
+                return serviceRegistryService.getServiceCached(serviceId)
+                        .filter(s -> Boolean.TRUE.equals(s.getPayloadLogEnabled()))
+                        .map(s -> ResponseCapture.full())
+                        .orElseGet(ResponseCapture::tailOnly);
+            } catch (Exception e) {
+                log.debug("[PayloadCapture] 查询服务报文开关失败，按只留尾部处理: {}", e.getMessage());
+                return ResponseCapture.tailOnly();
+            }
+        }
+
         String appId = exchange.getAttribute(CredentialAuthFilter.ATTR_APP_ID);
         String modelId = exchange.getAttribute("mg.modelId");
         if (appId == null || modelId == null) {

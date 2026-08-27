@@ -76,6 +76,7 @@ public class PayloadService {
      * <p>入队的是<b>原始字节</b>而非解析结果——解析要留到消费端做，这是不阻塞的关键。
      */
     private record PendingPayload(String traceId, String appId, String modelId,
+                                  String trafficType, String serviceId,
                                   Map<String, String> requestHeaders,
                                   byte[] requestBytes, byte[] responseBytes,
                                   boolean stream, boolean truncated, Integer upstreamStatus,
@@ -101,12 +102,23 @@ public class PayloadService {
                        HttpHeaders requestHeaders,
                        byte[] requestBytes, byte[] responseBytes,
                        boolean stream, boolean truncated, Integer upstreamStatus) {
+        submit(traceId, appId, modelId, "model", null, requestHeaders,
+                requestBytes, responseBytes, stream, truncated, upstreamStatus);
+    }
+
+    /** 带流量类型的重载；服务流量传 {@code ("service", serviceId)}，modelId 传 null。 */
+    public void submit(String traceId, String appId, String modelId,
+                       String trafficType, String serviceId,
+                       HttpHeaders requestHeaders,
+                       byte[] requestBytes, byte[] responseBytes,
+                       boolean stream, boolean truncated, Integer upstreamStatus) {
         if (!enabled) {
             return;
         }
         // 只在报文开关已命中后做全部 Header 的有界快照；JSON 序列化仍留在消费线程。
         Map<String, String> headerSnapshot = requestHeaderSnapshotter.capture(requestHeaders);
-        boolean offered = queue.offer(new PendingPayload(traceId, appId, modelId, headerSnapshot,
+        boolean offered = queue.offer(new PendingPayload(traceId, appId, modelId,
+                trafficType == null ? "model" : trafficType, serviceId, headerSnapshot,
                 requestBytes, responseBytes, stream, truncated, upstreamStatus, LocalDateTime.now()));
         if (!offered) {
             // 满了就丢，绝不阻塞业务线程；累计数打出来，否则报文断流时无人知晓
@@ -216,6 +228,8 @@ public class PayloadService {
         e.setTraceId(p.traceId());
         e.setAppId(p.appId());
         e.setModelId(p.modelId());
+        e.setTrafficType(p.trafficType());
+        e.setServiceId(p.serviceId());
         e.setIsStream(p.stream());
         e.setRequestHeaders(toJson(p.requestHeaders()));
         e.setRequestBody(toText(p.requestBytes()));

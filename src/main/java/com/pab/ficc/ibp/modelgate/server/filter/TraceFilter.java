@@ -57,9 +57,7 @@ public class TraceFilter implements GlobalFilter, Ordered {
         // path.startsWith(...)。改造前各过滤器要做 1~3 次前缀比较（ModelRouteFilter 最多，3 次），
         // 一个请求合计 15 次；更重要的是判定规则从此只有一个出处（TrafficType），
         // 新增一类流量不必逐个文件改、也不会漏改。
-        // 本批次（纯重构）只负责把它算出来存好；按流量类型分叉审计字段与 usage 解析
-        // 属于服务接入的第三批，见 spec/modelgate/12 §4.1。
-        TrafficType.resolve(exchange);
+        TrafficType trafficType = TrafficType.resolve(exchange);
 
         String traceId = exchange.getAttribute(TraceWebFilter.ATTR_TRACE_ID);
         String clientIp = exchange.getRequest().getRemoteAddress() != null
@@ -111,10 +109,17 @@ public class TraceFilter implements GlobalFilter, Ordered {
                         // 同步跑在调用线程（不 subscribeOn 到 boundedElastic），前提就是这里每一步都是
                         // 有界的：parseUsageOnly 现在最多解析尾部 20 帧，audit/payload 均只是队列 offer。
                         // 谁再往这个 doFinally 里加无界或阻塞操作，必须同步挪线程，不能想当然继续同步跑。
-                        UpstreamResponseParser.ParsedResponse parsed = responseBytes == null
+                        // 服务流量**跳过 usage 解析**：那是 OpenAI 帧格式专用的，
+                        // 通用服务的响应里根本没有 usage 字段，解析纯属白跑一遍尾部扫描。
+                        // 这也是服务链路比模型链路轻的一环。
+                        UpstreamResponseParser.ParsedResponse parsed =
+                                (responseBytes == null || trafficType == TrafficType.SERVICE)
                                 ? UpstreamResponseParser.ParsedResponse.empty()
                                 : responseParser.parseUsageOnly(responseBytes, stream, requestBytes,
                                         totalResponseBytes);
+
+                        String serviceId = exchange.getAttribute(ServiceAuthFilter.ATTR_SERVICE_ID);
+                        String trafficTypeCode = trafficType == TrafficType.SERVICE ? "service" : "model";
 
                         // 全量审计：appId 为空表示鉴权阶段即被拒（mg_audit_log.app_id 本就可空）。
                         // 这类记录是排查"谁在拿无效凭证反复试"的唯一依据，不能因为没有 appId 就丢掉。
@@ -122,14 +127,27 @@ public class TraceFilter implements GlobalFilter, Ordered {
                         auditService.log(appId, modelId, credType, clientIp,
                                 requestPath, httpStatus, latencyMs,
                                 parsed.inputTokens(), parsed.outputTokens(), parsed.tokenSource(),
-                                errorMsg, traceId);
+                                errorMsg, traceId, trafficTypeCode, serviceId);
 
                         // 报文留档：仅当该 (appId, modelId) 授权行开了开关。
                         // submit 只入队不解析，O(1)，不阻塞
                         // capture.isFullMode() 是必要条件：TAIL 模式手里只有尾巴，
                         // 落库会写进去一段残缺原文，比不记还糟。PayloadCaptureFilter 已按
                         // 同一套开关决定模式，这里再判一次是防止两边判断漂移。
-                        if (appId != null && modelId != null && responseBytes != null
+                        if (trafficType == TrafficType.SERVICE) {
+                            // 服务流量：开关在 mg_service 上，PayloadCaptureFilter(-145) 已按它
+                            // 决定采不采（isFullMode 就是那个判断的结果）。这里不再重复查一次库——
+                            // 与模型侧"再判一次防漂移"的取舍不同：模型侧两处判断读的是同一张授权表、
+                            // 成本是一次缓存命中；服务侧只需读 capture 模式即可，没有第二个来源会漂移。
+                            if (appId != null && serviceId != null && responseBytes != null
+                                    && capture.isFullMode()) {
+                                payloadService.submit(traceId, appId, null, "service", serviceId,
+                                        exchange.getRequest().getHeaders(), requestBytes, responseBytes,
+                                        stream, Boolean.TRUE.equals(exchange.getAttribute(
+                                                PayloadCaptureFilter.ATTR_RESPONSE_TRUNCATED)),
+                                        httpStatus);
+                            }
+                        } else if (appId != null && modelId != null && responseBytes != null
                                 && capture.isFullMode()
                                 && modelAuthService.isPayloadLogEnabled(appId, modelId)) {
                             payloadService.submit(traceId, appId, modelId,

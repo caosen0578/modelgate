@@ -29,11 +29,27 @@ public class RequestPayloadEntity {
     /** 全链路追踪 ID，关联 mg_audit_log.trace_id */
     private String traceId;
 
+    /**
+     * 流量类型：{@code model} = 模型流量，{@code service} = 通用服务流量。
+     *
+     * <p><b>字段默认值 "model" 是刻意的兜底，不得删除</b>：DB 列是
+     * {@code NOT NULL DEFAULT 'model'}，而 MyBatis-Plus 可能把 null 值以显式 NULL
+     * 写进 INSERT、覆盖掉建表默认值，那会直接插入失败。与 {@code isDel = "0"} 同一类保险，
+     * 理由见该字段注释（那个坑真实发生过，见 spec/modelgate/11 §17）。
+     *
+     * <p>现有用量统计 SQL 按 {@code model_id} 分组，服务流量必须能被排除，
+     * 所以查询侧要补 {@code WHERE traffic_type = 'model'}；默认值保证历史数据自动归位。
+     */
+    private String trafficType = "model";
+
     /** 冗余自审计，便于按接入系统直接筛选而不必 join */
     private String appId;
 
     /** 冗余自审计，便于按模型直接筛选而不必 join */
     private String modelId;
+
+    /** 服务编码（{@code traffic_type=service} 时写入；模型流量为 NULL） */
+    private String serviceId;
 
     /** 是否 SSE 流式响应，决定 response_raw 的结构 */
     private Boolean isStream;

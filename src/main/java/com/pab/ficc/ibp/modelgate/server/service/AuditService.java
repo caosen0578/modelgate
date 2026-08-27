@@ -105,10 +105,27 @@ public class AuditService {
                     String requestPath, int httpStatus, long latencyMs,
                     int inputTokens, int outputTokens, String tokenSource,
                     String errorMsg, String traceId) {
+        log(appId, modelId, credType, clientIp, requestPath, httpStatus, latencyMs,
+                inputTokens, outputTokens, tokenSource, errorMsg, traceId, "model", null);
+    }
+
+    /**
+     * 带流量类型的重载。服务流量传 {@code ("service", serviceId)}，模型流量走上面那个重载。
+     *
+     * <p>保留旧签名而不是直接改参数：审计是全链路唯一的"发生过什么"的记录，
+     * 改签名会让所有调用点一起变动，漏改一处的后果是那类请求彻底没有审计——
+     * 而这种缺失只有在事后排查时才会发现。
+     */
+    public void log(String appId, String modelId, String credType, String clientIp,
+                    String requestPath, int httpStatus, long latencyMs,
+                    int inputTokens, int outputTokens, String tokenSource,
+                    String errorMsg, String traceId, String trafficType, String serviceId) {
         if (!auditEnabled) return;
 
         AuditLogEntity entry = buildEntry(traceId, appId, modelId, credType, clientIp,
                 requestPath, httpStatus, latencyMs, inputTokens, outputTokens, tokenSource, errorMsg);
+        entry.setTrafficType(trafficType == null ? "model" : trafficType);
+        entry.setServiceId(serviceId);
 
         // 无论 dbWriteEnabled 是否开启，都必须入队：
         // flush() 依赖队列内容来累计月度 Token 计数；若 dbWriteEnabled=false 时跳过入队，

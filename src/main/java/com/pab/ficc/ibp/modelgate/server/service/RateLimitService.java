@@ -87,16 +87,21 @@ public class RateLimitService {
      * {@link #addMonthlyTokens} 在响应完成后由 AuditService 批量写入，
      * 预检与实际消耗之间存在约 2s 的最终一致窗口，属既有设计权衡，本次改造未改变。
      *
+     * <p><b>{@code targetId} 是配额维度的第二个键</b>，不再限于 modelId：
+     * 模型流量传 modelId，服务流量传 {@code "svc:" + serviceId}。
+     * 服务侧带前缀是为了防止服务编码与某个 modelId 同名时两条链路的计数串到同一个 key 上——
+     * 那种串台会让一边的流量吃掉另一边的配额，且在监控上完全看不出来。
+     *
      * @return 0=全部通过，1=QPS 超限，2=日调用量超限，3=月 Token 超限
      */
-    public int checkAllQuotas(String appId, String modelId,
+    public int checkAllQuotas(String appId, String targetId,
                               int qpsLimit, int dailyLimit, long monthlyLimit) {
         if (qpsLimit <= 0 && dailyLimit <= 0 && monthlyLimit <= 0) {
             return QUOTA_OK;
         }
         try {
             if (qpsLimit > 0) {
-                String key = "rl:quota:qps:" + appId + ":" + modelId + ":"
+                String key = "rl:quota:qps:" + appId + ":" + targetId + ":"
                         + (System.currentTimeMillis() / 1000);
                 if (incrWithTtl(key, QPS_KEY_TTL_SECONDS) > qpsLimit) {
                     return QUOTA_QPS_EXCEEDED;
@@ -104,19 +109,19 @@ public class RateLimitService {
             }
             if (dailyLimit > 0) {
                 LocalDate today = LocalDate.now();
-                String key = "quota:daily:" + appId + ":" + modelId + ":" + today;
+                String key = "quota:daily:" + appId + ":" + targetId + ":" + today;
                 if (incrWithTtl(key, secondsUntilTomorrow(today)) > dailyLimit) {
                     return QUOTA_DAILY_EXCEEDED;
                 }
             }
-            if (monthlyLimit > 0 && currentMonthlyTokens(appId, modelId) >= monthlyLimit) {
+            if (monthlyLimit > 0 && currentMonthlyTokens(appId, targetId) >= monthlyLimit) {
                 return QUOTA_MONTHLY_EXCEEDED;
             }
             return QUOTA_OK;
         } catch (Exception e) {
             // fail-open：Redis 故障不能让业务全线中断
-            log.warn("[RateLimitService] 配额检查失败，fail-open appId={} modelId={}: {}",
-                    appId, modelId, e.getMessage());
+            log.warn("[RateLimitService] 配额检查失败，fail-open appId={} target={}: {}",
+                    appId, targetId, e.getMessage());
             return QUOTA_OK;
         }
     }

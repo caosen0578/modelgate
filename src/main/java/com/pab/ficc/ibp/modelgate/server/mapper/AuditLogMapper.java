@@ -47,7 +47,13 @@ public interface AuditLogMapper extends BaseMapper<AuditLogEntity> {
             "COALESCE(AVG(latency_ms), 0) AS avgLatencyMs, " +
             "COALESCE(SUM(CASE WHEN http_status &lt; 400 THEN 1 ELSE 0 END), 0) AS successCount " +
             "FROM mg_audit_log " +
-            "WHERE create_time BETWEEN #{start} AND #{end} " +
+            // 只统计模型流量：本表自 2026-08-27 起同时承载通用服务流量（traffic_type='service'），
+            // 那些行的 model_id 为 NULL、也没有 Token。不加这个条件的话，
+            // 「总请求数」会把服务调用一起算进模型用量，而平均耗时会被服务的短请求拉低——
+            // 报表看起来正常，数字却是错的，对账时才会发现。
+            // 历史数据由列默认值 'model' 自动归位，无需回填。
+            "WHERE traffic_type = 'model' " +
+            "AND create_time BETWEEN #{start} AND #{end} " +
             "<if test='appIds != null and appIds.size() > 0'>" +
             "AND app_id IN <foreach item='a' collection='appIds' open='(' separator=',' close=')'>#{a}</foreach> " +
             "</if>" +

@@ -25,10 +25,16 @@ import java.util.concurrent.TimeUnit;
 /**
  * 上游熔断过滤器（order=-50，位于过滤器链最末端，紧靠上游转发）。
  *
- * <p><b>熔断器设计：</b>使用 Resilience4j，名称 {@code modelUpstream}，
- * 配置在 {@code application.yml} 的 {@code resilience4j.circuitbreaker.instances.modelUpstream}。
- * 当前实现为单一全局熔断器（不按 modelId 隔离），简化了管理复杂度；
- * 若需按模型独立熔断，可改为 {@code registry.circuitBreaker("model:" + modelId)}。
+ * <p><b>熔断器设计（两条链路不同）：</b>
+ * <ul>
+ *   <li><b>模型流量</b>：单一全局实例 {@code modelUpstream}，不按 modelId 隔离。
+ *       一个模型上游挂掉会影响其余模型——这是已知的简化，改成按模型隔离是独立的一项变更。</li>
+ *   <li><b>服务流量</b>：<b>按 serviceId 各自一个实例</b>（{@code svc:xxx}），
+ *       配置取 {@code resilience4j.circuitbreaker.configs.serviceUpstream}。
+ *       服务侧从第一天就隔离，是因为四五个接入系统本就是彼此无关的上游，
+ *       让 CRM 挂掉去熔断知识库没有任何道理。</li>
+ * </ul>
+ * 见 {@link #resolveCircuitBreaker}。
  *
  * <p><b>触发条件：</b>
  * <ul>
@@ -59,7 +65,8 @@ public class CircuitBreakerFilter implements GlobalFilter, Ordered {
 
     private static final int ORDER = -50;
 
-    private final CircuitBreaker circuitBreaker;
+    private final CircuitBreakerRegistry registry;
+    private final CircuitBreaker modelCircuitBreaker;
     private final GatewayConfigService gatewayConfigService;
     private final DynamicConfigHolder dynamicConfigHolder;
     private final ObjectMapper objectMapper;
@@ -68,7 +75,8 @@ public class CircuitBreakerFilter implements GlobalFilter, Ordered {
                                 GatewayConfigService gatewayConfigService,
                                 DynamicConfigHolder dynamicConfigHolder,
                                 ObjectMapper objectMapper) {
-        this.circuitBreaker = registry.circuitBreaker("modelUpstream");
+        this.registry = registry;
+        this.modelCircuitBreaker = registry.circuitBreaker("modelUpstream");
         this.gatewayConfigService = gatewayConfigService;
         this.dynamicConfigHolder = dynamicConfigHolder;
         this.objectMapper = objectMapper;
@@ -87,6 +95,9 @@ public class CircuitBreakerFilter implements GlobalFilter, Ordered {
             return chain.filter(exchange);
         }
         String path = exchange.getRequest().getURI().getPath();
+        // 服务侧从第一天就按服务隔离：一个上游挂掉不影响其它服务。
+        // 模型侧仍是单一全局熔断器（改成按模型隔离是独立的一项变更，不在本批范围内）。
+        CircuitBreaker circuitBreaker = resolveCircuitBreaker(exchange);
 
         if (!gatewayConfigService.isCircuitBreakerEnabled() || !dynamicConfigHolder.isCircuitBreakerEnabled()) {
             return chain.filter(exchange);
@@ -141,6 +152,30 @@ public class CircuitBreakerFilter implements GlobalFilter, Ordered {
                     circuitBreaker.releasePermission();
                     log.debug("[CircuitBreaker] 调用方取消，归还 permit: path={}", path);
                 });
+    }
+
+    /**
+     * 取本次请求该用哪个熔断器。
+     *
+     * <p>服务流量按 {@code serviceId} 各自一个实例（名字 {@code svc:xxx}），配置取
+     * {@code serviceUpstream}；模型流量沿用全局的 {@code modelUpstream}。
+     *
+     * <p>{@code registry.circuitBreaker(name, configName)} 底层是
+     * {@code ConcurrentHashMap.computeIfAbsent}，每请求一次的开销可接受。
+     * 服务数量是个位数（四五个接入系统），不会把 registry 撑爆。
+     *
+     * <p>serviceId 缺失时退回全局实例而不是新建一个匿名的：那种情况只在链路异常时出现，
+     * 不该顺带在 registry 里堆出一堆一次性实例。
+     */
+    private CircuitBreaker resolveCircuitBreaker(ServerWebExchange exchange) {
+        if (TrafficType.resolve(exchange) != TrafficType.SERVICE) {
+            return modelCircuitBreaker;
+        }
+        String serviceId = exchange.getAttribute(ServiceAuthFilter.ATTR_SERVICE_ID);
+        if (serviceId == null) {
+            return modelCircuitBreaker;
+        }
+        return registry.circuitBreaker("svc:" + serviceId, "serviceUpstream");
     }
 
     private Mono<Void> reject(ServerWebExchange exchange) {
