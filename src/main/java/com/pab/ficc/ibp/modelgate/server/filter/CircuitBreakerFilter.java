@@ -110,6 +110,26 @@ public class CircuitBreakerFilter implements GlobalFilter, Ordered {
                     // 网络异常、连接超时等，通知熔断器累计错误率
                     circuitBreaker.onError(System.nanoTime() - startNano, TimeUnit.NANOSECONDS, ex);
                     log.warn("[CircuitBreaker] Upstream exception: path={}, err={}", path, ex.toString());
+                })
+                // ⚠️ doOnCancel 不能省：调用方中途断开时，Mono 走的是 **cancel** 信号，
+                // doOnSuccess / doOnError **都不会触发**。而上面已经 tryAcquirePermission() 借走了一个 permit。
+                //
+                // 在 HALF_OPEN 状态下这个 permit 是**有限的**（permittedNumberOfCallsInHalfOpenState: 5，
+                // 由 CircuitBreakerStateMachine$HalfOpenState 里的 AtomicInteger 计数，
+                // tryAcquirePermission 递减、releasePermission 递增）。少还一次就永久少一个。
+                // 而 resilience4j 的 DEFAULT_WAIT_DURATION_IN_HALF_OPEN_STATE = 0 表示
+                // **HALF_OPEN 没有超时自动退出**（本项目未配置该项）——5 个 permit 漏光之后，
+                // 熔断器会永久停在 HALF_OPEN 并拒绝一切流量，**只能重启进程恢复**。
+                //
+                // SSE 场景下调用方中途断开（用户点停止、页面关闭、客户端读超时）是家常便饭，
+                // 所以这条路径必然会被走到，不是理论风险。
+                //
+                // 用 releasePermission() 而不是 onSuccess/onError：调用被调用方主动放弃，
+                // 上游到底成没成功是未知的。记成失败会冤枉上游、记成成功会掩盖真实故障，
+                // 只有"把 permit 原样还回去、不计入统计"才是正确语义。
+                .doOnCancel(() -> {
+                    circuitBreaker.releasePermission();
+                    log.debug("[CircuitBreaker] 调用方取消，归还 permit: path={}", path);
                 });
     }
 
