@@ -1,6 +1,6 @@
 package com.pab.ficc.ibp.modelgate.server.filter;
 
-import com.pab.ficc.ibp.modelgate.server.constant.UrlConstant;
+import com.pab.ficc.ibp.modelgate.server.common.TrafficType;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -36,12 +36,18 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Dynamic model routing filter (order=-140).
+ * 模型动态路由过滤器（order=-140）。<b>只处理 {@code TrafficType.MODEL} 流量</b>，
+ * 服务流量由同层的 {@code ServiceRouteFilter} 承担，两者互斥。
  *
- * 1. Reads request body to extract 'model' field
- * 2. Loads ModelInstanceEntity + ModelCredentialEntity from cache
- * 3. Delegates to ProviderAdapter for request transformation
- * 4. Sets GATEWAY_REQUEST_URL_ATTR for upstream routing
+ * <ol>
+ *   <li>取 modelId：<b>优先读 {@code mg.modelId}</b>（BodyParseFilter/-175 流式扫描已提取好），
+ *       仅在该 attribute 缺失时才回退解析请求体——不要改回无条件 {@code readTree}，
+ *       那会让每个正常请求都白建一棵完整 JSON 树，理由见 {@link #parseModelId}</li>
+ *   <li>从缓存装载 {@code ModelInstanceEntity} + 解密后的 {@code ModelCredentialEntity}</li>
+ *   <li>按 {@code api_spec} 选 {@code ProviderAdapter} 做请求体转换与上游鉴权头构造，
+ *       上游请求头统一走 {@link UpstreamHeaderBuilder}（负责剔除调用方凭证）</li>
+ *   <li>替换 {@code GATEWAY_ROUTE_ATTR} 与 {@code GATEWAY_REQUEST_URL_ATTR} 指向真实上游</li>
+ * </ol>
  */
 @Slf4j
 @Component
@@ -49,37 +55,6 @@ import java.util.Optional;
 public class ModelRouteFilter implements GlobalFilter, Ordered {
 
     private static final int ORDER = -140;
-
-    /**
-     * 转发上游前必须剔除的入站请求头——<b>这些头只属于「调用方 → 本网关」这一跳，不属于「本网关 → 上游」</b>。
-     *
-     * <p><b>为什么必须显式剔除</b>：下方 decorator 的合并逻辑是
-     * {@code putAll(调用方原始头)} 再 {@code putAll(适配器注入的上游头)}，
-     * 后者<b>只能覆盖同名的头</b>。四种 api_spec 里只有 OpenAI 用的是 {@code Authorization}
-     * （{@code setBearerAuth}），Azure 用 {@code api-key}、Anthropic 用 {@code x-api-key}、
-     * Custom 的 ak_sk 用 {@code X-Access-Key} —— 这三种情况下调用方那个
-     * {@code Authorization: Bearer <ModelGate 凭证>} 不会被覆盖，会<b>原样发给上游模型厂商</b>，
-     * 等于把本网关的接入凭证送了出去（上游拿这把 key 可以反过来调本网关）。
-     * 全局也没有任何 RemoveRequestHeader 兜底（application.yml 的 default-filters 只有
-     * DedupeResponseHeader），所以只能在这里删。
-     *
-     * <p><b>为什么"透传调用方 Authorization"没有合法用途</b>：调用方带的这把 key 是
-     * {@code mg_app_credential} 里的<b>本网关</b>凭证，由 CredentialAuthFilter(-190) 校验，
-     * 它对上游本来就没有任何意义。上游要的凭证一律来自 {@code mg_model_credential}，
-     * 由适配器注入。所以这里不存在"删了会断掉某种透传模式"的情况。
-     *
-     * <p><b>X-Mg-* 为什么也要删</b>：这两个是 CredentialAuthFilter 注入的<b>进程内部</b>传参
-     * （给 ModelAuthFilter/-170、QuotaFilter/-160 读），三个读取方 order 全部早于本过滤器（-140），
-     * 删掉不影响任何下游逻辑；TraceFilter 的 doFinally 取的是 exchange attribute 而非请求头，
-     * 同样不受影响。留着只会把内部实现细节泄露给上游。
-     *
-     * <p>⚠️ 报文留档记录的是<b>入站</b>请求头（PayloadCaptureFilter/-145 早于本过滤器），
-     * 排障时仍然能看到调用方带了什么，不受本次剔除影响。
-     *
-     * <p>注意 {@link HttpHeaders} 的底层是 case-insensitive map，此处写法与调用方大小写无关。
-     */
-    private static final List<String> INBOUND_ONLY_HEADERS =
-            List.of(HttpHeaders.AUTHORIZATION, "X-Mg-App", "X-Mg-Cred-Type");
 
     private final ModelService modelService;
     private final List<ProviderAdapter> adapters;
@@ -94,14 +69,11 @@ public class ModelRouteFilter implements GlobalFilter, Ordered {
 
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
+        // 只处理模型流量。流量类型由 TraceFilter(-200) 算一次存 attribute，这里只读不算。
+        if (TrafficType.resolve(exchange) != TrafficType.MODEL) {
+            return chain.filter(exchange);
+        }
         String path = exchange.getRequest().getURI().getPath();
-        if (path.startsWith(UrlConstant.MANAGE_PREFIX) || path.startsWith(UrlConstant.ACTUATOR_PREFIX)) {
-            return chain.filter(exchange);
-        }
-        // 只处理 /v1/** 的业务流量（chat/completions、embeddings 等）
-        if (!path.startsWith(UrlConstant.BUSINESS_PREFIX)) {
-            return chain.filter(exchange);
-        }
 
         // BodyParseFilter (-175) 已将请求体读入 mg.bodyBytes；直接复用，避免二次读取（流已消费）
         byte[] cached = exchange.getAttribute("mg.bodyBytes");
@@ -277,7 +249,8 @@ public class ModelRouteFilter implements GlobalFilter, Ordered {
 
                 @Override
                 public HttpHeaders getHeaders() {
-                    return buildUpstreamHeaders(super.getHeaders(), info.headers(), info.body().length);
+                    // 模型侧请求体被适配器改写过，必须同步修正 Content-Length（带长度参数的那个重载）
+                    return UpstreamHeaderBuilder.build(super.getHeaders(), info.headers(), info.body().length);
                 }
 
                 /**
@@ -307,29 +280,6 @@ public class ModelRouteFilter implements GlobalFilter, Ordered {
         }
     }
 
-    /**
-     * 构造发往上游的请求头：调用方原始头 →（剔除本网关凭证与内部头）→ 合并上游凭证 → 修正 Content-Length。
-     *
-     * <p><b>三步顺序不能调整</b>：剔除必须夹在两次合并之间。放到最前会被
-     * {@code putAll(inbound)} 重新带回来；放到最后会把适配器刚注入的上游
-     * {@code Authorization}（OpenAI 那条路径）一并删掉，导致上游 401。
-     *
-     * <p>剔除清单与理由见 {@link #INBOUND_ONLY_HEADERS}。抽成静态方法是为了让这条安全属性
-     * 能被 {@code ModelRouteHeaderTest} 直接覆盖——原先它埋在匿名 decorator 里，
-     * 不起一整套 exchange 就没法验证。
-     *
-     * @param inbound        调用方原始请求头（只读不改）
-     * @param upstreamAuth   适配器按 api_spec 构造的上游鉴权头
-     * @param contentLength  改写后的请求体长度
-     */
-    static HttpHeaders buildUpstreamHeaders(HttpHeaders inbound, HttpHeaders upstreamAuth, int contentLength) {
-        HttpHeaders merged = new HttpHeaders();
-        merged.putAll(inbound);
-        INBOUND_ONLY_HEADERS.forEach(merged::remove);
-        merged.putAll(upstreamAuth);
-        merged.setContentLength(contentLength); // 更新 Content-Length，避免上游解析失败
-        return merged;
-    }
 
     private Mono<Void> reject(ServerWebExchange exchange, HttpStatus status, ErrorCode errorCode) {
         var response = exchange.getResponse();

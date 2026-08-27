@@ -1,6 +1,6 @@
 package com.pab.ficc.ibp.modelgate.server.filter;
 
-import com.pab.ficc.ibp.modelgate.server.constant.UrlConstant;
+import com.pab.ficc.ibp.modelgate.server.common.TrafficType;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pab.ficc.ibp.modelgate.server.common.ErrorCode;
@@ -52,8 +52,8 @@ public class ModelAuthFilter implements GlobalFilter, Ordered {
 
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
-        String path = exchange.getRequest().getURI().getPath();
-        if (path.startsWith(UrlConstant.MANAGE_PREFIX) || path.startsWith(UrlConstant.ACTUATOR_PREFIX)) {
+        // 模型专属：只处理模型流量。服务流量由 ServiceAuthFilter 承担（同为 -170，两者互斥）。
+        if (TrafficType.resolve(exchange) != TrafficType.MODEL) {
             return chain.filter(exchange);
         }
 
@@ -83,8 +83,10 @@ public class ModelAuthFilter implements GlobalFilter, Ordered {
                         log.debug("[ModelAuth] 通过: appId={}, modelId={}", appId, modelId);
                         return chain.filter(exchange);
                     }
-                    // 业务拒绝按 03 §7 记 INFO：这是排查"某系统调不通某模型"的第一现场，
-                    // 且本过滤器早于 TraceFilter(-150) 执行，被拒请求不会留下审计记录，日志是唯一痕迹
+                    // 业务拒绝按 03 §7 记 INFO：这是排查"某系统调不通某模型"的第一现场。
+                    // 注：TraceFilter 现在是 -200、**早于**本过滤器（-170），被拒请求同样会进审计
+                    // （app_id 可能为空）。这条 INFO 补充的是拒绝原因，不再是"唯一痕迹"——
+                    // 原注释写的 TraceFilter(-150) 是 order 前移之前的旧世界观，已过时。
                     log.info("[ModelAuth] 拒绝: appId={}, modelId={}, reason={}", appId, modelId, error.getMessage());
                     // HTTP 状态取自 ErrorCode 自身，不再一律 FORBIDDEN：
                     // 本过滤器的 4 个拒绝原因里 MODEL_NOT_FOUND 是 404，其余 3 个才是 403。

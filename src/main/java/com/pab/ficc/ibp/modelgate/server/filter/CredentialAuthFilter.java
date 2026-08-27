@@ -1,6 +1,6 @@
 package com.pab.ficc.ibp.modelgate.server.filter;
 
-import com.pab.ficc.ibp.modelgate.server.constant.UrlConstant;
+import com.pab.ficc.ibp.modelgate.server.common.TrafficType;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pab.ficc.ibp.modelgate.server.common.ErrorCode;
@@ -93,8 +93,10 @@ public class CredentialAuthFilter implements GlobalFilter, Ordered {
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
         String path = exchange.getRequest().getURI().getPath();
         // 管理面（/modelgate/**）走内网逐接口鉴权，不在本进程校验；
-        // /actuator/** 同样不属于业务流量，直接放行
-        if (path.startsWith(UrlConstant.MANAGE_PREFIX) || path.startsWith(UrlConstant.ACTUATOR_PREFIX)) {
+        // /actuator/** 同样不属于业务流量，直接放行。
+        // 通用能力：模型流量与服务流量都要走，只跳过管理面/运维端点。
+        // 流量类型由 TraceFilter(-200) 算一次存 attribute，这里只读不算。
+        if (!TrafficType.resolve(exchange).isBusiness()) {
             return chain.filter(exchange);
         }
 

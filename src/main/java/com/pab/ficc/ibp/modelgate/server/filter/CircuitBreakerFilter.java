@@ -1,6 +1,6 @@
 package com.pab.ficc.ibp.modelgate.server.filter;
 
-import com.pab.ficc.ibp.modelgate.server.constant.UrlConstant;
+import com.pab.ficc.ibp.modelgate.server.common.TrafficType;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pab.ficc.ibp.modelgate.server.config.DynamicConfigHolder;
@@ -34,8 +34,16 @@ import java.util.concurrent.TimeUnit;
  * <ul>
  *   <li>上游返回 HTTP 5xx（服务错误）</li>
  *   <li>连接超时或网络异常（由 {@code doOnError} 捕获）</li>
- *   <li>慢调用（响应时间超过 {@code slowCallDurationThreshold}，由 Resilience4j 内部检测）</li>
  * </ul>
+ *
+ * <p><b>⚠️ 慢调用<u>不</u>触发熔断（2026-08-26 起）</b>：本网关的上游是 LLM，
+ * "跑得久"是正常业务形态而非故障——常规请求 30~180s，复杂问题实测可跑满 20 分钟。
+ * 而本过滤器 order=-50，包在 {@code NettyWriteResponseFilter}(order=-1) 外层，
+ * 量的是<b>响应体全部写回客户端</b>的时长，一条 1200s 的<b>正常</b> SSE 流会被记成
+ * "耗时 1200 秒的调用"。旧配置（{@code slowCallRateThreshold: 90} + {@code 180s}）
+ * 会把这种正常流量判成上游故障并用 503 拒绝真实请求。
+ * 现已通过 {@code slowCallDurationThreshold: 24h} 让慢调用率恒为 0，等同关闭；
+ * 详见 application.yml 该段注释与 spec/modelgate/12 §11.2。
  *
  * <p><b>状态流转：</b>CLOSED（正常）→ OPEN（熔断拒绝，fast-fail）→ HALF_OPEN（探测）→ CLOSED（恢复）
  *
@@ -73,10 +81,12 @@ public class CircuitBreakerFilter implements GlobalFilter, Ordered {
 
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
-        String path = exchange.getRequest().getURI().getPath();
-        if (path.startsWith(UrlConstant.MANAGE_PREFIX) || path.startsWith(UrlConstant.ACTUATOR_PREFIX)) {
+        // 通用能力：模型流量与服务流量都要走，只跳过管理面/运维端点。
+        // 流量类型由 TraceFilter(-200) 算一次存 attribute，这里只读不算。
+        if (!TrafficType.resolve(exchange).isBusiness()) {
             return chain.filter(exchange);
         }
+        String path = exchange.getRequest().getURI().getPath();
 
         if (!gatewayConfigService.isCircuitBreakerEnabled() || !dynamicConfigHolder.isCircuitBreakerEnabled()) {
             return chain.filter(exchange);

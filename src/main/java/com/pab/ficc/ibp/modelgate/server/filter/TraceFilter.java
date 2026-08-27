@@ -1,5 +1,6 @@
 package com.pab.ficc.ibp.modelgate.server.filter;
 
+import com.pab.ficc.ibp.modelgate.server.common.TrafficType;
 import com.pab.ficc.ibp.modelgate.server.service.AuditService;
 import com.pab.ficc.ibp.modelgate.server.service.ModelAuthService;
 import com.pab.ficc.ibp.modelgate.server.service.PayloadService;
@@ -51,7 +52,15 @@ public class TraceFilter implements GlobalFilter, Ordered {
 
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
-        // GlobalFilter 只对匹配到路由的请求执行，故这里必然是 /v1/** 业务流量
+        // 【全链路只算一次】本过滤器是 order 最小的 GlobalFilter(-200)，在这里把流量类型
+        // 算出来存进 exchange attribute，后续 8 个过滤器一律读 attribute，不再各自做
+        // path.startsWith(...)。改造前各过滤器要做 1~3 次前缀比较（ModelRouteFilter 最多，3 次），
+        // 一个请求合计 15 次；更重要的是判定规则从此只有一个出处（TrafficType），
+        // 新增一类流量不必逐个文件改、也不会漏改。
+        // 本批次（纯重构）只负责把它算出来存好；按流量类型分叉审计字段与 usage 解析
+        // 属于服务接入的第三批，见 spec/modelgate/12 §4.1。
+        TrafficType.resolve(exchange);
+
         String traceId = exchange.getAttribute(TraceWebFilter.ATTR_TRACE_ID);
         String clientIp = exchange.getRequest().getRemoteAddress() != null
                 ? exchange.getRequest().getRemoteAddress().getAddress().getHostAddress() : null;

@@ -29,6 +29,22 @@ public interface UrlConstant {
     /** 业务流量前缀：OpenAI 兼容路径，形状由 OpenAI SDK 决定，不可加命名空间 */
     String BUSINESS_PREFIX = "/v1/";
 
+    /**
+     * 通用服务流量前缀（带尾斜杠），形如 {@code /svc/{服务编码}/**}。
+     *
+     * <p>与 {@link #BUSINESS_PREFIX} 并列的第二类业务流量：接入系统的普通 HTTP / SSE 接口
+     * 借本网关做鉴权与配额，路由目标来自 {@code mg_service.upstream_url}。
+     *
+     * <p><b>为什么必须是静态前缀</b>：网关要在**读请求体之前**就分辨流量类型——
+     * 模型流量的路由键藏在 body 的 {@code model} 字段里、必须整体读入，
+     * 而服务流量的路由键就在 path 上、一个字节的 body 都不用碰。
+     * 没有可在请求行阶段判定的前缀，就只能对所有流量先读 body 再判断，
+     * 等于把服务流量的成本拉到和模型一样高。
+     *
+     * <p>判定一律走 {@code TrafficType}，<b>禁止</b>在过滤器里再写路径字面量。
+     */
+    String SERVICE_PREFIX = "/svc/";
+
     /** 运维端点前缀，与管理面同等待遇（不走业务过滤器） */
     String ACTUATOR_PREFIX = "/actuator/";
 

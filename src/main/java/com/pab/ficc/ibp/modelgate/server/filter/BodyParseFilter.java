@@ -1,6 +1,6 @@
 package com.pab.ficc.ibp.modelgate.server.filter;
 
-import com.pab.ficc.ibp.modelgate.server.constant.UrlConstant;
+import com.pab.ficc.ibp.modelgate.server.common.TrafficType;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -63,8 +63,11 @@ public class BodyParseFilter implements GlobalFilter, Ordered {
 
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
-        String path = exchange.getRequest().getURI().getPath();
-        if (!path.startsWith(UrlConstant.BUSINESS_PREFIX) || exchange.getRequest().getMethod() != HttpMethod.POST) {
+        // 模型专属：路由键在请求体的 model 字段，只有模型流量需要把 body 读全。
+        // 服务流量的路由键在 path 上，**绝不能**走到这里——那会白白缓冲整个请求体，
+        // 正是新链路比模型链路轻一个量级的原因所在。
+        if (TrafficType.resolve(exchange) != TrafficType.MODEL
+                || exchange.getRequest().getMethod() != HttpMethod.POST) {
             return chain.filter(exchange);
         }
 
