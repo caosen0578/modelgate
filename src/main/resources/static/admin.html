@@ -1064,8 +1064,14 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
         <div class="form-group" id="ug_svcPathRow" style="display:none">
           <label>接口路径</label>
           <input id="ug_svcPath" oninput="renderUsage()" placeholder="/api/v2/query">
-          <span class="hint">接入方自己的接口路径，网关会把 <code>/svc/{编码}</code> 剥掉后原样拼到上游地址之后
-            （该服务若关了「剥离前缀」则完整透传）。留空则为 <code>/</code></span>
+          <!-- 「填什么」是这里最容易卡住的地方：填的是**接入方自己那个接口原本的路径**，
+               和网关无关。下面的实时预览把"你填的" -> "网关转发到哪"直接摆出来。 -->
+          <span class="hint">填<b>该服务自己接口原本的路径</b>——就是不走网关时你直接调它用的那一段。<br>
+            例如原本调 <code>http://crm.intranet:8080/api/v2/query</code>，这里就填 <code>/api/v2/query</code>。<br>
+            留空表示调根路径 <code>/</code>。</span>
+          <div id="ug_svcPathPreview" style="margin-top:6px;font-size:11px;line-height:1.7;
+               background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:8px 10px;
+               color:#334155;font-family:monospace;word-break:break-all"></div>
         </div>
         <div class="form-group" id="ug_svcMethodRow" style="display:none">
           <label>HTTP 方法</label>
@@ -1352,6 +1358,98 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
     <div class="modal-footer">
       <button class="btn btn-neutral" onclick="closeModal('appModal')">取消</button>
       <button class="btn btn-primary" onclick="submitApp()">创建系统</button>
+    </div>
+  </div>
+</div>
+
+<!-- ========== MODAL: 服务测试工具 ========== -->
+<!-- 骨架与「🧪 模型测试工具」一致（modal-test + test-pane + test-left/right），
+     只是配置项换成服务侧的探测参数。两个工具长得一样，是因为它们回答的是同一类问题。 -->
+<div class="modal-backdrop" id="svcTestModal">
+  <div class="modal modal-test">
+    <div class="modal-header">
+      <h3>🧪 服务测试工具 · <span id="svcTestTitle"></span></h3>
+      <button class="modal-close" onclick="closeModal('svcTestModal')">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="test-pane">
+
+        <!-- ── 左侧：探测配置 ── -->
+        <div class="test-left">
+          <div>
+            <div class="tsec-hd">🔌 目标服务</div>
+            <div class="form-group">
+              <div id="svcTestTarget" style="font-size:13px;color:#475569;padding:8px 10px;
+                   background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;word-break:break-all">-</div>
+            </div>
+          </div>
+
+          <div>
+            <div class="tsec-hd">🔑 上游鉴权</div>
+            <div class="form-group">
+              <div id="svcTestAuth" style="font-size:13px;color:#475569;padding:8px 10px;
+                   background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px">-</div>
+              <span class="hint">服务端自动使用该服务已保存的上游凭证，密钥不在页面上传输或显示</span>
+            </div>
+          </div>
+
+          <div>
+            <div class="tsec-hd">📍 探测路径</div>
+            <div class="form-group">
+              <input type="text" id="svcTestPath" placeholder="/health" oninput="updateSvcTestPreview()"/>
+              <span class="hint">留空则探测上游<b>根路径</b>。填一个真实存在的路径（如 <code>/health</code>、
+                <code>/actuator/health</code>）能拿到更确切的结果。</span>
+            </div>
+          </div>
+
+          <div>
+            <div class="tsec-hd">🎯 实际探测地址</div>
+            <div id="svcTestPreview" style="font-size:11px;line-height:1.7;background:#f8fafc;
+                 border:1px solid #e2e8f0;border-radius:6px;padding:8px 10px;color:#334155;
+                 font-family:monospace;word-break:break-all">-</div>
+          </div>
+
+          <!-- 这段必须显眼：两个测试回答的不是同一个问题，混淆会导致
+               "这里通了但业务还是调不通"时找错方向 -->
+          <div class="warn-box" style="font-size:12px;line-height:1.7">
+            本工具用 <b>GET</b> 从<b>服务端</b>直连上游，<b>不经过</b>凭证鉴权 / 访问控制 / 服务授权 / 配额，
+            只回答「网关能不能连到这个地址」。<br>
+            拿到任何 HTTP 响应（<b>哪怕 404</b>）都算连通 —— 那恰恰说明 DNS、网络策略、端口、TLS 都对了。<br>
+            要验证接入方能否真正调通，请用<b>凭证管理 → 接入示例 → 测试连通</b>。
+          </div>
+        </div>
+
+        <!-- ── 右侧：探测结果 ── -->
+        <div class="test-right">
+          <div class="rmeta" id="svcTestMetaBar" style="display:none">
+            <span id="svcTestVerdict">-</span>
+            <span style="font-size:12px;font-family:monospace;color:#64748b" id="svcTestMeta">-</span>
+            <span style="flex:1"></span>
+            <button class="btn btn-neutral btn-sm"
+                    onclick="copyText($('svcTestRespBox').textContent.trim())">复制结果</button>
+          </div>
+          <div class="rbody" id="svcTestRespBox">
+            <span class="rph">// 点击「▶ 开始探测」后，结果显示在此处
+// 探测固定用 GET，不会对上游产生副作用
+// 通用服务没有统一的接口形状，网关只验证「连得上连不上」</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+            <span class="rawtog" id="svcTestRawTog"
+                  onclick="$('svcTestRaw').classList.toggle('open');
+                           $('svcTestRawTog').textContent=($('svcTestRaw').classList.contains('open')?'▼':'▶')+' 上游原始返回'">
+              ▶ 上游原始返回
+            </span>
+          </div>
+          <pre class="rawbox" id="svcTestRaw"></pre>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer" style="justify-content:space-between">
+      <button class="btn btn-neutral" onclick="clearSvcTestResp()">清除结果</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-neutral" onclick="closeModal('svcTestModal')">关闭</button>
+        <button class="btn btn-primary" id="svcTestSendBtn" onclick="runSvcTest()">▶ 开始探测</button>
+      </div>
     </div>
   </div>
 </div>
@@ -3010,6 +3108,10 @@ function usagePython(p){
 
 function renderUsage(){
   if(!usageCtx) return;
+  // 任何请求参数变化（勾选流式、换模型/服务、改路径或请求体）都会走到这里。
+  // 必须把上一次的测试结果收起来 —— 否则改完参数后面板里还挂着旧结果，
+  // 看起来就像"改了没生效"。这正是"不打勾却显示 SSE 结果"最可能的成因。
+  $('ug_testWrap').style.display = 'none';
   const p = usageParts();
   const fn = usageCtx.fmt==='http' ? usageHttp : (usageCtx.fmt==='python' ? usagePython : usageCurl);
   // 用 textContent 而非 innerHTML：示例里的尖括号占位符不能被当成标签
@@ -3017,6 +3119,16 @@ function renderUsage(){
 
   const notes = [];
   if(p.kind === 'service'){
+    // 把「调用方打给网关的地址」与「网关转发到上游的地址」并排显示：
+    // 光看一个 /svc/crm/api/v2/query 很难反推出上游收到的是什么
+    const svcOpt = $('ug_service').selectedOptions[0];
+    const stripped = p.path.replace(/^\/svc\/[^/]*/, '') || '/';
+    $('ug_svcPathPreview').innerHTML =
+      '<span style="color:#64748b">调用方 →  网关</span>  ' + escapeHtml(p.method + ' ' + p.path) + '<br>'
+      + '<span style="color:#64748b">网关   → 上游</span>  '
+      + escapeHtml(p.method + ' {该服务的上游地址}' + stripped)
+      + '<div style="margin-top:4px;color:#94a3b8">网关剥掉 <b>/svc/' + escapeHtml(p.serviceId)
+      + '</b> 后把剩余部分原样拼到上游地址之后（该服务若关闭「剥离前缀」则完整透传）</div>';
     notes.push('路径第二段就是服务编码，网关按它定路由 —— 服务接口的路由键在 URL 上，不在请求体里。');
     notes.push('网关**不解析也不改写**服务请求体，原样流式透传；请求体格式由接入方自己的接口决定。');
     notes.push('调用方带的是本网关凭证，转发前会被剔除并换成该服务配置的上游凭证。');
@@ -4886,41 +4998,105 @@ async function deleteService(serviceId){
   }catch(e){ toast('删除异常','error'); }
 }
 
+/** 当前正在测试的服务（供探测弹窗读取上游地址等信息） */
+let svcTestCtx = null;
+
 /**
- * 服务上游连通性探测。
+ * 打开服务测试工具。
  *
- * <b>与「接入示例 → 测试连通」回答的不是同一个问题</b>，别混淆：
- *   本测试：**服务端**用 GET 打一次上游根路径，只验证"网关能不能连到这个地址"，
- *           跳过凭证鉴权/访问控制/服务授权/配额。拿到任何 HTTP 响应（哪怕 404）都算通 ——
- *           那恰恰证明 DNS、网络策略、端口、TLS 全对了。
+ * <b>与「接入示例 → 测试连通」回答的不是同一个问题</b>，弹窗里也显著标注了：
+ *   本工具：**服务端**用 GET 打一次上游，只验证"网关能不能连到这个地址"，
+ *           跳过凭证鉴权/访问控制/服务授权/配额。任何 HTTP 响应（哪怕 404）都算通。
  *   接入示例：**浏览器按接入方身份**打真实的 /svc/**，走完整链路。
  * 与模型侧「🧪 测试」和「接入示例测试」的分工完全一致。
  */
-async function testService(serviceId){
-  const probePath = prompt(
-    '探测路径（可留空）\n\n'
-    + '留空则 GET 上游根路径。填一个真实存在的路径（如 /health）能拿到更确切的结果。\n'
-    + '注意：探测固定用 GET，不会对上游产生副作用。', '');
-  if(probePath === null) return;   // 用户点了取消
+function testService(serviceId){
+  const svc = (allServices||[]).find(x=>x.serviceId===serviceId);
+  svcTestCtx = {serviceId, upstreamUrl: svc ? svc.upstreamUrl : null};
 
-  toast('正在探测 ' + serviceId + ' …');
+  $('svcTestTitle').textContent = svc ? (svc.serviceName || serviceId) : serviceId;
+  $('svcTestTarget').innerHTML =
+    '<code>' + escapeHtml(serviceId) + '</code>'
+    + (svc ? '<div style="margin-top:4px;color:#64748b;font-size:12px">'
+             + escapeHtml(svc.upstreamUrl||'(上游地址为空)') + '</div>' : '');
+  $('svcTestAuth').textContent = svc && svc.authType && svc.authType !== 'none'
+    ? svc.authType + (svc.secretConfigured ? '（密钥已配置）' : '（密钥未配置）')
+    : 'none —— 不向上游注入任何凭证';
+  $('svcTestPath').value = '';
+  clearSvcTestResp();
+  updateSvcTestPreview();
+  openModal('svcTestModal');
+}
+
+/** 实时显示真正会被探测的完整地址——不显示的话"探测路径填什么"全靠猜 */
+function updateSvcTestPreview(){
+  if(!svcTestCtx){ return; }
+  const base = (svcTestCtx.upstreamUrl||'').replace(/\/+$/,'');
+  let path = ($('svcTestPath').value||'').trim();
+  if(path && !path.startsWith('/')) path = '/' + path;
+  if(!path) path = '/';
+  $('svcTestPreview').textContent = base ? ('GET ' + base + path) : '(该服务未配置上游地址)';
+}
+
+function clearSvcTestResp(){
+  $('svcTestRespBox').innerHTML = '<span class="rph">// 点击「▶ 开始探测」后，结果显示在此处\n'
+    + '// 探测固定用 GET，不会对上游产生副作用\n'
+    + '// 通用服务没有统一的接口形状，网关只验证「连得上连不上」</span>';
+  $('svcTestMetaBar').style.display = 'none';
+  $('svcTestRaw').textContent = '';
+  $('svcTestRaw').classList.remove('open');
+  $('svcTestRawTog').textContent = '▶ 上游原始返回';
+}
+
+async function runSvcTest(){
+  if(!svcTestCtx) return;
+  const btn = $('svcTestSendBtn');
+  btn.disabled = true; btn.textContent = '探测中…';
+  $('svcTestMetaBar').style.display = 'flex';
+  $('svcTestVerdict').innerHTML = '<span class="tag tag-gray">探测中…</span>';
+  $('svcTestMeta').textContent = '-';
+  $('svcTestRespBox').innerHTML = '<span class="rph">// 正在从服务端 GET 上游…</span>';
+
+  const probePath = ($('svcTestPath').value||'').trim();
   try{
-    const qs = 'serviceId=' + encodeURIComponent(serviceId)
-             + (probePath.trim() ? '&probePath=' + encodeURIComponent(probePath.trim()) : '');
+    const qs = 'serviceId=' + encodeURIComponent(svcTestCtx.serviceId)
+             + (probePath ? '&probePath=' + encodeURIComponent(probePath) : '');
     const r = await fetch(apiUrl('/modelgate/services/test?' + qs), {method:'POST', headers:hdrs()});
     const j = await r.json();
-    if(!isOk(j)){ toast('探测失败: '+errMsg(j),'error'); return; }
+    if(!isOk(j)){
+      $('svcTestVerdict').innerHTML = '<span class="tag tag-red">❌ 探测请求失败</span>';
+      $('svcTestMeta').textContent = 'HTTP ' + r.status;
+      $('svcTestRespBox').textContent = errMsg(j);
+      return;
+    }
     const d = j.data || {};
-    const head = (d.success ? '✅ ' : '❌ ') + (d.message || '');
-    const meta = [d.httpStatus != null ? 'HTTP '+d.httpStatus : null,
-                  d.latencyMs != null ? d.latencyMs+'ms' : null,
-                  d.upstreamUri].filter(Boolean).join(' · ');
-    // 用 alert 而不是 toast：探测结论多为两三行，toast 装不下也留不住
-    alert(head + '\n\n' + meta
-          + (d.upstreamBody ? '\n\n── 上游返回 ──\n' + d.upstreamBody : ''));
-    toast(d.success ? '上游可达' : '上游不可达', d.success ? 'success' : 'error');
+    $('svcTestVerdict').innerHTML = d.success
+      ? '<span class="tag tag-green">✅ 上游可达</span>'
+      : '<span class="tag tag-red">❌ 上游不可达</span>';
+    $('svcTestMeta').textContent = [
+      d.httpStatus != null ? 'HTTP ' + d.httpStatus : '无 HTTP 响应',
+      d.latencyMs != null ? d.latencyMs + 'ms' : null,
+      d.upstreamUri
+    ].filter(Boolean).join(' · ');
+
+    // 结论置顶、原始返回折叠——与模型测试工具同一套信息层级
+    $('svcTestRespBox').innerHTML =
+      '<span style="color:' + (d.success ? '#86efac' : '#fca5a5') + '">// 结论</span>\n'
+      + escapeHtml(d.message || '(无)');
+    if(d.upstreamBody){
+      let raw;
+      try { raw = JSON.stringify(JSON.parse(d.upstreamBody), null, 2); }
+      catch(e){ raw = d.upstreamBody; }
+      $('svcTestRaw').textContent = raw;
+      $('svcTestRaw').classList.add('open');
+      $('svcTestRawTog').textContent = '▼ 上游原始返回';
+    }
   }catch(e){
-    toast('探测异常: '+(e && e.message || e),'error');
+    $('svcTestVerdict').innerHTML = '<span class="tag tag-red">❌ 请求未发出</span>';
+    $('svcTestMeta').textContent = '-';
+    $('svcTestRespBox').textContent = String(e && e.message || e);
+  }finally{
+    btn.disabled = false; btn.textContent = '▶ 开始探测';
   }
 }
 
