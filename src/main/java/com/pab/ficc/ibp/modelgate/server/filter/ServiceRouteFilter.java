@@ -103,8 +103,8 @@ public class ServiceRouteFilter implements GlobalFilter, Ordered {
         ServiceCredentialEntity cred = serviceRegistryService.getCredentialDecrypted(serviceId);
 
         URI original = exchange.getRequest().getURI();
-        String upstreamUri = svc.normalizedUpstreamUrl()
-                + resolveRemainder(original.getPath(), serviceId, svc.shouldStripPrefix())
+        String upstreamUri = svc.joinUpstream(
+                        resolveRemainder(original.getPath(), serviceId, svc.shouldStripPrefix()))
                 + (original.getRawQuery() != null ? "?" + original.getRawQuery() : "");
 
         return new RouteInfo(URI.create(upstreamUri), buildUpstreamAuthHeaders(cred, serviceId), svc.getTimeoutMs());
@@ -117,8 +117,11 @@ public class ServiceRouteFilter implements GlobalFilter, Ordered {
      * {@code /svc/crm/api/v2/query} → {@code /api/v2/query}，接入方内部路径一行都不用改。
      * {@code false}：完整路径原样转发。
      *
-     * <p>剥完为空时补一个 {@code "/"}（请求 {@code /svc/crm} 本身）：
-     * 否则会拼出没有路径的 URL，有的上游会 400。
+     * <p><b>剥完为空、或只剩一个 {@code "/"}，一律返回空串</b>——{@code /svc/crm} 与
+     * {@code /svc/crm/} 指的是同一个资源（服务根），这里不该产生差异。
+     * 补不补斜杠交给 {@link ServiceEntity#joinUpstream(String)} 决定，因为那要看
+     * {@code upstreamUrl} 自己带不带路径：上游地址是 {@code http://host:9000/chat/completions}
+     * 时在这里补出 {@code /chat/completions/}，多数框架会当成另一条路由并回 404。
      */
     static String resolveRemainder(String path, String serviceId, boolean stripPrefix) {
         if (!stripPrefix) {
@@ -126,7 +129,7 @@ public class ServiceRouteFilter implements GlobalFilter, Ordered {
         }
         String prefix = "/svc/" + serviceId;
         String remainder = path.length() > prefix.length() ? path.substring(prefix.length()) : "";
-        return remainder.isEmpty() ? "/" : remainder;
+        return "/".equals(remainder) ? "" : remainder;
     }
 
     /**

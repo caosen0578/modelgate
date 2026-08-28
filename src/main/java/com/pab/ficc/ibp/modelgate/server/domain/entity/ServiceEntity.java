@@ -128,6 +128,50 @@ public class ServiceEntity {
         return upstreamUrl == null ? null : upstreamUrl.replaceAll("/+$", "");
     }
 
+    /**
+     * 把剩余路径拼到上游地址之后，得到真正要请求的完整 URL。
+     *
+     * <p>转发（{@code ServiceRouteFilter}）与管理面探测（{@code ServiceConnectivityService}）
+     * <b>必须共用本方法</b>：探测的全部价值就在于"它打的地址和真实转发一模一样"，
+     * 两边各拼各的就会出现"探测通了但转发 404"。
+     *
+     * <p><b>remainder 为空（调用方请求服务根，即 {@code /svc/{编码}} 或 {@code /svc/{编码}/}）
+     * 时怎么补，取决于 upstreamUrl 自己带不带路径</b>——这一点错过一次：
+     * <ul>
+     *   <li>只到 host:port（{@code http://crm.intranet:8080}）→ <b>补 {@code "/"}</b>，
+     *       否则拼出没有 path 的地址，有的上游直接 400</li>
+     *   <li>已带业务路径（{@code http://127.0.0.1:9000/chat/completions}）→ <b>不能补</b>：
+     *       补成 {@code /chat/completions/} 后，多数 Web 框架按另一条路由处理并回 404，
+     *       而运营看到的现象是"地址明明填对了却 404"，会去改一个本来就对的配置</li>
+     * </ul>
+     */
+    public String joinUpstream(String remainder) {
+        String base = normalizedUpstreamUrl();
+        if (base == null || base.isBlank()) {
+            return base;
+        }
+        if (remainder != null && !remainder.isEmpty()) {
+            return base + remainder;
+        }
+        return baseHasPath(base) ? base : base + "/";
+    }
+
+    /**
+     * 上游地址里是否已经带了路径段。
+     *
+     * <p>地址非法解析不出来时按<b>「无路径」</b>处理：那种情况下至多多补一个斜杠，
+     * 而漏补会拼出没有 path 的地址；地址本身非法这件事由调用方 {@code URI.create}
+     * 报出来，不该在这里静默改变判定。
+     */
+    private static boolean baseHasPath(String base) {
+        try {
+            String p = java.net.URI.create(base).getPath();
+            return p != null && !p.isEmpty();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     /** 探测方法归一化：空值按 GET（与建表默认值一致，也是最安全的选择——GET 无副作用）。 */
     public String resolveProbeMethod() {
         return probeMethod == null || probeMethod.isBlank() ? "GET" : probeMethod.trim().toUpperCase();

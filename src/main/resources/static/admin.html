@@ -4937,6 +4937,26 @@ function renderServices(list){
   }).join('');
 }
 
+/**
+ * 上游地址是否已经带了业务路径（不只是 host:port）。
+ * 与后端 ServiceEntity.baseHasPath 同一判定，改一处要同步另一处。
+ */
+function svcBaseHasPath(base){
+  try { return new URL(base).pathname.replace(/^\/+$/,'') !== ''; }
+  catch(e){ return false; }
+}
+
+/**
+ * 前端镜像 ServiceEntity.joinUpstream —— 预览必须与真实转发落到同一个地址，
+ * 否则预览会把人往错的方向引（这正是 upstreamUrl 带路径时 404 的来源）。
+ */
+function svcJoinUpstream(base, remainder){
+  const b = (base||'').replace(/\/+$/,'');
+  if(!b) return '';
+  if(remainder && remainder !== '/') return b + remainder;
+  return svcBaseHasPath(b) ? b : b + '/';
+}
+
 /** 转发预览：路径规则最容易理解错，直接把结果显示出来比写多少说明都有效 */
 function updateSvcPreview(){
   const id = ($('svcId').value || '').trim();
@@ -4946,8 +4966,19 @@ function updateSvcPreview(){
   const strip = $('svcStripPrefix').checked;
   const sample = '/api/v2/query';
   const inbound = `/svc/${id}${sample}`;
-  const outbound = up + (strip ? sample : inbound);
-  box.innerHTML = `调用方请求网关：<b>POST ${escHtml(inbound)}</b><br>网关实际转发：&nbsp;&nbsp;<b>POST ${escHtml(outbound)}</b>`;
+  const outbound = strip ? svcJoinUpstream(up, sample) : svcJoinUpstream(up, inbound);
+  // 服务根这一行必须单独显示：把完整接口路径写进「上游地址」的人只会调 /svc/{编码}，
+  // 而那正是唯一会因补不补斜杠而 404 的情形，光看上面那行看不出来
+  const rootIn  = `/svc/${id}`;
+  const rootOut = strip ? svcJoinUpstream(up, '') : svcJoinUpstream(up, rootIn);
+  box.innerHTML =
+      `调用方请求网关：<b>POST ${escHtml(inbound)}</b><br>网关实际转发：&nbsp;&nbsp;<b>POST ${escHtml(outbound)}</b>`
+    + `<br><span style="color:#94a3b8">服务根 ${escHtml(rootIn)} → ${escHtml(rootOut)}</span>`
+    + (svcBaseHasPath(up)
+        ? '<br><span style="color:#b45309">⚠️ 上游地址里已经带了接口路径。'
+          + `这样接入方只能调 <b>${escHtml(rootIn)}</b>；若希望接入方按 `
+          + `<b>${escHtml(inbound)}</b> 这样带路径调用，「上游地址」应只填到 host:port。</span>`
+        : '');
 }
 
 /** 非 GET/HEAD 才显示请求体输入，并弹出副作用警告——这是唯一会让管理面写上游的动作 */
@@ -5115,12 +5146,12 @@ function updateSvcTestPreview(){
   const base = (svcTestCtx.upstreamUrl||'').replace(/\/+$/,'');
   let path = ($('svcTestPath').value||'').trim();
   if(path && !path.startsWith('/')) path = '/' + path;
-  if(!path) path = '/';
   const m = $('svcTestMethod').value || 'GET';
   const writes = (m !== 'GET' && m !== 'HEAD');
   $('svcTestBodyRow').style.display   = writes ? '' : 'none';
   $('svcTestWriteWarn').style.display = writes ? '' : 'none';
-  $('svcTestPreview').textContent = base ? (m + ' ' + base + path) : '(该服务未配置上游地址)';
+  // 走与真实转发同一套拼接：路径留空时是否补尾斜杠取决于上游地址带不带路径
+  $('svcTestPreview').textContent = base ? (m + ' ' + svcJoinUpstream(base, path)) : '(该服务未配置上游地址)';
 }
 
 function clearSvcTestResp(){

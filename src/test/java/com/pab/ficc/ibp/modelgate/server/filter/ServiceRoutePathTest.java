@@ -1,5 +1,7 @@
 package com.pab.ficc.ibp.modelgate.server.filter;
 
+import com.pab.ficc.ibp.modelgate.server.domain.entity.ServiceEntity;
+
 /**
  * 服务链路的路径解析回归用例（main 方式，不额外引入测试框架）。
  *
@@ -22,6 +24,9 @@ public class ServiceRoutePathTest {
         remainderStripped();
         remainderNotStripped();
         remainderNoDoubleSlash();
+        joinUpstreamHostOnly();
+        joinUpstreamWithPath();
+        joinMatchesProbe();
 
         System.out.println();
         System.out.println("通过 " + pass + " / " + (pass + fail));
@@ -60,8 +65,12 @@ public class ServiceRoutePathTest {
                 "/api/v2/query".equals(ServiceRouteFilter.resolveRemainder("/svc/crm/api/v2/query", "crm", true)));
         check("剥离: /svc/kb/search/sse → /search/sse",
                 "/search/sse".equals(ServiceRouteFilter.resolveRemainder("/svc/kb/search/sse", "kb", true)));
-        check("剥离: /svc/agent/ → /",
-                "/".equals(ServiceRouteFilter.resolveRemainder("/svc/agent/", "agent", true)));
+        // /svc/agent 与 /svc/agent/ 是同一个资源（服务根），剥完都归空串。
+        // 补不补斜杠由 ServiceEntity.joinUpstream 按 upstreamUrl 带不带路径决定。
+        check("剥离: /svc/agent/ → 空串（服务根）",
+                "".equals(ServiceRouteFilter.resolveRemainder("/svc/agent/", "agent", true)));
+        check("剥离: /svc/agent → 空串（服务根，与带尾斜杠等价）",
+                "".equals(ServiceRouteFilter.resolveRemainder("/svc/agent", "agent", true)));
     }
 
     /** 关闭剥离时完整路径原样转发。 */
@@ -74,23 +83,74 @@ public class ServiceRoutePathTest {
     }
 
     /**
-     * 剥完为空时必须补 {@code "/"}，不能返回空串。
-     *
-     * <p>返回空串会拼出没有路径的 URL（{@code http://host:8080} 而不是 {@code http://host:8080/}），
-     * 有的上游对此直接 400。而 upstreamUrl 那一侧的末尾斜杠已经在写入时被规范化去掉，
-     * 两边都不带斜杠就会拼出一个没有 path 的地址。
+     * 拼接不能产生 {@code //}：upstreamUrl 末尾斜杠在写入时已规范化去掉，
+     * 剩余路径若非空必定以 {@code /} 开头，两者拼接恰好一个斜杠。
      */
     private static void remainderNoDoubleSlash() {
-        String r = ServiceRouteFilter.resolveRemainder("/svc/crm", "crm", true);
-        check("剥离后为空 → 补 /", "/".equals(r));
-        check("拼接不产生 //",
-                !("http://crm.intranet:8080" + r).contains("8080//"));
-
-        // 与 ServiceEntity.normalizedUpstreamUrl 配合：上游地址末尾斜杠已去掉，
-        // 剩余路径必定以 / 开头，两者拼接恰好一个斜杠
-        String full = "http://crm.intranet:8080"
-                + ServiceRouteFilter.resolveRemainder("/svc/crm/api/query", "crm", true);
+        String full = svc("http://crm.intranet:8080").joinUpstream(
+                ServiceRouteFilter.resolveRemainder("/svc/crm/api/query", "crm", true));
         check("完整拼接正确", "http://crm.intranet:8080/api/query".equals(full));
+        check("拼接不产生 //", !full.contains("8080//"));
+    }
+
+    /**
+     * upstreamUrl 只到 host:port 时，服务根必须补出 {@code "/"}。
+     *
+     * <p>不补会拼出没有 path 的地址（{@code http://host:8080}），有的上游直接 400。
+     */
+    private static void joinUpstreamHostOnly() {
+        ServiceEntity s = svc("http://crm.intranet:8080");
+        check("host-only + 空 → 补 /", "http://crm.intranet:8080/".equals(s.joinUpstream("")));
+        check("host-only + 业务路径", "http://crm.intranet:8080/api/query".equals(s.joinUpstream("/api/query")));
+        check("host-only 尾斜杠被规范化",
+                "http://crm.intranet:8080/".equals(svc("http://crm.intranet:8080///").joinUpstream("")));
+    }
+
+    /**
+     * upstreamUrl 已带业务路径时，服务根<b>不能</b>再补斜杠。
+     *
+     * <p>这是实际踩到的 404：{@code http://127.0.0.1:9000/chat/completions} 被拼成
+     * {@code /chat/completions/}，多数框架当成另一条路由，运营看到的是
+     * "地址明明填对了却 404"。
+     */
+    private static void joinUpstreamWithPath() {
+        ServiceEntity s = svc("http://127.0.0.1:9000/chat/completions");
+        check("带路径 + 空 → 原样，不补尾斜杠",
+                "http://127.0.0.1:9000/chat/completions".equals(s.joinUpstream("")));
+        check("带路径 + 空，不产生 completions/",
+                !s.joinUpstream("").endsWith("completions/"));
+        check("带路径 + 子路径仍正常拼",
+                "http://127.0.0.1:9000/chat/completions/v2".equals(s.joinUpstream("/v2")));
+    }
+
+    /**
+     * 转发与管理面探测必须落到<b>同一个</b>地址。
+     *
+     * <p>两边各拼各的会出现"探测通了但转发 404"——这类不一致最难查，
+     * 因为两个界面各自看都是对的。这里把 {@code ServiceConnectivityService} 对
+     * "路径留空"的归一化（空 / {@code "/"} → 空串）与转发侧摆在一起断言。
+     */
+    private static void joinMatchesProbe() {
+        ServiceEntity s = svc("http://127.0.0.1:9000/chat/completions");
+        String forwarded = s.joinUpstream(ServiceRouteFilter.resolveRemainder("/svc/testsse/", "testsse", true));
+        String probed = s.joinUpstream(normalizeProbePath(null));
+        check("探测地址 == 转发地址（路径均留空）", forwarded.equals(probed));
+        check("探测地址 == 转发地址（探测填了裸 /）", forwarded.equals(s.joinUpstream(normalizeProbePath("/"))));
+    }
+
+    /** 与 {@code ServiceConnectivityService.probe} 里的归一化保持一致。 */
+    private static String normalizeProbePath(String raw) {
+        String p = (raw == null || raw.isBlank()) ? "" : raw.trim();
+        if (!p.isEmpty() && !p.startsWith("/")) {
+            p = "/" + p;
+        }
+        return "/".equals(p) ? "" : p;
+    }
+
+    private static ServiceEntity svc(String upstreamUrl) {
+        ServiceEntity s = new ServiceEntity();
+        s.setUpstreamUrl(upstreamUrl);
+        return s;
     }
 
     private static void check(String name, boolean ok) {

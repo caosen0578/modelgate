@@ -80,10 +80,17 @@ public class ServiceConnectivityService {
             return Mono.just(ConnectivityTestVO.of(false, 0L, "上游地址为空，无法发起探测", null, null, null));
         }
 
+        // 探测路径为空 / 只填了一个 "/" 都表示"打服务根"，统一归到空串，
+        // 由 joinUpstream 按 upstreamUrl 带不带路径决定要不要补斜杠——
+        // 这里自己补 "/" 会让 http://host:9000/chat/completions 被探成
+        // /chat/completions/，上游回 404，看起来像地址填错了
         String effPath = firstNonBlank(probePath, service.getProbePath());
-        String path = (effPath == null || effPath.isBlank()) ? "/" : effPath.trim();
-        if (!path.startsWith("/")) {
+        String path = (effPath == null || effPath.isBlank()) ? "" : effPath.trim();
+        if (!path.isEmpty() && !path.startsWith("/")) {
             path = "/" + path;
+        }
+        if ("/".equals(path)) {
+            path = "";
         }
 
         String verb = firstNonBlank(method, service.resolveProbeMethod());
@@ -93,13 +100,16 @@ public class ServiceConnectivityService {
         boolean bodyAllowed = !HttpMethod.GET.equals(httpMethod) && !HttpMethod.HEAD.equals(httpMethod);
         String effBody = bodyAllowed ? firstNonBlank(body, service.getProbeBody()) : null;
 
+        // 与 ServiceRouteFilter 共用同一套拼接：探测的价值就在于"打的地址和真实转发一致"，
+        // 两边各拼各的会出现"探测通了但转发 404"这类最难查的不一致
+        String target = service.joinUpstream(path);
         URI uri;
         try {
-            uri = URI.create(base + path);
+            uri = URI.create(target);
         } catch (Exception e) {
             // 上游地址里有非法字符时在这里就炸——这本身就是配置错误，直接告诉运营
             return Mono.just(ConnectivityTestVO.of(false, 0L,
-                    "上游地址非法，无法构造请求：" + e.getMessage(), null, base + path, null));
+                    "上游地址非法，无法构造请求：" + e.getMessage(), null, target, null));
         }
 
         Duration timeout = Duration.ofMillis(probeTimeoutMs(service.getTimeoutMs()));
