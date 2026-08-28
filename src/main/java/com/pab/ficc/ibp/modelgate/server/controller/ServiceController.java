@@ -10,7 +10,6 @@ import com.pab.ficc.ibp.modelgate.server.domain.bo.ServiceQueryBO;
 import com.pab.ficc.ibp.modelgate.server.domain.bo.UpdateServiceRequestBO;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.ServiceCredentialEntity;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.ServiceEntity;
-import com.pab.ficc.ibp.modelgate.server.domain.vo.ServiceAuthorizedAppVO;
 import com.pab.ficc.ibp.modelgate.server.domain.vo.ServiceVO;
 import com.pab.ficc.ibp.modelgate.server.service.ServiceAuthService;
 import com.pab.ficc.ibp.modelgate.server.service.ServiceRegistryService;
@@ -20,8 +19,11 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -29,7 +31,6 @@ import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
 
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -101,7 +102,7 @@ public class ServiceController {
     }
 
     @Operation(summary = "新增服务（含上游凭证，事务写两表）")
-    @PostMapping(UrlConstant.CREATE)
+    @PostMapping(UrlConstant.ROOT)
     public Mono<Result<ServiceVO>> create(@RequestBody @Valid CreateServiceRequestBO req) {
         return Mono.fromCallable(() -> ServiceVO.of(serviceRegistryService.create(req)))
                 .subscribeOn(AdminScheduler.get())
@@ -110,7 +111,7 @@ public class ServiceController {
     }
 
     @Operation(summary = "修改服务（服务编码不可修改，凭证字段留空=保持原值）")
-    @PostMapping(UrlConstant.UPDATE)
+    @PutMapping(UrlConstant.UPDATE)
     public Mono<Result<ServiceVO>> update(@RequestBody @Valid UpdateServiceRequestBO req) {
         return Mono.fromCallable(() -> {
             ServiceEntity e = serviceRegistryService.update(req);
@@ -122,7 +123,7 @@ public class ServiceController {
     }
 
     @Operation(summary = "删除服务（逻辑删除，级联软删凭证与全部授权行）")
-    @PostMapping(UrlConstant.DELETE)
+    @DeleteMapping(UrlConstant.DELETE)
     public Mono<Result<Void>> delete(
             @Parameter(description = "服务编码") @RequestParam("serviceId") String serviceId) {
         return Mono.fromRunnable(() -> serviceRegistryService.delete(serviceId))
@@ -132,7 +133,7 @@ public class ServiceController {
     }
 
     @Operation(summary = "启用服务")
-    @PostMapping(UrlConstant.ENABLE)
+    @PatchMapping(UrlConstant.ENABLE)
     public Mono<Result<Void>> enable(@RequestParam("serviceId") String serviceId) {
         return Mono.fromRunnable(() -> serviceRegistryService.enable(serviceId))
                 .subscribeOn(AdminScheduler.get())
@@ -141,7 +142,7 @@ public class ServiceController {
     }
 
     @Operation(summary = "禁用服务（禁用后请求该服务返回 503）")
-    @PostMapping(UrlConstant.DISABLE)
+    @PatchMapping(UrlConstant.DISABLE)
     public Mono<Result<Void>> disable(@RequestParam("serviceId") String serviceId) {
         return Mono.fromRunnable(() -> serviceRegistryService.disable(serviceId))
                 .subscribeOn(AdminScheduler.get())
@@ -169,16 +170,6 @@ public class ServiceController {
             m.put("extraHeaders", c == null ? null : c.getExtraHeaders());
             return m;
         })
-                .subscribeOn(AdminScheduler.get())
-                .timeout(AdminScheduler.REQUEST_TIMEOUT)
-                .map(Result::success);
-    }
-
-    @Operation(summary = "反查：某服务被哪些接入系统授权（含是否实际生效）")
-    @GetMapping(UrlConstant.APPS)
-    public Mono<Result<List<ServiceAuthorizedAppVO>>> listAuthorizedApps(
-            @Parameter(description = "服务编码") @RequestParam("serviceId") String serviceId) {
-        return Mono.fromCallable(() -> serviceAuthService.listAuthorizedApps(serviceId))
                 .subscribeOn(AdminScheduler.get())
                 .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .map(Result::success);

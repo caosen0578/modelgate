@@ -321,7 +321,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
         </div>
         <div class="toolbar-right">
           <input type="text" id="serviceSearch" placeholder="搜索服务编码 / 名称..." style="width:220px" oninput="searchServices()"/>
-          <button class="btn btn-primary" data-api="POST /modelgate/services/create" onclick="openServiceModal()">+ 新增服务</button>
+          <button class="btn btn-primary" data-api="POST /modelgate/services" onclick="openServiceModal()">+ 新增服务</button>
         </div>
       </div>
       <div class="card" style="padding:0;overflow:hidden">
@@ -663,6 +663,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
       <div class="subtab active" onclick="switchSubtab('info')">系统信息</div>
       <div class="subtab" onclick="switchSubtab('creds')">凭证管理</div>
       <div class="subtab" onclick="switchSubtab('auth')">模型授权</div>
+      <div class="subtab" onclick="switchSubtab('svcauth')">服务授权</div>
       <div class="subtab" onclick="switchSubtab('access')">访问控制</div>
     </div>
 
@@ -718,6 +719,26 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
           <tr class="empty-row"><td colspan="9">暂无授权</td></tr>
         </tbody>
       </table>
+    </div>
+
+    <!-- 子面板: 服务授权 -->
+    <!-- 与「模型授权」平级：同一个 appId 的同一把凭证既能调模型也能调服务，
+         凭证鉴权完全共用；真正决定"能不能调这个服务"的是 mg_app_service_auth。 -->
+    <div class="subpanel" id="sub-svcauth">
+      <div class="toolbar">
+        <span class="text-muted">授权该系统可访问的通用服务（/svc/** 流量）及限制</span>
+        <button class="btn btn-primary btn-sm" data-api="POST /modelgate/service-auth/add" onclick="openServiceAuthModal()">+ 授权新服务</button>
+      </div>
+      <table>
+        <thead>
+          <tr><th>服务名称</th><th>服务编码</th><th>对外路径</th><th>SSE</th><th>状态</th><th>QPS</th><th>日限</th><th>到期时间</th><th>生效</th><th>操作</th></tr>
+        </thead>
+        <tbody id="svcAuthTbody">
+          <tr class="empty-row"><td colspan="10">暂无授权</td></tr>
+        </tbody>
+      </table>
+      <!-- 服务侧没有「月 Token」列：服务不产生 Token，该维度对它无意义
+           （mg_app_service_auth 刻意没有 monthly_tokens 字段）。 -->
     </div>
 
     <!-- 子面板: 访问控制 -->
@@ -1085,6 +1106,53 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
     <div class="modal-footer">
       <button class="btn btn-neutral" onclick="closeModal('modelViewModal')">关闭</button>
       <button class="btn btn-primary" id="viewToEditBtn">去编辑</button>
+    </div>
+  </div>
+</div>
+
+<!-- ========== MODAL: 服务授权 ========== -->
+<div class="modal-backdrop" id="svcAuthModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="svcAuthModalTitle">授权新服务</h3>
+      <button class="modal-close" onclick="closeModal('svcAuthModal')">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-grid form-grid-2">
+        <div class="form-group" style="grid-column:1/-1">
+          <label>选择服务 <span style="color:red">*</span></label>
+          <select id="sa_serviceId">
+            <option value="">-- 请选择 --</option>
+          </select>
+          <span class="hint" id="sa_serviceHint" style="display:none">
+            授权的服务不可更改（唯一键为 系统+服务）；如需换服务请撤销后重新授权。
+          </span>
+        </div>
+        <div class="form-group">
+          <label>QPS 限制（0=不限）</label>
+          <input type="number" id="sa_qps" value="0" min="0"/>
+        </div>
+        <div class="form-group">
+          <label>日调用限制（0=不限）</label>
+          <input type="number" id="sa_daily" value="0" min="0"/>
+        </div>
+        <div class="form-group" style="grid-column:1/-1">
+          <label>有效期至（可选）</label>
+          <input type="datetime-local" id="sa_expires" step="1"/>
+          <span class="hint">留空 = 永久有效。<b>编辑时清空该框即表示改为永久</b>，不是"保持原值"。</span>
+        </div>
+      </div>
+      <!-- 刻意没有「月 Token 配额」：服务不产生 Token，该维度对它无意义。
+           配额检查时月度参数传 0，RateLimitService 内 ≤0 直接跳过、不发 Redis 命令，
+           所以服务流量稳态下比模型流量少一次 Redis 往返。 -->
+      <div class="hint" style="margin-top:10px">
+        报文留档开关在<b>服务本身</b>（服务管理页），不在这里——服务侧的粒度是"每个接口录入时决定记不记"，
+        与模型侧按接入系统逐条控制不同。
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeModal('svcAuthModal')">取消</button>
+      <button class="btn btn-primary" id="svcAuthSubmitBtn" onclick="submitServiceAuth()">确认授权</button>
     </div>
   </div>
 </div>
@@ -2469,7 +2537,9 @@ function closeDrawer(){
 
 function switchSubtab(tab){
   document.querySelectorAll('.subtab').forEach((el,i)=>{
-    const tabs = ['info','creds','auth','access'];
+    // ⚠️ 顺序必须与上方 .subtab 元素的 DOM 顺序**逐一对应**：这里是按下标匹配的，
+    //    插了新标签却忘了同步这个数组，点哪个都会切到错的面板。
+    const tabs = ['info','creds','auth','svcauth','access'];
     el.classList.toggle('active', tabs[i]===tab);
   });
   document.querySelectorAll('.subpanel').forEach(el=>{
@@ -2477,6 +2547,7 @@ function switchSubtab(tab){
   });
   if(tab==='creds')  loadCreds();
   if(tab==='auth')   loadAuths();
+  if(tab==='svcauth') loadServiceAuths();
   if(tab==='access') loadAccess();
 }
 
@@ -3224,6 +3295,184 @@ async function revokeAuth(modelId){
   try{ await fetch(apiUrl(`/modelgate/auth/revoke?appId=${encodeURIComponent(currentApp.appId)}&modelId=${encodeURIComponent(modelId)}`), {method:'DELETE', headers:hdrs()}); }catch(e){}
   toast('授权已撤销');
   loadAuths();
+}
+
+// ============================================================
+// 服务授权（接入系统 × 通用服务）
+// ============================================================
+let currentServiceAuths = [];
+// null = 新增授权；非空 = 正在编辑该 serviceId 的授权
+let editingSvcAuthServiceId = null;
+
+/**
+ * 取"可选服务"全量列表，供授权下拉使用。
+ *
+ * 与 fetchSelectableModels 同一手法：列表页是服务端分页的，allServices 只有当前页，
+ * 直接拿它当下拉数据源会让**第 2 页之后的服务在授权弹窗里消失**。
+ * 这里按 pageSize 上限单独拉一次，只取启用中的。
+ */
+async function fetchSelectableServices(){
+  try{
+    const r = await fetch(apiUrl('/modelgate/services?pageIndex=1&pageSize=200'), {headers:hdrs()});
+    const j = await r.json();
+    if(!isOk(j)) return [];
+    return (j.data?.items || []).filter(x => x.enabled !== false);
+  }catch(e){
+    console.warn('[ModelGate] 取服务下拉数据失败', e);
+    return (allServices||[]).filter(x => x.enabled !== false);
+  }
+}
+
+async function loadServiceAuths(){
+  if(!currentApp) return;
+  try{
+    const r = await fetch(apiUrl(`/modelgate/service-auth/list?appId=${encodeURIComponent(currentApp.appId)}`), {headers:hdrs()});
+    const j = await r.json();
+    if(!isOk(j)){ toast('加载服务授权失败: '+errMsg(j),'error'); return; }
+    currentServiceAuths = j.data||[];
+    renderServiceAuths(currentServiceAuths);
+  }catch(e){
+    console.warn('[ModelGate] 服务授权列表加载异常', e);
+    currentServiceAuths = [];
+    renderServiceAuths(currentServiceAuths);
+  }
+}
+
+function renderServiceAuths(data){
+  const tbody = $('svcAuthTbody');
+  if(!data || !data.length){
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="10">暂无授权，点击右上角「+ 授权新服务」开始</td></tr>';
+    return;
+  }
+  tbody.innerHTML = data.map(a=>{
+    // 服务编码来自用户录入，一律走 jsArg 转义后再进 inline handler
+    const idArg = jsArg(a.serviceId);
+    const prefix = a.publicPrefix || ('/svc/' + a.serviceId + '/');
+    return `
+    <tr>
+      <td><strong>${escapeHtml(a.serviceName || a.serviceId)}</strong></td>
+      <td><code>${escapeHtml(a.serviceId)}</code></td>
+      <td><code style="font-size:11px">${escapeHtml(prefix)}</code></td>
+      <td>${a.sse ? '<span class="tag tag-purple">SSE</span>' : '<span class="tag tag-gray">普通</span>'}</td>
+      <td>${a.enabled!==false?'<span class="tag tag-green">✅ 启用</span>':'<span class="tag tag-red">禁用</span>'}</td>
+      <td>${fmt(a.qpsLimit)}/s</td>
+      <td>${fmt(a.dailyLimit)}</td>
+      <td>${a.expiresAt?fmtTime(a.expiresAt):'永久'}</td>
+      <td>${a.effective?'<span class="tag tag-green">生效</span>':'<span class="tag tag-red" title="接入系统已启用 且 授权已启用 且 未过期 且 服务已启用，四者缺一不可">未生效</span>'}</td>
+      <td>
+        <div class="flex gap-8">
+          <button class="btn btn-neutral btn-sm" title="编辑服务授权" onclick="openServiceAuthEditModal(${idArg})">编辑</button>
+          <button class="btn ${a.enabled!==false?'btn-warning':'btn-success'} btn-sm" onclick="toggleServiceAuth(${idArg},${a.enabled!==false})">${a.enabled!==false?'禁用':'启用'}</button>
+          <button class="btn btn-danger btn-sm" title="撤销服务授权" onclick="revokeServiceAuth(${idArg})">撤销</button>
+        </div>
+      </td>
+    </tr>
+  `}).join('');
+}
+
+async function openServiceAuthModal(){
+  editingSvcAuthServiceId = null;
+  $('svcAuthModalTitle').textContent = '授权新服务';
+  $('svcAuthSubmitBtn').textContent = '确认授权';
+  $('sa_serviceHint').style.display = 'none';
+  $('sa_qps').value='0'; $('sa_daily').value='0'; $('sa_expires').value='';
+  const sel = $('sa_serviceId');
+  sel.disabled = false;
+  sel.innerHTML = '<option value="">加载中…</option>';
+  openModal('svcAuthModal');
+
+  const services = await fetchSelectableServices();
+  if(!services.length){
+    sel.innerHTML = '<option value="">（暂无可用服务，请先到「服务管理」新增并启用）</option>';
+    return;
+  }
+  // 已授权的不再列出：批量接口对已存在的授权是跳过而非覆盖，列出来只会让人以为改了配额
+  const authorized = new Set((currentServiceAuths||[]).map(a=>a.serviceId));
+  const selectable = services.filter(x=>!authorized.has(x.serviceId));
+  sel.innerHTML = selectable.length
+    ? '<option value="">-- 请选择服务 --</option>'
+      + selectable.map(x=>`<option value="${escapeHtml(x.serviceId)}">${escapeHtml(x.serviceName)} (${escapeHtml(x.serviceId)})</option>`).join('')
+    : '<option value="">（全部可用服务均已授权）</option>';
+}
+
+/**
+ * 打开编辑弹窗，回填当前授权的配额与有效期。
+ * 服务本身不可改：唯一键是 (app_id, service_id)，换服务等于换一条授权。
+ */
+function openServiceAuthEditModal(serviceId){
+  const a = (currentServiceAuths||[]).find(x=>x.serviceId===serviceId);
+  if(!a){ toast('未找到该授权记录','error'); return; }
+
+  editingSvcAuthServiceId = serviceId;
+  $('svcAuthModalTitle').textContent = '编辑授权 · ' + (a.serviceName || serviceId);
+  $('svcAuthSubmitBtn').textContent = '保存修改';
+  $('sa_serviceHint').style.display = '';
+
+  const sel = $('sa_serviceId');
+  sel.innerHTML = `<option value="${escapeHtml(serviceId)}">${escapeHtml(a.serviceName||serviceId)} (${escapeHtml(serviceId)})</option>`;
+  sel.disabled = true;
+
+  $('sa_qps').value     = a.qpsLimit ?? 0;
+  $('sa_daily').value   = a.dailyLimit ?? 0;
+  $('sa_expires').value = fromExpiresAt(a.expiresAt);
+
+  openModal('svcAuthModal');
+}
+
+async function submitServiceAuth(){
+  if(!currentApp) return;
+  const serviceId = $('sa_serviceId').value;
+  if(!serviceId){ toast('请选择服务','error'); return; }
+
+  const quota = {
+    qpsLimit:   parseInt($('sa_qps').value)||0,
+    dailyLimit: parseInt($('sa_daily').value)||0,
+    expiresAt:  toExpiresAt($('sa_expires').value),
+  };
+  const editing = !!editingSvcAuthServiceId;
+  // 与模型侧同一套约定：新增走批量接口（serviceIds 数组）POST，编辑走单条 PUT
+  const url    = apiUrl(editing ? '/modelgate/service-auth/update' : '/modelgate/service-auth/add');
+  const method = editing ? 'PUT' : 'POST';
+  const body = editing
+    ? {appId: currentApp.appId, serviceId, ...quota}
+    : {appId: currentApp.appId, serviceIds: [serviceId], ...quota};
+
+  try{
+    const r = await fetch(url, {method, headers:hdrs(), body:JSON.stringify(body)});
+    const j = await r.json();
+    if(!isOk(j)){ toast(`失败(HTTP ${r.status}): `+errMsg(j),'error'); return; }
+  }catch(e){
+    console.warn('[ModelGate] 提交服务授权异常', e);
+    toast('请求异常: '+e.message,'error');
+    return;
+  }
+  toast(editing ? '授权已更新' : '授权已添加');
+  closeModal('svcAuthModal');
+  loadServiceAuths();
+}
+
+async function toggleServiceAuth(serviceId, currentEnabled){
+  const action = currentEnabled?'disable':'enable';
+  try{
+    const r = await fetch(apiUrl(`/modelgate/service-auth/${action}?appId=${encodeURIComponent(currentApp.appId)}&serviceId=${encodeURIComponent(serviceId)}`),
+                          {method:'PATCH', headers:hdrs()});
+    const j = await r.json();
+    if(!isOk(j)){ toast('操作失败: '+errMsg(j),'error'); return; }
+  }catch(e){ toast('操作异常','error'); return; }
+  toast(`授权已${currentEnabled?'禁用':'启用'}`);
+  loadServiceAuths();
+}
+
+async function revokeServiceAuth(serviceId){
+  if(!confirm(`确认撤销 ${serviceId} 的授权？\n\n撤销后该系统将无法访问该服务；可以重新授权。`)) return;
+  try{
+    const r = await fetch(apiUrl(`/modelgate/service-auth/revoke?appId=${encodeURIComponent(currentApp.appId)}&serviceId=${encodeURIComponent(serviceId)}`),
+                          {method:'DELETE', headers:hdrs()});
+    const j = await r.json();
+    if(!isOk(j)){ toast('撤销失败: '+errMsg(j),'error'); return; }
+  }catch(e){ toast('撤销异常','error'); return; }
+  toast('授权已撤销');
+  loadServiceAuths();
 }
 
 // ============================================================
@@ -4398,9 +4647,11 @@ async function saveService(){
   if(!body.serviceName){ toast('请填写服务名称','error'); return; }
   if(!body.upstreamUrl){ toast('请填写上游地址','error'); return; }
 
-  const url = apiUrl(editingServiceId ? '/modelgate/services/update' : '/modelgate/services/create');
+  // 与模型侧同一套 REST 约定：新增 POST 到集合根，修改 PUT /update
+  const url = apiUrl(editingServiceId ? '/modelgate/services/update' : '/modelgate/services');
   try{
-    const r = await fetch(url, {method:'POST', headers:hdrs(), body:JSON.stringify(body)});
+    const r = await fetch(url, {method: editingServiceId ? 'PUT' : 'POST',
+                                headers:hdrs(), body:JSON.stringify(body)});
     const j = await r.json();
     if(!isOk(j)){ toast('保存失败: '+errMsg(j),'error'); return; }
     toast(editingServiceId ? '服务已更新' : '服务已创建');
@@ -4413,7 +4664,7 @@ async function toggleService(serviceId, toEnable){
   const action = toEnable ? 'enable' : 'disable';
   try{
     const r = await fetch(apiUrl(`/modelgate/services/${action}?serviceId=${encodeURIComponent(serviceId)}`),
-                          {method:'POST', headers:hdrs()});
+                          {method:'PATCH', headers:hdrs()});
     const j = await r.json();
     if(!isOk(j)){ toast('操作失败: '+errMsg(j),'error'); return; }
     toast(toEnable ? '已启用' : '已禁用');
@@ -4425,7 +4676,7 @@ async function deleteService(serviceId){
   if(!confirm(`确定删除服务「${serviceId}」？\n\n会同时撤销该服务的全部授权，且服务编码释放后可被重新创建。\n已产生的审计与报文记录保留。`)) return;
   try{
     const r = await fetch(apiUrl(`/modelgate/services/delete?serviceId=${encodeURIComponent(serviceId)}`),
-                          {method:'POST', headers:hdrs()});
+                          {method:'DELETE', headers:hdrs()});
     const j = await r.json();
     if(!isOk(j)){ toast('删除失败: '+errMsg(j),'error'); return; }
     toast('服务已删除');
@@ -4438,7 +4689,7 @@ async function viewServiceApps(serviceId){
   $('serviceAppsTbody').innerHTML = '<tr class="empty-row"><td colspan="7">加载中…</td></tr>';
   openModal('serviceAppsModal');
   try{
-    const r = await fetch(apiUrl(`/modelgate/services/apps?serviceId=${encodeURIComponent(serviceId)}`), {headers:hdrs()});
+    const r = await fetch(apiUrl(`/modelgate/service-auth/apps?serviceId=${encodeURIComponent(serviceId)}`), {headers:hdrs()});
     const j = await r.json();
     if(!isOk(j)){ $('serviceAppsTbody').innerHTML = '<tr class="empty-row"><td colspan="7">加载失败</td></tr>'; return; }
     const rows = j.data || [];

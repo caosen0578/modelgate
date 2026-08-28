@@ -154,9 +154,14 @@ public class ServiceAuthService {
         cacheManager.evictServiceAuthCache(appId);
     }
 
-    /** 修改单条授权。expiresAt 传 null 的语义是「改为永久有效」，不是「保持原值」。 */
-    public void updateAuthorization(String appId, String serviceId, Boolean enabled,
-                                    Integer qpsLimit, Integer dailyLimit, LocalDateTime expiresAt) {
+    /**
+     * 修改单条授权。expiresAt 传 null 的语义是「改为永久有效」，不是「保持原值」。
+     *
+     * <p>返回更新后的 VO 而不是 void，与 {@code ModelAuthService.updateAuthorization} 一致：
+     * 前端保存后要立刻回显新值，返回 VO 省掉一次 list 往返。
+     */
+    public ServiceAuthVO updateAuthorization(String appId, String serviceId, Boolean enabled,
+                                             Integer qpsLimit, Integer dailyLimit, LocalDateTime expiresAt) {
         AppServiceAuthEntity existing = authMapper.selectOne(new LambdaQueryWrapper<AppServiceAuthEntity>()
                 .eq(AppServiceAuthEntity::getAppId, appId)
                 .eq(AppServiceAuthEntity::getServiceId, serviceId));
@@ -177,6 +182,37 @@ public class ServiceAuthService {
 
         log.info("[ServiceAuth] 授权已更新: appId={}, serviceId={}, enabled={}, qps={}, daily={}, expiresAt={}",
                 appId, serviceId, enabled, qpsLimit, dailyLimit, expiresAt);
+        cacheManager.evictServiceAuthCache(appId);
+
+        AppServiceAuthEntity updated = authMapper.selectOne(new LambdaQueryWrapper<AppServiceAuthEntity>()
+                .eq(AppServiceAuthEntity::getAppId, appId)
+                .eq(AppServiceAuthEntity::getServiceId, serviceId));
+        return ServiceAuthVO.of(updated, serviceMapper.selectOne(
+                new LambdaQueryWrapper<ServiceEntity>().eq(ServiceEntity::getServiceId, serviceId)));
+    }
+
+    /**
+     * 启用 / 禁用单条授权。
+     *
+     * <p>与 {@code updateAuthorization} 分开：列表上的启停是一次点击就该完成的动作，
+     * 走 update 的话前端必须先把 qps/daily/expiresAt 全带上，
+     * 少带一个就会把人家配好的配额顺手清掉——尤其 expiresAt 传 null 的语义是"改为永久"。
+     * 模型侧同样是独立的 PATCH enable/disable，这里保持一致。
+     */
+    public void setAuthEnabled(String appId, String serviceId, boolean enabled) {
+        AppServiceAuthEntity existing = authMapper.selectOne(new LambdaQueryWrapper<AppServiceAuthEntity>()
+                .eq(AppServiceAuthEntity::getAppId, appId)
+                .eq(AppServiceAuthEntity::getServiceId, serviceId));
+        if (existing == null) {
+            throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND,
+                    "授权不存在: appId=" + appId + ", serviceId=" + serviceId);
+        }
+        authMapper.update(null, new LambdaUpdateWrapper<AppServiceAuthEntity>()
+                .eq(AppServiceAuthEntity::getAppId, appId)
+                .eq(AppServiceAuthEntity::getServiceId, serviceId)
+                .set(AppServiceAuthEntity::getEnabled, enabled)
+                .set(AppServiceAuthEntity::getUpdateTime, LocalDateTime.now()));
+        log.info("[ServiceAuth] 授权已{}: appId={}, serviceId={}", enabled ? "启用" : "禁用", appId, serviceId);
         cacheManager.evictServiceAuthCache(appId);
     }
 

@@ -6,6 +6,7 @@ import com.pab.ficc.ibp.modelgate.server.domain.Result;
 import com.pab.ficc.ibp.modelgate.server.domain.bo.AddServiceAuthRequestBO;
 import com.pab.ficc.ibp.modelgate.server.domain.bo.UpdateServiceAuthRequestBO;
 import com.pab.ficc.ibp.modelgate.server.domain.vo.ServiceAuthVO;
+import com.pab.ficc.ibp.modelgate.server.domain.vo.ServiceAuthorizedAppVO;
 import com.pab.ficc.ibp.modelgate.server.service.ServiceAuthService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -13,8 +14,11 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -50,6 +54,25 @@ public class ServiceAuthController {
                 .map(Result::success);
     }
 
+    /**
+     * 反查：某个服务被哪些接入系统授权。
+     *
+     * <p><b>放在授权 Controller 上而不是 ServiceController</b>：模型侧的同名反查就是
+     * {@code GET /modelgate/auth/apps?modelId=}，挂在 ModelAuthController 上。
+     * 这个动作查的是授权表、不是服务表，放这里语义也更顺。
+     * 第一版曾放在 {@code /services/apps}，与模型侧不对称，已由
+     * {@code ServiceMirrorsModelTest} 钉住。
+     */
+    @Operation(summary = "反查：某服务被哪些接入系统授权（含是否实际生效）")
+    @GetMapping(UrlConstant.APPS)
+    public Mono<Result<List<ServiceAuthorizedAppVO>>> listAuthorizedApps(
+            @Parameter(description = "服务编码") @RequestParam("serviceId") String serviceId) {
+        return Mono.fromCallable(() -> serviceAuthService.listAuthorizedApps(serviceId))
+                .subscribeOn(AdminScheduler.get())
+                .timeout(AdminScheduler.REQUEST_TIMEOUT)
+                .map(Result::success);
+    }
+
     @Operation(summary = "为系统批量授权服务（已授权的跳过，不覆盖既有配额）")
     @PostMapping(UrlConstant.ADD)
     public Mono<Result<Void>> add(@RequestBody @Valid AddServiceAuthRequestBO req) {
@@ -60,19 +83,48 @@ public class ServiceAuthController {
                 .then(Mono.just(Result.<Void>success(null)));
     }
 
-    @Operation(summary = "修改单条服务授权（配额/启停/过期时间；过期时间传空=改为永久）")
-    @PostMapping(UrlConstant.UPDATE)
-    public Mono<Result<Void>> update(@RequestBody @Valid UpdateServiceAuthRequestBO req) {
-        return Mono.fromRunnable(() -> serviceAuthService.updateAuthorization(
+    @Operation(summary = "修改单条服务授权（配额/过期时间；过期时间传空=改为永久）")
+    @PutMapping(UrlConstant.UPDATE)
+    public Mono<Result<ServiceAuthVO>> update(@RequestBody @Valid UpdateServiceAuthRequestBO req) {
+        return Mono.fromCallable(() -> serviceAuthService.updateAuthorization(
                         req.getAppId(), req.getServiceId(), req.getEnabled(),
                         req.getQpsLimit(), req.getDailyLimit(), req.getExpiresAt()))
+                .subscribeOn(AdminScheduler.get())
+                .timeout(AdminScheduler.REQUEST_TIMEOUT)
+                .map(Result::success);
+    }
+
+    @Operation(summary = "启用单条服务授权")
+    @PatchMapping(UrlConstant.ENABLE)
+    public Mono<Result<Void>> enable(
+            @Parameter(description = "接入系统 ID") @RequestParam("appId") String appId,
+            @Parameter(description = "服务编码") @RequestParam("serviceId") String serviceId) {
+        return Mono.fromRunnable(() -> serviceAuthService.setAuthEnabled(appId, serviceId, true))
+                .subscribeOn(AdminScheduler.get())
+                .timeout(AdminScheduler.REQUEST_TIMEOUT)
+                .then(Mono.just(Result.<Void>success(null)));
+    }
+
+    /**
+     * 禁用单条服务授权。
+     *
+     * <p>与 update 分开是刻意的：列表上的启停是一次点击就该完成的动作，
+     * 走 update 前端必须把 qps/daily/expiresAt 全带上，少带一个就会顺手清掉人家配好的值
+     * （尤其 expiresAt 传 null 的语义是"改为永久"）。模型侧同样是独立的 PATCH。
+     */
+    @Operation(summary = "禁用单条服务授权（禁用后该系统访问该服务返回 403）")
+    @PatchMapping(UrlConstant.DISABLE)
+    public Mono<Result<Void>> disable(
+            @Parameter(description = "接入系统 ID") @RequestParam("appId") String appId,
+            @Parameter(description = "服务编码") @RequestParam("serviceId") String serviceId) {
+        return Mono.fromRunnable(() -> serviceAuthService.setAuthEnabled(appId, serviceId, false))
                 .subscribeOn(AdminScheduler.get())
                 .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .then(Mono.just(Result.<Void>success(null)));
     }
 
     @Operation(summary = "撤销授权（逻辑删除，可重新授权）")
-    @PostMapping(UrlConstant.REVOKE)
+    @DeleteMapping(UrlConstant.REVOKE)
     public Mono<Result<Void>> revoke(
             @Parameter(description = "接入系统 ID") @RequestParam("appId") String appId,
             @Parameter(description = "服务编码") @RequestParam("serviceId") String serviceId) {
