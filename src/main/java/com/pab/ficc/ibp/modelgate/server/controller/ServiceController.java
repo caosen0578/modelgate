@@ -10,8 +10,10 @@ import com.pab.ficc.ibp.modelgate.server.domain.bo.ServiceQueryBO;
 import com.pab.ficc.ibp.modelgate.server.domain.bo.UpdateServiceRequestBO;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.ServiceCredentialEntity;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.ServiceEntity;
+import com.pab.ficc.ibp.modelgate.server.domain.vo.ConnectivityTestVO;
 import com.pab.ficc.ibp.modelgate.server.domain.vo.ServiceVO;
 import com.pab.ficc.ibp.modelgate.server.service.ServiceAuthService;
+import com.pab.ficc.ibp.modelgate.server.service.ServiceConnectivityService;
 import com.pab.ficc.ibp.modelgate.server.service.ServiceRegistryService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -53,6 +55,7 @@ public class ServiceController {
 
     private final ServiceRegistryService serviceRegistryService;
     private final ServiceAuthService serviceAuthService;
+    private final ServiceConnectivityService connectivityService;
 
     /**
      * 服务列表。
@@ -148,6 +151,43 @@ public class ServiceController {
                 .subscribeOn(AdminScheduler.get())
                 .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .then(Mono.just(Result.<Void>success(null)));
+    }
+
+    /**
+     * 上游连通性探测。
+     *
+     * <p><b>它回答的问题比模型侧的同名接口弱，别混淆</b>：通用服务没有统一的接口形状，
+     * 网关不知道哪个路径可用、要什么请求体，所以只能验证"网关能不能连到这个上游地址"。
+     * 拿到任何 HTTP 响应（哪怕 404）都判连通——那恰恰证明 DNS、网络策略、端口、TLS 全通了。
+     * 详见 {@link ServiceConnectivityService} 类注释。
+     *
+     * <p>要验证端到端全链路（凭证鉴权 → 访问控制 → 服务授权 → 配额 → 路由 → 上游），
+     * 请用「凭证管理 → 接入示例 → 测试连通」，那个是按接入方身份打真实的 {@code /svc/**}。
+     *
+     * <p>探测用 <b>GET</b> 且<b>不对上游产生副作用</b>：通用服务的 POST 往往是业务写操作，
+     * 拿它去测连通可能真的建一条数据出来。
+     *
+     * @param probePath 可选。指定一个真实存在的路径（如 {@code /health}）能拿到更确切的结果；
+     *                  留空则打根路径。
+     */
+    @Operation(summary = "上游连通性探测（GET 探测，无副作用；判定的是「网关能否连到上游」）")
+    @PostMapping(UrlConstant.TEST)
+    public Mono<Result<ConnectivityTestVO>> test(
+            @Parameter(description = "服务编码") @RequestParam("serviceId") String serviceId,
+            @Parameter(description = "探测路径，留空则打根路径")
+            @RequestParam(name = "probePath", required = false) String probePath) {
+        // 装载服务与凭证要查库，必须先切到管理面线程池；探测本身是响应式的，不阻塞
+        return Mono.fromCallable(() -> {
+                    ServiceEntity svc = serviceRegistryService.findByServiceId(serviceId);
+                    return new Object[]{svc, serviceRegistryService.getCredentialDecrypted(serviceId)};
+                })
+                .subscribeOn(AdminScheduler.get())
+                .flatMap(arr -> connectivityService.probe(
+                        (ServiceEntity) arr[0],
+                        (com.pab.ficc.ibp.modelgate.server.domain.entity.ServiceCredentialEntity) arr[1],
+                        probePath))
+                .timeout(AdminScheduler.REQUEST_TIMEOUT)
+                .map(Result::success);
     }
 
     /**

@@ -374,6 +374,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
                 <th>应用编码</th>
                 <th>负责人</th>
                 <th>已授权模型</th>
+                <th>已授权服务</th>
                 <th>凭证数</th>
                 <th>状态</th>
                 <th>操作</th>
@@ -1043,9 +1044,37 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
     <div class="modal-body">
       <div class="form-grid form-grid-2">
         <div class="form-group">
+          <label>接入类型</label>
+          <select id="ug_kind" onchange="onUsageKindChange()">
+            <option value="model">模型接口 —— /v1/**（OpenAI 兼容）</option>
+            <option value="service">服务接口 —— /svc/{服务编码}/**</option>
+          </select>
+          <span class="hint">同一把凭证两类都能用；能不能调通取决于对应的授权表</span>
+        </div>
+        <div class="form-group" id="ug_modelRow">
           <label>调用模型</label>
           <select id="ug_model" onchange="renderUsage()"></select>
           <span class="hint">只列该系统已授权、且授权处于启用、未过期的模型</span>
+        </div>
+        <div class="form-group" id="ug_serviceRow" style="display:none">
+          <label>调用服务</label>
+          <select id="ug_service" onchange="renderUsage()"></select>
+          <span class="hint">只列该系统已授权、且授权与服务本身都处于启用、未过期的服务</span>
+        </div>
+        <div class="form-group" id="ug_svcPathRow" style="display:none">
+          <label>接口路径</label>
+          <input id="ug_svcPath" oninput="renderUsage()" placeholder="/api/v2/query">
+          <span class="hint">接入方自己的接口路径，网关会把 <code>/svc/{编码}</code> 剥掉后原样拼到上游地址之后
+            （该服务若关了「剥离前缀」则完整透传）。留空则为 <code>/</code></span>
+        </div>
+        <div class="form-group" id="ug_svcMethodRow" style="display:none">
+          <label>HTTP 方法</label>
+          <select id="ug_svcMethod" onchange="renderUsage()">
+            <option value="POST">POST</option>
+            <option value="GET">GET</option>
+            <option value="PUT">PUT</option>
+            <option value="DELETE">DELETE</option>
+          </select>
         </div>
         <div class="form-group">
           <label>网关地址</label>
@@ -1054,10 +1083,15 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
             业务流量同样要带上它才能到后端；直连应用 IP/端口时为空。若业务流量另有入口地址，改这里</span>
         </div>
       </div>
-      <div class="form-group" style="margin-top:12px">
+      <div class="form-group" style="margin-top:12px" id="ug_streamRow">
         <label style="font-weight:400;display:flex;align-items:center;gap:6px">
           <input type="checkbox" id="ug_stream" onchange="renderUsage()" style="width:auto"> 流式返回（SSE）
         </label>
+      </div>
+      <div class="form-group" id="ug_svcBodyRow" style="display:none">
+        <label>请求体（JSON，可选）</label>
+        <textarea id="ug_svcBody" rows="3" oninput="renderUsage()" placeholder='{"keyword":"张三"}'></textarea>
+        <span class="hint">按接入方自己的接口定义填写；GET 时忽略。网关<b>不解析也不改写</b>服务请求体，原样透传。</span>
       </div>
       <div class="warn-box" id="ug_secretHint" style="display:flex;align-items:center;gap:10px">
         <span style="flex:1">示例中的密钥默认是占位符，避免误发到公共渠道。</span>
@@ -2432,6 +2466,7 @@ function renderApps(data){
       <td><span class="tag tag-gray">${a.appCode||'-'}</span></td>
       <td>${a.owner}</td>
       <td><span style="cursor:pointer;color:#6366f1;text-decoration:underline" onclick="openDrawer('${a.appId}','auth')">${a.authCount||0} 个</span></td>
+      <td><span style="cursor:pointer;color:#6366f1;text-decoration:underline" onclick="openDrawer('${a.appId}','svcauth')">${a.svcAuthCount||0} 个</span></td>
       <td><span style="cursor:pointer;color:#6366f1;text-decoration:underline" onclick="openDrawer('${a.appId}','creds')">${a.credCount||0} 个</span></td>
       <td>${a.enabled!==false?'<span class="tag tag-green">启用</span>':'<span class="tag tag-red">禁用</span>'}</td>
       <td>
@@ -2673,9 +2708,18 @@ async function openUsageModal(credId){
   if(!currentApp) return;
   const c = (currentCreds||[]).find(x=>x.id===credId);
   if(!c){ toast('凭证不存在，请刷新列表','error'); return; }
-  // 授权列表只在切到「模型授权」子页时才加载；从凭证页直接开会拿到空下拉，故主动拉一次
+  // 授权列表只在切到对应子页时才加载；从凭证页直接开会拿到空下拉，故两套都主动拉一次
   await loadAuths();
+  await loadServiceAuths();
   usageCtx = {cred:c, secret:null, fmt:'curl'};
+
+  // 服务下拉：effective 已由后端算好（接入系统启用 且 授权启用 且 未过期 且 服务启用），
+  // 前端不再自己拼这四个条件——拼错了会把调不通的服务当成可用的给出去
+  const svcUsable = (currentServiceAuths||[]).filter(a => a.effective !== false);
+  const ssel = $('ug_service');
+  ssel.innerHTML = svcUsable.length
+    ? svcUsable.map(a=>`<option value="${escapeHtml(a.serviceId)}" data-prefix="${escapeHtml(a.publicPrefix||('/svc/'+a.serviceId+'/'))}" data-sse="${a.sse?'1':'0'}">${escapeHtml(a.serviceName||a.serviceId)}（${escapeHtml(a.serviceId)}）</option>`).join('')
+    : '<option value="">（该系统暂无可用服务授权，请先到「服务授权」页授权）</option>';
 
   const usable = (currentAuths||[]).filter(isAuthUsable);
   const sel = $('ug_model');
@@ -2687,6 +2731,11 @@ async function openUsageModal(credId){
   $('ug_credName').textContent = c.credName || ('#'+credId);
   $('ug_base').value = defaultGatewayBase();
   $('ug_stream').checked = false;
+  $('ug_kind').value = 'model';
+  $('ug_svcPath').value = '';
+  $('ug_svcBody').value = '';
+  $('ug_svcMethod').value = 'POST';
+  onUsageKindChange();
   // 存量凭证（「密钥可查看」启用之前创建的）只有哈希，明文取不回来
   const btn = $('ug_fillBtn');
   btn.disabled = c.secretRetrievable===false;
@@ -2695,6 +2744,25 @@ async function openUsageModal(credId){
   $('ug_testWrap').style.display = 'none';
   setUsageFmt('curl');
   openModal('usageModal');
+}
+
+/**
+ * 切换「接入类型」：模型接口与服务接口的表单字段几乎不重叠，直接整组显隐。
+ *
+ * 服务侧没有「流式返回」勾选框——SSE 与否由上游接口自己决定，网关只做透传，
+ * 勾一个复选框既不会改变请求也不会改变响应，摆在那里纯属误导。
+ */
+function onUsageKindChange(){
+  const svc = $('ug_kind').value === 'service';
+  $('ug_modelRow').style.display     = svc ? 'none' : '';
+  $('ug_streamRow').style.display    = svc ? 'none' : '';
+  $('ug_serviceRow').style.display   = svc ? '' : 'none';
+  $('ug_svcPathRow').style.display   = svc ? '' : 'none';
+  $('ug_svcMethodRow').style.display = svc ? '' : 'none';
+  $('ug_svcBodyRow').style.display   = svc ? '' : 'none';
+  // 切换类型后旧的测试结果不再对应当前配置，留着会让人误读
+  $('ug_testWrap').style.display = 'none';
+  renderUsage();
 }
 
 function setUsageFmt(f){
@@ -2724,8 +2792,33 @@ async function fillUsageSecret(){
   }
 }
 
-// 组装示例所需的各段：路径与请求体按模型类型切换，给错路径的示例比不给还坑
+/**
+ * 组装示例所需的各段。
+ *
+ * 服务接口与模型接口的差别不只是路径：
+ *   模型  —— 路由键在**请求体的 model 字段**，路径固定为 /v1/chat/completions 等
+ *   服务  —— 路由键在**路径的第二段**，方法/路径/请求体全部由接入方自己的接口定义，
+ *            网关不解析也不改写请求体，原样透传
+ * 所以服务侧不能沿用模型那套"按 modelType 选路径与请求体"的逻辑，只能让用户自己填。
+ */
 function usageParts(){
+  if($('ug_kind').value === 'service'){
+    const ssel = $('ug_service');
+    const opt = ssel.selectedOptions[0];
+    const serviceId = ssel.value || '<服务编码>';
+    const prefix = (opt && opt.dataset.prefix) || ('/svc/' + serviceId + '/');
+    const base = ($('ug_base').value || defaultGatewayBase()).trim().replace(/\/+$/,'');
+    let sub = ($('ug_svcPath').value || '').trim();
+    if(sub && !sub.startsWith('/')) sub = '/' + sub;
+    // prefix 自带尾斜杠，sub 自带首斜杠，直接拼会出现 //
+    const path = prefix.replace(/\/+$/,'') + (sub || '/');
+    const method = $('ug_svcMethod').value || 'POST';
+    const rawBody = ($('ug_svcBody').value || '').trim();
+    return {kind:'service', serviceId, base, path, method,
+            sse: !!(opt && opt.dataset.sse === '1'),
+            hasBody: method !== 'GET' && !!rawBody,
+            body: rawBody};
+  }
   const sel = $('ug_model');
   const opt = sel.selectedOptions[0];
   const modelId   = sel.value || '<模型ID>';
@@ -2736,7 +2829,7 @@ function usageParts(){
   const bodyObj = embed
     ? {model:modelId, input:'需要向量化的文本'}
     : Object.assign({model:modelId, messages:[{role:'user', content:'你好'}]}, stream?{stream:true}:{});
-  return {modelId, modelType, base, embed, stream,
+  return {kind:'model', modelId, modelType, base, embed, stream, method:'POST', hasBody:true,
           path: embed ? '/v1/embeddings' : '/v1/chat/completions',
           body: JSON.stringify(bodyObj, null, 2)};
 }
@@ -2748,6 +2841,26 @@ function shellSingleQuoted(value){
 
 function usageCurl(p){
   const c = usageCtx.cred;
+  if(p.kind === 'service'){
+    const akskHead = c.credType==='ak_sk'
+      ? '# AKSK 签名每次请求都要按当前时间戳重算，不能写死\n'
+        + 'AK="' + (c.accessKey||'<AccessKey>') + '"\n'
+        + 'SK="' + (usageCtx.secret||'<在此填入 SecretKey>') + '"\n'
+        + 'TS=$(date +%s%3N)          # 毫秒时间戳；macOS 用 $(($(date +%s)*1000))\n'
+        + 'SIGN=$(printf "%s:%s" "$AK" "$TS" | openssl dgst -sha256 -hmac "$SK" -binary | base64)\n\n'
+      : '';
+    // 用数组拼再 join，而不是逐段拼 " \\\n"：服务侧的行是可选的（GET 没有 -d、
+    // 非 SSE 没有 -N），逐段拼会在最后一行留下一个悬空的续行符，
+    // 后面若跟注释行 shell 虽仍能跑，但复制出去很容易被截断成半条命令。
+    const lines = ['curl -X ' + p.method + ' "' + p.base + p.path + '"'];
+    if(p.hasBody) lines.push('  -H "Content-Type: application/json"');
+    lines.push(c.credType==='ak_sk'
+      ? '  -H "Authorization: AKSK $AK:$TS:$SIGN"'
+      : '  -H "Authorization: Bearer ' + (usageCtx.secret||'<在此填入 API Key>') + '"');
+    if(p.sse) lines.push('  -N');
+    if(p.hasBody) lines.push('  -d ' + shellSingleQuoted(p.body));
+    return akskHead + lines.join(' \\\n');
+  }
   if(c.credType==='ak_sk'){
     return '# AKSK 签名每次请求都要按当前时间戳重算，不能写死\n'
       + 'AK="' + (c.accessKey||'<AccessKey>') + '"\n'
@@ -2770,6 +2883,20 @@ function usageCurl(p){
 function usageHttp(p){
   const c = usageCtx.cred;
   const host = p.base.replace(/^https?:\/\//,'');
+  if(p.kind === 'service'){
+    const auth = c.credType==='ak_sk'
+      ? 'AKSK ' + (c.accessKey||'<AccessKey>') + ':{13位毫秒时间戳}:{Base64(HMAC-SHA256(SK, AK+":"+时间戳))}'
+      : 'Bearer ' + (usageCtx.secret||'<在此填入 API Key>');
+    let head = p.method + ' ' + p.path + ' HTTP/1.1\n'
+      + 'Host: ' + host + '\n'
+      + 'Authorization: ' + auth + '\n';
+    if(!p.hasBody) return head + '\n';
+    let oneLine = p.body;
+    try{ oneLine = JSON.stringify(JSON.parse(p.body)); }catch(_){}
+    return head + 'Content-Type: application/json\n'
+      + 'Content-Length: ' + new TextEncoder().encode(oneLine).length + '\n\n'
+      + oneLine;
+  }
   const auth = c.credType==='ak_sk'
     ? 'AKSK ' + (c.accessKey||'<AccessKey>') + ':{13位毫秒时间戳}:{Base64(HMAC-SHA256(SK, AK+":"+时间戳))}'
     : 'Bearer ' + (usageCtx.secret||'<在此填入 API Key>');
@@ -2784,6 +2911,49 @@ function usageHttp(p){
 
 function usagePython(p){
   const c = usageCtx.cred;
+  if(p.kind === 'service'){
+    // 服务接口不是 OpenAI 兼容的，套不上 openai SDK，一律用 requests
+    let bodyArg = '';
+    if(p.hasBody){
+      let py = p.body;
+      try{
+        py = JSON.stringify(JSON.parse(p.body))
+              .replace(/\btrue\b/g,'True').replace(/\bfalse\b/g,'False').replace(/\bnull\b/g,'None');
+        bodyArg = '    json=' + py + ',\n';
+      }catch(_){
+        // 不是合法 JSON 就按原始字符串发，并提示——总比生成一段跑不了的代码强
+        bodyArg = '    data=' + JSON.stringify(p.body) + ',  # 注意：上方请求体不是合法 JSON，按原始字符串发送\n';
+      }
+    }
+    if(c.credType==='ak_sk'){
+      return 'import base64, hashlib, hmac, time, requests\n\n'
+        + 'AK = "' + (c.accessKey||'<AccessKey>') + '"\n'
+        + 'SK = "' + (usageCtx.secret||'<在此填入 SecretKey>') + '"\n'
+        + 'ts = str(int(time.time() * 1000))          # 毫秒时间戳，服务端校验 ±5 分钟\n'
+        + 'sign = base64.b64encode(\n'
+        + '    hmac.new(SK.encode(), f"{AK}:{ts}".encode(), hashlib.sha256).digest()\n'
+        + ').decode()\n\n'
+        + 'resp = requests.request(\n'
+        + '    "' + p.method + '", "' + p.base + p.path + '",\n'
+        + '    headers={"Authorization": f"AKSK {AK}:{ts}:{sign}"},\n'
+        + bodyArg
+        + (p.sse ? '    stream=True,\n' : '')
+        + ')\n'
+        + (p.sse
+            ? 'for line in resp.iter_lines():\n    print(line.decode() if line else "")'
+            : 'print(resp.status_code, resp.text)');
+    }
+    return 'import requests\n\n'
+      + 'resp = requests.request(\n'
+      + '    "' + p.method + '", "' + p.base + p.path + '",\n'
+      + '    headers={"Authorization": "Bearer ' + (usageCtx.secret||'<在此填入 API Key>') + '"},\n'
+      + bodyArg
+      + (p.sse ? '    stream=True,\n' : '')
+      + ')\n'
+      + (p.sse
+          ? 'for line in resp.iter_lines():\n    print(line.decode() if line else "")'
+          : 'print(resp.status_code, resp.text)');
+  }
   // JSON 字符串字面量同时是合法 Python 字符串，可安全承载引号、反斜杠和 Unicode 模型 ID。
   const pyModel = JSON.stringify(p.modelId);
   if(c.credType==='ak_sk'){
@@ -2846,6 +3016,16 @@ function renderUsage(){
   $('ug_code').textContent = fn(p);
 
   const notes = [];
+  if(p.kind === 'service'){
+    notes.push('路径第二段就是服务编码，网关按它定路由 —— 服务接口的路由键在 URL 上，不在请求体里。');
+    notes.push('网关**不解析也不改写**服务请求体，原样流式透传；请求体格式由接入方自己的接口决定。');
+    notes.push('调用方带的是本网关凭证，转发前会被剔除并换成该服务配置的上游凭证。');
+    if(p.sse){
+      notes.push('该服务标记为 SSE：响应逐帧透传，客户端按 SSE 方式读取即可。');
+    }
+    $('ug_note').textContent = notes.join(' ');
+    return;
+  }
   notes.push('model 字段必须与「模型管理」录入的 model_id 完全一致（区分大小写），网关按它查库定路由。');
   if(usageCtx.cred.credType==='ak_sk'){
     notes.push('AKSK 签名与时间戳绑定、服务端校验 ±5 分钟，Authorization 头无法写死，只能按示例在调用时现算。');
@@ -2892,7 +3072,19 @@ async function signAksk(ak, sk, ts){
 }
 
 /** 按状态码给出可操作的定位话术——只说"失败了"没有用。 */
-function diagnoseUsageTest(status){
+function diagnoseUsageTest(status, kind){
+  if(kind === 'service'){
+    if(status === 401) return '401：凭证无效/已禁用/已过期，或 Authorization 头格式不对。';
+    if(status === 403) return '403：该系统未获此服务授权、授权已禁用或过期、服务本身被禁用，'
+      + '或来源 IP/域名不在访问规则白名单内。';
+    if(status === 404) return '404：路径第二段的服务编码在「服务管理」里不存在（区分大小写）；'
+      + '也可能是服务存在但上游不认这个接口路径 —— 后者要看响应体是网关的 JSON 还是上游返回的内容。';
+    if(status === 429) return '429：触发配额限制（QPS 或日调用量），见该服务授权的配额设置。';
+    if(status === 503) return '503：服务已被禁用，或上游熔断。';
+    if(status >= 500) return '5xx：网关或上游内部错误，请拿下方 traceId 到后端日志检索。';
+    if(status >= 400) return '4xx：多半是上游自己的业务校验没过（网关不改写服务请求体），展开响应体看具体内容。';
+    return '';
+  }
   if(status === 401) return '401：凭证无效/已禁用/已过期，或 Authorization 头格式不对（AKSK 还要看时间戳是否在 ±5 分钟内）。';
   if(status === 403) return '403：三种可能——该系统未获此模型授权、授权已禁用或过期、来源 IP/域名不在访问规则白名单内；也可能是接入系统本身被禁用。';
   if(status === 404) return '404：model 字段的值在「模型管理」里不存在（区分大小写），或该模型 api_spec 没有对应适配器。';
@@ -2956,7 +3148,11 @@ function extractUsageLabel(text){
 async function runUsageTest(){
   if(!usageCtx || !currentApp) return;
   const p = usageParts();
-  if(!p.modelId || p.modelId === '<模型ID>'){ toast('请先选择要测试的模型','error'); return; }
+  if(p.kind === 'service'){
+    if(!p.serviceId || p.serviceId === '<服务编码>'){ toast('请先选择要测试的服务','error'); return; }
+  }else if(!p.modelId || p.modelId === '<模型ID>'){
+    toast('请先选择要测试的模型','error'); return;
+  }
 
   const btn = $('ug_testBtn');
   btn.disabled = true; btn.textContent = '测试中…';
@@ -2977,11 +3173,14 @@ async function runUsageTest(){
       auth = 'Bearer ' + secret;
     }
 
-    const resp = await fetch(p.base + p.path, {
-      method:'POST',
-      headers:{'Content-Type':'application/json', 'Authorization':auth},
-      body:p.body,
-    });
+    // 服务接口的方法/请求体由接入方定义；GET 或无请求体时不能塞 body，
+    // 否则 fetch 直接抛 TypeError（GET/HEAD 不允许带 body）
+    const init = {method: p.method || 'POST', headers:{'Authorization':auth}};
+    if(p.hasBody !== false && p.body){
+      init.headers['Content-Type'] = 'application/json';
+      init.body = p.body;
+    }
+    const resp = await fetch(p.base + p.path, init);
     const cost = Date.now() - started;
     const text = await resp.text();
 
@@ -3017,12 +3216,14 @@ async function runUsageTest(){
           : '') + raw;
     }
     $('ug_testDiag').textContent = ok
-      ? '全链路通过：凭证鉴权 → 访问控制 → 模型授权 → 配额 → 路由 → 上游，均已放行。'
+      ? (p.kind === 'service'
+          ? '全链路通过：凭证鉴权 → 访问控制 → 服务授权 → 配额 → 路由 → 上游，均已放行。'
+          : '全链路通过：凭证鉴权 → 访问控制 → 模型授权 → 配额 → 路由 → 上游，均已放行。')
       : emptyOk
         ? 'HTTP ' + resp.status + ' 但响应体为空，模型并未真正返回内容。'
           + '最常见原因是该模型的「上游地址」格式不合法（例如写成 http:127.0.0.1:8080，漏了 //），'
           + '网关无法真正建连却仍返回 2xx。请到「模型管理」检查 upstreamUrl 是否为 http:// 或 https:// 开头。'
-        : (bodyMsg ? `上游/网关返回：${bodyMsg}。` : '') + diagnoseUsageTest(bodyCode || resp.status);
+        : (bodyMsg ? `上游/网关返回：${bodyMsg}。` : '') + diagnoseUsageTest(bodyCode || resp.status, p.kind);
   }catch(e){
     const cost = Date.now() - started;
     $('ug_testVerdict').innerHTML = '<span class="tag tag-red">❌ 请求未发出</span>';
@@ -4554,6 +4755,7 @@ function renderServices(list){
       <td><a href="javascript:void(0)" onclick="viewServiceApps('${escHtml(s.serviceId)}')">${s.authorizedAppCount ?? 0}</a></td>
       <td>${s.enabled === false ? '<span style="color:#dc2626">已禁用</span>' : '<span style="color:#16a34a">启用中</span>'}</td>
       <td>
+        <button class="btn btn-sm" onclick="testService('${escHtml(s.serviceId)}')" title="探测网关能否连到该上游（GET 根路径，无副作用）">🧪 测试</button>
         <button class="btn btn-sm" onclick="openServiceModal('${escHtml(s.serviceId)}')">编辑</button>
         <button class="btn btn-sm" onclick="toggleService('${escHtml(s.serviceId)}', ${s.enabled === false})">${s.enabled === false ? '启用' : '禁用'}</button>
         <button class="btn btn-sm btn-danger" onclick="deleteService('${escHtml(s.serviceId)}')">删除</button>
@@ -4682,6 +4884,44 @@ async function deleteService(serviceId){
     toast('服务已删除');
     loadServices();
   }catch(e){ toast('删除异常','error'); }
+}
+
+/**
+ * 服务上游连通性探测。
+ *
+ * <b>与「接入示例 → 测试连通」回答的不是同一个问题</b>，别混淆：
+ *   本测试：**服务端**用 GET 打一次上游根路径，只验证"网关能不能连到这个地址"，
+ *           跳过凭证鉴权/访问控制/服务授权/配额。拿到任何 HTTP 响应（哪怕 404）都算通 ——
+ *           那恰恰证明 DNS、网络策略、端口、TLS 全对了。
+ *   接入示例：**浏览器按接入方身份**打真实的 /svc/**，走完整链路。
+ * 与模型侧「🧪 测试」和「接入示例测试」的分工完全一致。
+ */
+async function testService(serviceId){
+  const probePath = prompt(
+    '探测路径（可留空）\n\n'
+    + '留空则 GET 上游根路径。填一个真实存在的路径（如 /health）能拿到更确切的结果。\n'
+    + '注意：探测固定用 GET，不会对上游产生副作用。', '');
+  if(probePath === null) return;   // 用户点了取消
+
+  toast('正在探测 ' + serviceId + ' …');
+  try{
+    const qs = 'serviceId=' + encodeURIComponent(serviceId)
+             + (probePath.trim() ? '&probePath=' + encodeURIComponent(probePath.trim()) : '');
+    const r = await fetch(apiUrl('/modelgate/services/test?' + qs), {method:'POST', headers:hdrs()});
+    const j = await r.json();
+    if(!isOk(j)){ toast('探测失败: '+errMsg(j),'error'); return; }
+    const d = j.data || {};
+    const head = (d.success ? '✅ ' : '❌ ') + (d.message || '');
+    const meta = [d.httpStatus != null ? 'HTTP '+d.httpStatus : null,
+                  d.latencyMs != null ? d.latencyMs+'ms' : null,
+                  d.upstreamUri].filter(Boolean).join(' · ');
+    // 用 alert 而不是 toast：探测结论多为两三行，toast 装不下也留不住
+    alert(head + '\n\n' + meta
+          + (d.upstreamBody ? '\n\n── 上游返回 ──\n' + d.upstreamBody : ''));
+    toast(d.success ? '上游可达' : '上游不可达', d.success ? 'success' : 'error');
+  }catch(e){
+    toast('探测异常: '+(e && e.message || e),'error');
+  }
 }
 
 async function viewServiceApps(serviceId){

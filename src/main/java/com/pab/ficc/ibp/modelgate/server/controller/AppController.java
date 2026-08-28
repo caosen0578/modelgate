@@ -12,6 +12,7 @@ import com.pab.ficc.ibp.modelgate.server.domain.vo.AppVO;
 import com.pab.ficc.ibp.modelgate.server.service.AppService;
 import com.pab.ficc.ibp.modelgate.server.service.CredentialService;
 import com.pab.ficc.ibp.modelgate.server.service.ModelAuthService;
+import com.pab.ficc.ibp.modelgate.server.service.ServiceAuthService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -31,6 +32,7 @@ public class AppController {
 
     private final AppService appService;
     private final ModelAuthService modelAuthService;
+    private final ServiceAuthService serviceAuthService;
     private final CredentialService credentialService;
 
     @Operation(summary = "分页查询接入系统（pageIndex 从 1 开始，pageSize 上限 200；keyword 模糊匹配 appId/systemName/appName/sysCode）")
@@ -41,8 +43,12 @@ public class AppController {
                     // 授权数与凭证数各一次查询后内存聚合，避免逐行 N+1
                     Map<String, Long> authCounts = modelAuthService.countByAppId();
                     Map<String, Long> credCounts = credentialService.countByAppId();
+                    // 服务授权数同样一次查询后内存聚合；模型授权与服务授权是两套独立的表，
+                    // 分开展示才知道该去哪个子面板改
+                    Map<String, Long> svcAuthCounts = serviceAuthService.countByAppId();
                     return PageVo.of(appService.page(query),
-                            a -> AppVO.of(a, authCounts.get(a.getAppId()), credCounts.get(a.getAppId())));
+                            a -> AppVO.of(a, authCounts.get(a.getAppId()), credCounts.get(a.getAppId()),
+                                    svcAuthCounts.get(a.getAppId())));
                 })
                 .subscribeOn(AdminScheduler.get())
                 .timeout(AdminScheduler.REQUEST_TIMEOUT)
