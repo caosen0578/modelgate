@@ -74,6 +74,8 @@ public class AuditLogController {
         String modelId = q.getModelId();
         Integer status = q.getStatus();
         String traceId = q.getTraceId();
+        String trafficType = q.getTrafficType();
+        String serviceId = q.getServiceId();
 
         // appId + 应用编码 → 审计表上可执行的条件。审计表没有 app_code 列，
         // 由 AppScopeResolver 先在小表 mg_app 解析，理由见该类注释。
@@ -92,6 +94,11 @@ public class AuditLogController {
                         .eq(modelId != null && !modelId.isBlank(), AuditLogEntity::getModelId,    modelId)
                         .eq(status  != null,                       AuditLogEntity::getHttpStatus, status)
                         .eq(traceId != null && !traceId.isBlank(), AuditLogEntity::getTraceId,    traceId)
+                        // 流量类型与服务编码：都走等值匹配，为空则不过滤（两类流量都返回）
+                        .eq(trafficType != null && !trafficType.isBlank(),
+                                AuditLogEntity::getTrafficType, trafficType)
+                        .eq(serviceId != null && !serviceId.isBlank(),
+                                AuditLogEntity::getServiceId,   serviceId)
                         .orderByDesc(AuditLogEntity::getCreateTime)
                         .orderByDesc(AuditLogEntity::getId));
     }

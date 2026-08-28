@@ -19,7 +19,11 @@ public class PayloadDetailVO {
     private Long          id;
     private String        traceId;
     private String        appId;
+    /** 流量类型：model=模型流量 service=通用服务流量 */
+    private String        trafficType;
     private String        modelId;
+    /** 服务编码（traffic_type=service 时有值；模型流量为 null） */
+    private String        serviceId;
     private Boolean       isStream;
     /** 全部入站请求头 JSON，可能包含可直接使用的凭证信息 */
     private String        requestHeaders;

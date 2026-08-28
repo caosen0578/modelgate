@@ -34,4 +34,19 @@ public class AuditQueryBO extends BaseBo {
 
     /** 链路追踪 ID，为空不过滤。 */
     private String traceId;
+
+    /**
+     * 流量类型：{@code model} / {@code service}，为空<b>不过滤</b>（两类都返回）。
+     *
+     * <p>不过滤是刻意的默认值：审计页的本职是"这段时间发生过什么"，
+     * 默认藏起一半流量会让人误以为服务调用没进审计。
+     * 用量统计那边则相反——{@code selectUsageStats} 硬编码了
+     * {@code traffic_type='model'}，因为把服务调用算进模型用量是错的。
+     * 两处的默认取向不同，是因为一个是"看记录"、一个是"算数字"。
+     */
+    private String trafficType;
+
+    /** 服务编码，为空不过滤。<b>精确匹配</b>，与 modelId 互斥使用（一条记录只会有其中一个）。 */
+    private String serviceId;
+
 }

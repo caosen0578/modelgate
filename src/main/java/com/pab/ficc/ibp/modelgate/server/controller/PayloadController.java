@@ -227,6 +227,9 @@ public class PayloadController {
                 .eq(notBlank(modelId),      RequestPayloadEntity::getModelId,        modelId)
                 .eq(notBlank(finishReason), RequestPayloadEntity::getFinishReason,   finishReason)
                 .eq(notBlank(truncated),    RequestPayloadEntity::getTruncated,      truncated)
+                // 流量类型与服务编码：等值匹配，为空不过滤（两类流量都返回）
+                .eq(notBlank(q.getTrafficType()), RequestPayloadEntity::getTrafficType, q.getTrafficType())
+                .eq(notBlank(q.getServiceId()),   RequestPayloadEntity::getServiceId,   q.getServiceId())
                 .eq(q.getIsStream() != null,       RequestPayloadEntity::getIsStream,       q.getIsStream())
                 .eq(q.getUpstreamStatus() != null, RequestPayloadEntity::getUpstreamStatus, q.getUpstreamStatus())
                 .ge(q.getStartTime() != null,      RequestPayloadEntity::getCreateTime,     q.getStartTime())

@@ -18,7 +18,11 @@ public class AuditLogVO {
      * 按当前页的 appId 一次性批量反查后回填，应用已删除时为 null，前端显示为 "-"。
      */
     private String        appCode;
+    /** 流量类型：model=模型流量 service=通用服务流量。前端据此决定「模型/服务」列显示哪个值 */
+    private String        trafficType;
     private String        modelId;
+    /** 服务编码（traffic_type=service 时有值） */
+    private String        serviceId;
     private String        credType;
     private String        clientIp;
     /**
@@ -41,7 +45,11 @@ public class AuditLogVO {
         vo.id           = e.getId();
         vo.traceId      = e.getTraceId();
         vo.appId        = e.getAppId();
+        // trafficType 兜底成 "model"：历史数据在加列之前写入，读出来虽然有 DB 默认值，
+        // 但走内存路径（如单测直接 new Entity）时可能为 null，前端拿到 null 会渲染成空白列
+        vo.trafficType  = e.getTrafficType() == null ? "model" : e.getTrafficType();
         vo.modelId      = e.getModelId();
+        vo.serviceId    = e.getServiceId();
         vo.credType     = e.getCredType();
         vo.clientIp     = e.getClientIp();
         vo.requestPath  = e.getRequestPath();

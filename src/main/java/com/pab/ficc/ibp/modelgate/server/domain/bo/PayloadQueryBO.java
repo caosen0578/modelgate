@@ -61,6 +61,22 @@ public class PayloadQueryBO extends BaseBo {
     /** 截断标记（none / request / response / both），为空不过滤。 */
     private String truncated;
 
+    /**
+     * 流量类型：{@code model} / {@code service}，为空<b>不过滤</b>（两类都返回）。
+     *
+     * <p>⚠️ 与 appId / modelId 一样，<b>不能</b>充当模糊关键字检索的收窄条件——
+     * 它只有两个取值，区分度比 appId 还低，见 {@link #hasNarrowingFilter()}。
+     */
+    private String trafficType;
+
+    /**
+     * 服务编码，为空不过滤。<b>精确匹配</b>，与 modelId 互斥（一条记录只会有其中一个）。
+     *
+     * <p>同样<b>不算</b>收窄条件：它走的是 {@code idx_service_time} 前缀，能定位但不给候选集上界，
+     * 与被显式拒绝的单独 appId 是同一档。理由见 {@link #hasNarrowingFilter()}。
+     */
+    private String serviceId;
+
     /** 记录时间下界（含），为空不限。 */
     @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
     private LocalDateTime startTime;

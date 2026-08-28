@@ -428,6 +428,15 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
             <input type="text" id="auditAppCode" placeholder="应用编码（精确）" style="width:140px"
                    title="mg_app.app_code，精确匹配。一个编码可能对应多个应用，会一并查出；与 appId 同时填写按「与」处理"/>
             <select id="auditModel" style="width:140px"><option value="">全部模型</option></select>
+            <!-- 流量类型：审计与报文表自 2026-08-27 起同时承载 /v1/** 与 /svc/** 两类流量。
+                 默认「全部」而不是只看模型——默认藏起一半会让人误以为服务调用没进审计。 -->
+            <select id="auditTraffic" style="width:120px">
+              <option value="">全部流量</option>
+              <option value="model">模型 /v1/**</option>
+              <option value="service">服务 /svc/**</option>
+            </select>
+            <input type="text" id="auditServiceId" placeholder="服务编码（精确）" style="width:140px"
+                   title="mg_service.service_id，精确匹配。与「模型」互斥——一条记录只会有其中一个"/>
             <select id="auditStatus" style="width:110px">
               <option value="">全部状态</option>
               <option value="200">200 成功</option>
@@ -450,7 +459,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
                 <th>TraceID</th>
                 <th>应用 appId</th>
                 <th>应用编码</th>
-                <th>模型</th>
+                <th>模型 / 服务</th>
                 <th>客户端 IP</th>
                 <th>状态</th>
                 <th>延迟</th>
@@ -488,6 +497,15 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
             <input type="text" id="pl_appCode" placeholder="应用编码（精确）" style="width:140px"
                    title="mg_app.app_code，精确匹配。一个编码可能对应多个应用，会一并查出；与 appId 同时填写按「与」处理"/>
             <select id="pl_model" style="width:150px"><option value="">全部模型</option></select>
+            <!-- 流量类型：审计与报文表自 2026-08-27 起同时承载 /v1/** 与 /svc/** 两类流量。
+                 默认「全部」而不是只看模型——默认藏起一半会让人误以为服务调用没进审计。 -->
+            <select id="pl_traffic" style="width:120px">
+              <option value="">全部流量</option>
+              <option value="model">模型 /v1/**</option>
+              <option value="service">服务 /svc/**</option>
+            </select>
+            <input type="text" id="pl_serviceId" placeholder="服务编码（精确）" style="width:140px"
+                   title="mg_service.service_id，精确匹配。与「模型」互斥——一条记录只会有其中一个"/>
             <input type="text" id="pl_trace" placeholder="TraceID（支持前缀）" style="width:170px"/>
             <select id="pl_stream" style="width:110px">
               <option value="">全部类型</option>
@@ -554,7 +572,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
                 <th>TraceID</th>
                 <th>应用 appId</th>
                 <th>应用编码</th>
-                <th>模型</th>
+                <th>模型 / 服务</th>
                 <th>类型</th>
                 <th>上游状态</th>
                 <th>结束原因</th>
@@ -3326,6 +3344,8 @@ async function loadAudit(resetPage = true){
       appId:   $('auditAppId').value.trim(),
       appCode: $('auditAppCode').value.trim(),
       modelId: $('auditModel').value,
+      trafficType: $('auditTraffic').value,
+      serviceId:   $('auditServiceId').value.trim(),
       status:  $('auditStatus').value,
       traceId: $('auditTrace').value,
     });
@@ -3401,7 +3421,7 @@ function renderAudit(data){
       <td><code style="font-size:11px" title="${escHtml(a.traceId||'')}">${(a.traceId||'').slice(0,12)}...</code></td>
       <td>${escHtml(a.appId||'-')}</td>
       <td style="font-size:12px">${escHtml(a.appCode||'-')}</td>
-      <td>${escHtml(a.modelId||'-')}</td>
+      <td>${targetCell(a)}</td>
       <td style="font-size:12px">${escHtml(a.clientIp||'-')}</td>
       <td>${statusTag(a.httpStatus)}</td>
       <td>${a.latencyMs!=null?a.latencyMs+'ms':'-'}</td>
@@ -3534,7 +3554,8 @@ function renderPayloadNeedNarrow(kw){
         足以影响在线业务，因此必须搭配
         <b>TraceID（≥8 位）</b> 或 <b>两端齐全且跨度 ≤24 小时的时间范围</b>。<br>
         <span style="color:#94a3b8">「应用 appId / 应用编码 / 模型」不算收窄条件：内网通常只接个位数的系统，主力系统常占全表七成以上，
-        加上它仍然是近乎全表扫描。「类型 / 上游状态码 / 结束原因 / 完整性」同样不算——无索引且区分度太低。</span>
+        加上它仍然是近乎全表扫描。「流量类型 / 服务编码 / 类型 / 上游状态码 / 结束原因 / 完整性」同样不算——
+        流量类型只有两个取值，区分度比 appId 还低；服务编码能定位但同样不给候选集上界。</span>
       </div>
       <div class="flex gap-8" style="margin-top:12px">
         <button class="btn btn-primary btn-sm" onclick="payloadUseLast24h()">📅 按最近 24 小时搜</button>
@@ -3566,6 +3587,8 @@ async function loadPayload(resetPage = true){
       appId:          $('pl_appId').value.trim(),
       appCode:        $('pl_appCode').value.trim(),
       modelId:        $('pl_model').value,
+      trafficType:    $('pl_traffic').value,
+      serviceId:      $('pl_serviceId').value.trim(),
       traceId:        $('pl_trace').value,
       isStream:       $('pl_stream').value,
       upstreamStatus: $('pl_status').value,
@@ -3645,7 +3668,7 @@ function renderPayload(data){
                 title="复制完整 TraceID">复制</span></td>
       <td style="font-size:12px">${escHtml(p.appId||'-')}</td>
       <td style="font-size:12px">${escHtml(p.appCode||'-')}</td>
-      <td style="font-size:12px">${escHtml(p.modelId||'-')}</td>
+      <td style="font-size:12px">${targetCell(p)}</td>
       <td>${p.isStream ? '<span class="tag tag-purple">流式</span>' : '<span class="tag tag-gray">非流式</span>'}</td>
       <td>${statusTag(p.upstreamStatus)}</td>
       <td>${finishTag(p.finishReason)}</td>
@@ -3659,6 +3682,19 @@ function renderPayload(data){
       <td><button class="btn btn-neutral btn-sm" onclick="openPayloadDetail(${p.id})">查看</button></td>
     </tr>
   `).join('');
+}
+
+/**
+ * 「模型 / 服务」列：一条记录只会有其中一个，所以共用一列而不是加两列。
+ *
+ * 服务流量额外加一个标记，否则光看一个编码分不出这是模型还是服务——
+ * 两者的命名空间是独立的，理论上可以重名。
+ */
+function targetCell(r){
+  if(r.trafficType === 'service'){
+    return `<span class="tag tag-blue" style="margin-right:4px">服务</span><code style="font-size:11px">${escHtml(r.serviceId||'-')}</code>`;
+  }
+  return escHtml(r.modelId || '-');
 }
 
 /** length = 回答被 max_tokens 截断，content_filter = 被内容安全拦截，都是要一眼看出来的异常结束 */
@@ -3771,6 +3807,7 @@ function payloadToAudit(traceId){
   // 结果是"点了跳转却什么都没有"，而用户并不知道是被上一次的筛选条件挡掉的
   $('auditApp').value = ''; $('auditAppId').value = ''; $('auditAppCode').value = '';
   $('auditModel').value = ''; $('auditStatus').value = '';
+  $('auditTraffic').value = ''; $('auditServiceId').value = '';
   $('auditTrace').value = traceId || '';
   loadAudit();
 }

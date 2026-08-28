@@ -32,7 +32,11 @@ public class PayloadListVO {
      * 刻意不在列表 SQL 里 JOIN {@code mg_app}，理由见该方法注释。
      */
     private String        appCode;
+    /** 流量类型：model=模型流量 service=通用服务流量 */
+    private String        trafficType;
     private String        modelId;
+    /** 服务编码（traffic_type=service 时有值；模型流量为 null） */
+    private String        serviceId;
     /** 是否 SSE 流式，决定 responseRaw 的结构（详情页据此选择展示方式） */
     private Boolean       isStream;
     /** 结束原因：stop|length|tool_calls|content_filter 等 */
