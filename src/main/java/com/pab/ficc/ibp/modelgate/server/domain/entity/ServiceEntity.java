@@ -69,6 +69,24 @@ public class ServiceEntity {
     private Boolean sse;
 
     /**
+     * 连通性探测使用的 HTTP 方法，默认 {@code GET}。
+     *
+     * <p>为什么要可配：接入的服务接口各有各的请求方式——有的只认 POST，有的根路径直接 404。
+     * 固定 GET 打根路径的探测结果对这类服务没有参考价值，所以改为录入时一并登记。
+     *
+     * <p>⚠️ <b>选非 GET 意味着探测会对上游产生真实副作用</b>：通用服务的写接口可能真的
+     * 建一条数据出来。管理页面对非 GET 会显著警告，但最终由录入者决定——
+     * 网关无法替业务判断哪个接口是幂等的。
+     */
+    private String probeMethod;
+
+    /** 探测路径，如 {@code /health}；留空则探测上游根路径 */
+    private String probePath;
+
+    /** 探测请求体（JSON），仅 {@link #probeMethod} 需要请求体时使用 */
+    private String probeBody;
+
+    /**
      * 报文留档开关。
      *
      * <p>放在服务本身而非授权行——与模型侧不同。模型侧放授权行是因为不同接入系统合规要求不同；
@@ -108,6 +126,11 @@ public class ServiceEntity {
     /** 上游地址去掉末尾斜杠，避免与请求剩余路径拼出 {@code //}。写入时已规范化，此处是读取侧兜底。 */
     public String normalizedUpstreamUrl() {
         return upstreamUrl == null ? null : upstreamUrl.replaceAll("/+$", "");
+    }
+
+    /** 探测方法归一化：空值按 GET（与建表默认值一致，也是最安全的选择——GET 无副作用）。 */
+    public String resolveProbeMethod() {
+        return probeMethod == null || probeMethod.isBlank() ? "GET" : probeMethod.trim().toUpperCase();
     }
 
     /** {@link #stripPrefix} 为 null 时按 true 处理（老数据兜底），与建表默认值一致。 */

@@ -43,6 +43,14 @@ public class CreateServiceRequestBO {
 
     private Boolean sse;
     private Boolean payloadLogEnabled;
+
+    // ===== 连通性探测配置 =====
+    /** GET(默认) | POST | PUT | DELETE | HEAD；非 GET 会对上游产生真实副作用 */
+    private String probeMethod;
+    /** 探测路径，留空则打根路径 */
+    private String probePath;
+    /** 探测请求体（JSON），仅非 GET 时使用 */
+    private String probeBody;
     private String description;
     private Boolean enabled;
 

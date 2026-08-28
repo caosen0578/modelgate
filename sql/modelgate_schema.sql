@@ -295,6 +295,12 @@ CREATE TABLE IF NOT EXISTS mg_service (
     -- 与 mg_model.timeout_ms 只用于连通性测试不同，本字段是真正生效的。详见 12 §11.1。
     timeout_ms     INT          NOT NULL DEFAULT 0                COMMENT '单请求超时（毫秒），0=沿用全局 httpclient.response-timeout',
     sse            TINYINT(1)   NOT NULL DEFAULT 0                COMMENT '是否 SSE 服务：1=是（影响管理面展示与熔断配置选择，不影响转发本身）',
+    -- 连通性探测配置：接入的服务接口各有各的请求方式，固定 GET 打根路径的探测结果没参考价值。
+    -- ⚠️ probe_method 选非 GET 意味着探测会对上游产生**真实副作用**（写接口可能真的建数据），
+    --    网关无法替业务判断哪个接口幂等，由录入者决定，管理页面有显著警告、服务端打 WARN 留痕。
+    probe_method   VARCHAR(8)   NOT NULL DEFAULT 'GET'          COMMENT '连通性探测使用的 HTTP 方法：GET(默认,无副作用)|POST|PUT|DELETE|HEAD',
+    probe_path     VARCHAR(256)                                 COMMENT '连通性探测路径，如 /health；留空则探测上游根路径',
+    probe_body     TEXT                                         COMMENT '连通性探测请求体（JSON），仅 probe_method 需要请求体时使用',
     -- 报文开关放在服务本身而非授权行：模型侧放授权行是因为不同接入系统合规要求不同；
     -- 服务侧的诉求是「每个接口录入时决定记不记」，粒度在接口本身，放这里更贴合且少一次查询。
     payload_log_enabled TINYINT(1) NOT NULL DEFAULT 0             COMMENT '请求/响应报文记录开关：1=记录到 mg_request_payload，0=不记录（默认关闭）',

@@ -184,6 +184,9 @@ public class ServiceRegistryService {
         e.setStripPrefix(req.getStripPrefix() == null ? Boolean.TRUE : req.getStripPrefix());
         e.setTimeoutMs(req.getTimeoutMs() == null ? 0 : req.getTimeoutMs());
         e.setSse(Boolean.TRUE.equals(req.getSse()));
+        e.setProbeMethod(normalizeProbeMethod(req.getProbeMethod()));
+        e.setProbePath(req.getProbePath());
+        e.setProbeBody(req.getProbeBody());
         e.setPayloadLogEnabled(Boolean.TRUE.equals(req.getPayloadLogEnabled()));
         e.setDescription(req.getDescription());
         e.setEnabled(req.getEnabled() == null ? Boolean.TRUE : req.getEnabled());
@@ -222,6 +225,12 @@ public class ServiceRegistryService {
         if (req.getStripPrefix() != null)  w.set(ServiceEntity::getStripPrefix, req.getStripPrefix());
         if (req.getTimeoutMs() != null)    w.set(ServiceEntity::getTimeoutMs, req.getTimeoutMs());
         if (req.getSse() != null)          w.set(ServiceEntity::getSse, req.getSse());
+        if (req.getProbeMethod() != null)  w.set(ServiceEntity::getProbeMethod, normalizeProbeMethod(req.getProbeMethod()));
+        // 路径与请求体允许被清空（传空串 = 改回"打根路径 / 无请求体"），
+        // 所以只判 != null 而不判 isBlank —— 与凭证 SK 那种"留空=保持原值"的语义相反：
+        // 这两个字段在页面上是可见的输入框，清空它就是要清掉。
+        if (req.getProbePath() != null)    w.set(ServiceEntity::getProbePath, blankToNull(req.getProbePath()));
+        if (req.getProbeBody() != null)    w.set(ServiceEntity::getProbeBody, blankToNull(req.getProbeBody()));
         if (req.getPayloadLogEnabled() != null) w.set(ServiceEntity::getPayloadLogEnabled, req.getPayloadLogEnabled());
         if (req.getDescription() != null)  w.set(ServiceEntity::getDescription, req.getDescription());
         if (req.getEnabled() != null)      w.set(ServiceEntity::getEnabled, req.getEnabled());
@@ -338,6 +347,29 @@ public class ServiceRegistryService {
     }
 
     // ===================== 工具 =====================
+
+    /** 允许的探测方法白名单：不在其中一律回落 GET（无副作用是最安全的默认）。 */
+    private static final java.util.Set<String> PROBE_METHODS =
+            java.util.Set.of("GET", "POST", "PUT", "DELETE", "HEAD");
+
+    /**
+     * 探测方法归一化。
+     *
+     * <p>不在白名单内直接回落 GET 而不是抛错：这个字段是"怎么测"而不是"怎么转发"，
+     * 填错了最坏是探测结果没参考价值，不该因此挡住服务录入。回落到 GET 也保证了
+     * 不会因为一个笔误的方法名意外对上游产生副作用。
+     */
+    private String normalizeProbeMethod(String m) {
+        if (m == null || m.isBlank()) {
+            return "GET";
+        }
+        String up = m.trim().toUpperCase();
+        return PROBE_METHODS.contains(up) ? up : "GET";
+    }
+
+    private String blankToNull(String s) {
+        return s == null || s.isBlank() ? null : s.trim();
+    }
 
     private void validateServiceId(String serviceId) {
         if (serviceId == null || !SERVICE_ID_PATTERN.matcher(serviceId).matches()) {

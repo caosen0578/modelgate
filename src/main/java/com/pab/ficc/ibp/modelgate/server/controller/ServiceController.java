@@ -167,15 +167,23 @@ public class ServiceController {
      * <p>探测用 <b>GET</b> 且<b>不对上游产生副作用</b>：通用服务的 POST 往往是业务写操作，
      * 拿它去测连通可能真的建一条数据出来。
      *
-     * @param probePath 可选。指定一个真实存在的路径（如 {@code /health}）能拿到更确切的结果；
-     *                  留空则打根路径。
+     * <p>方法 / 路径 / 请求体三项<b>留空则取服务录入时登记的探测配置</b>
+     * （{@code mg_service.probe_method / probe_path / probe_body}），传了则临时覆盖本次探测。
+     * 这样"平时点一下测试"用登记好的方式，"临时换个路径试试"也不用改配置。
+     *
+     * <p>⚠️ 登记为非 GET 时，探测会对上游产生<b>真实副作用</b>——网关无法替业务判断
+     * 哪个接口是幂等的，这件事由录入者决定，服务端会打 WARN 留痕。
      */
-    @Operation(summary = "上游连通性探测（GET 探测，无副作用；判定的是「网关能否连到上游」）")
+    @Operation(summary = "上游连通性探测（按服务登记的方法/路径；判定的是「网关能否连到上游」）")
     @PostMapping(UrlConstant.TEST)
     public Mono<Result<ConnectivityTestVO>> test(
             @Parameter(description = "服务编码") @RequestParam("serviceId") String serviceId,
-            @Parameter(description = "探测路径，留空则打根路径")
-            @RequestParam(name = "probePath", required = false) String probePath) {
+            @Parameter(description = "探测方法，留空取服务登记值")
+            @RequestParam(name = "probeMethod", required = false) String probeMethod,
+            @Parameter(description = "探测路径，留空取服务登记值")
+            @RequestParam(name = "probePath", required = false) String probePath,
+            @Parameter(description = "探测请求体，留空取服务登记值；GET/HEAD 忽略")
+            @RequestParam(name = "probeBody", required = false) String probeBody) {
         // 装载服务与凭证要查库，必须先切到管理面线程池；探测本身是响应式的，不阻塞
         return Mono.fromCallable(() -> {
                     ServiceEntity svc = serviceRegistryService.findByServiceId(serviceId);
@@ -185,7 +193,7 @@ public class ServiceController {
                 .flatMap(arr -> connectivityService.probe(
                         (ServiceEntity) arr[0],
                         (com.pab.ficc.ibp.modelgate.server.domain.entity.ServiceCredentialEntity) arr[1],
-                        probePath))
+                        probeMethod, probePath, probeBody))
                 .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .map(Result::success);
     }

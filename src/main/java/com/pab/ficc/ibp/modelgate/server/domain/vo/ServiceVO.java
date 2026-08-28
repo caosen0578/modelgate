@@ -23,6 +23,11 @@ public class ServiceVO {
     private Integer timeoutMs;
     private Boolean sse;
     private Boolean payloadLogEnabled;
+
+    /** 连通性探测配置：方法 / 路径 / 请求体。测试工具据此预填，也允许临时覆盖。 */
+    private String  probeMethod;
+    private String  probePath;
+    private String  probeBody;
     private String  description;
     private Boolean enabled;
 
@@ -61,6 +66,9 @@ public class ServiceVO {
         vo.timeoutMs         = e.getTimeoutMs();
         vo.sse               = Boolean.TRUE.equals(e.getSse());
         vo.payloadLogEnabled = Boolean.TRUE.equals(e.getPayloadLogEnabled());
+        vo.probeMethod       = e.resolveProbeMethod();
+        vo.probePath         = e.getProbePath();
+        vo.probeBody         = e.getProbeBody();
         vo.description       = e.getDescription();
         vo.enabled           = e.getEnabled();
         vo.publicPrefix      = "/svc/" + e.getServiceId() + "/";

@@ -334,6 +334,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
                 <th>对外路径</th>
                 <th>上游地址</th>
                 <th>剥离前缀</th>
+                <th>探测方式</th>
                 <th>SSE</th>
                 <th>报文留档</th>
                 <th>上游鉴权</th>
@@ -343,7 +344,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
               </tr>
             </thead>
             <tbody id="servicesTbody">
-              <tr class="empty-row"><td colspan="11">加载中…</td></tr>
+              <tr class="empty-row"><td colspan="12">加载中…</td></tr>
             </tbody>
           </table>
           <div id="servicesPager"></div>
@@ -1115,6 +1116,16 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
 
       <!-- 连通性测试结果：真实走一次 /v1/** 全链路（凭证鉴权→访问控制→模型授权→配额→路由→上游） -->
       <div id="ug_testWrap" style="display:none;margin-top:14px">
+        <!-- 把本次实际发出的请求摆出来：排查"为什么返回的是流式/非流式"这类问题时，
+             第一件要确认的就是请求体里到底有没有 stream，光看响应猜不出来 -->
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+          <span class="rawtog" id="ug_reqTog"
+                onclick="$('ug_reqRaw').classList.toggle('open');
+                         $('ug_reqTog').textContent=($('ug_reqRaw').classList.contains('open')?'▼':'▶')+' 本次实际发出的请求'">
+            ▶ 本次实际发出的请求
+          </span>
+        </div>
+        <pre class="rawbox" id="ug_reqRaw"></pre>
         <div class="rmeta">
           <span id="ug_testVerdict">-</span>
           <span style="font-size:12px;font-family:monospace;color:#64748b" id="ug_testMeta">-</span>
@@ -1249,6 +1260,31 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
           <label style="font-weight:400;display:block;margin-top:4px"><input type="checkbox" id="svcPayloadLog"/> 记录请求/响应报文</label>
           <span class="hint">报文含完整请求与响应原文，保留期见「报文记录」页。</span>
         </div>
+      </div>
+      <!-- 连通性探测配置：接入的服务接口各有各的请求方式，
+           固定 GET 打根路径的探测结果对只认 POST、或根路径直接 404 的服务没有参考价值。 -->
+      <div class="form-group" style="border-top:1px dashed #e2e8f0;padding-top:12px;margin-top:4px">
+        <label>连通性探测</label>
+        <div style="display:flex;gap:8px">
+          <select id="svcProbeMethod" style="width:110px" onchange="onSvcProbeMethodChange()">
+            <option value="GET">GET</option>
+            <option value="HEAD">HEAD</option>
+            <option value="POST">POST</option>
+            <option value="PUT">PUT</option>
+            <option value="DELETE">DELETE</option>
+          </select>
+          <input type="text" id="svcProbePath" placeholder="/health" style="flex:1"/>
+        </div>
+        <span class="hint">「🧪 测试」按这里登记的方式探测。路径留空则打上游根路径。</span>
+        <div id="svcProbeWarn" class="warn-box" style="display:none;margin-top:8px;font-size:12px;line-height:1.7">
+          ⚠️ 非 GET 的探测会<b>真的调用</b>上游这个接口 —— 若它是写操作，点一次「测试」就会
+          在上游建一条真实数据。网关无法替你判断哪个接口是幂等的，请确认后再选。
+        </div>
+      </div>
+      <div class="form-group" id="svcProbeBodyRow" style="display:none">
+        <label>探测请求体</label>
+        <textarea id="svcProbeBody" rows="2" placeholder='{"ping":1}'></textarea>
+        <span class="hint">仅非 GET/HEAD 时使用；按上游该接口的定义填写。</span>
       </div>
       <div class="form-group">
         <label>上游鉴权类型</label>
@@ -1394,11 +1430,26 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
           </div>
 
           <div>
-            <div class="tsec-hd">📍 探测路径</div>
+            <div class="tsec-hd">📍 探测方式</div>
             <div class="form-group">
-              <input type="text" id="svcTestPath" placeholder="/health" oninput="updateSvcTestPreview()"/>
-              <span class="hint">留空则探测上游<b>根路径</b>。填一个真实存在的路径（如 <code>/health</code>、
-                <code>/actuator/health</code>）能拿到更确切的结果。</span>
+              <div style="display:flex;gap:8px">
+                <select id="svcTestMethod" style="width:110px" onchange="updateSvcTestPreview()">
+                  <option value="GET">GET</option>
+                  <option value="HEAD">HEAD</option>
+                  <option value="POST">POST</option>
+                  <option value="PUT">PUT</option>
+                  <option value="DELETE">DELETE</option>
+                </select>
+                <input type="text" id="svcTestPath" placeholder="/health" style="flex:1" oninput="updateSvcTestPreview()"/>
+              </div>
+              <span class="hint">默认取<b>服务录入时登记的探测方式</b>；在这里改只影响本次探测，不改配置。</span>
+            </div>
+            <div class="form-group" id="svcTestBodyRow" style="display:none">
+              <label style="font-size:12px">探测请求体</label>
+              <textarea id="svcTestBody" rows="2" placeholder='{"ping":1}'></textarea>
+            </div>
+            <div id="svcTestWriteWarn" class="warn-box" style="display:none;font-size:12px;line-height:1.7">
+              ⚠️ 非 GET 的探测会<b>真的调用</b>上游这个接口，若它是写操作会产生真实数据。
             </div>
           </div>
 
@@ -3292,6 +3343,15 @@ async function runUsageTest(){
       init.headers['Content-Type'] = 'application/json';
       init.body = p.body;
     }
+    // 回显本次真正发出去的东西：method / URL / 请求体。
+    // "不勾选却返回流式"这类问题，只要看一眼这里有没有 "stream": true 就能定位到底是
+    // 前端发错了、还是上游/模型的 force_params 自己加的。
+    $('ug_reqRaw').textContent =
+      init.method + ' ' + p.base + p.path + '\n'
+      + Object.entries(init.headers).map(([k,v]) =>
+          k + ': ' + (k.toLowerCase()==='authorization' ? String(v).slice(0,12)+'…（已截断）' : v)).join('\n')
+      + (init.body ? '\n\n' + init.body : '\n\n(无请求体)');
+
     const resp = await fetch(p.base + p.path, init);
     const cost = Date.now() - started;
     const text = await resp.text();
@@ -4847,7 +4907,7 @@ async function loadServices(){
 function renderServices(list){
   const tb = $('servicesTbody');
   if(!list || !list.length){
-    tb.innerHTML = '<tr class="empty-row"><td colspan="11">暂无服务，点击右上角「新增服务」开始接入</td></tr>';
+    tb.innerHTML = '<tr class="empty-row"><td colspan="12">暂无服务，点击右上角「新增服务」开始接入</td></tr>';
     return;
   }
   tb.innerHTML = list.map(s => {
@@ -4861,6 +4921,7 @@ function renderServices(list){
           <button class="btn btn-sm" onclick="copyText('${escHtml(prefix)}')">复制</button></td>
       <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis"><span title="${escHtml(s.upstreamUrl||'')}">${escHtml(s.upstreamUrl||'')}</span></td>
       <td>${s.stripPrefix === false ? '否' : '是'}</td>
+      <td><code style="font-size:11px">${escHtml((s.probeMethod||'GET') + ' ' + (s.probePath||'/'))}</code></td>
       <td>${s.sse ? '✅' : '—'}</td>
       <td>${s.payloadLogEnabled ? '✅' : '—'}</td>
       <td>${authBadge}</td>
@@ -4889,6 +4950,14 @@ function updateSvcPreview(){
   box.innerHTML = `调用方请求网关：<b>POST ${escHtml(inbound)}</b><br>网关实际转发：&nbsp;&nbsp;<b>POST ${escHtml(outbound)}</b>`;
 }
 
+/** 非 GET/HEAD 才显示请求体输入，并弹出副作用警告——这是唯一会让管理面写上游的动作 */
+function onSvcProbeMethodChange(){
+  const m = $('svcProbeMethod').value;
+  const writes = (m !== 'GET' && m !== 'HEAD');
+  $('svcProbeBodyRow').style.display = writes ? '' : 'none';
+  $('svcProbeWarn').style.display    = writes ? '' : 'none';
+}
+
 function onSvcAuthTypeChange(){
   const t = $('svcAuthType').value;
   $('svcAkRow').style.display = (t === 'ak_sk') ? '' : 'none';
@@ -4907,6 +4976,7 @@ async function openServiceModal(serviceId){
   $('svcStripPrefix').checked = true; $('svcSse').checked = false;
   $('svcPayloadLog').checked = false; $('svcEnabled').checked = true;
   $('svcAuthType').value = 'none';
+  $('svcProbeMethod').value = 'GET'; set('svcProbePath',''); set('svcProbeBody','');
 
   if(serviceId){
     try{
@@ -4922,6 +4992,8 @@ async function openServiceModal(serviceId){
       $('svcPayloadLog').checked = !!s.payloadLogEnabled;
       $('svcEnabled').checked = s.enabled !== false;
       $('svcAuthType').value = s.authType || 'none';
+      $('svcProbeMethod').value = s.probeMethod || 'GET';
+      set('svcProbePath', s.probePath); set('svcProbeBody', s.probeBody);
       // SK 与附加头不回显明文；用占位提示告知"已配置"，留空提交即保持原值
       $('svcSecretKey').placeholder = s.secretConfigured ? '已配置（留空 = 保持原值）' : '留空 = 不配置';
       $('svcExtraHeaders').placeholder = s.extraHeadersConfigured
@@ -4929,6 +5001,7 @@ async function openServiceModal(serviceId){
     }catch(e){ toast('加载服务详情异常','error'); return; }
   }
   onSvcAuthTypeChange();
+  onSvcProbeMethodChange();
   updateSvcPreview();
   openModal('serviceModal');
 }
@@ -4947,6 +5020,11 @@ async function saveService(){
     enabled: $('svcEnabled').checked,
     authType: $('svcAuthType').value,
     accessKey: ($('svcAccessKey').value||'').trim() || null,
+    probeMethod: $('svcProbeMethod').value,
+    // 传空串而非 null：后端对这两个字段是"传了就写、空串即清空"，
+    // 与凭证 SK 的"留空=保持原值"语义相反（它们在页面上是可见输入框，清空就是要清掉）
+    probePath: ($('svcProbePath').value||'').trim(),
+    probeBody: ($('svcProbeBody').value||'').trim(),
   };
   // 留空 = 保持原值，因此不传该字段（传 null 会被后端当成"没提供"，语义一致）
   const sk = ($('svcSecretKey').value||'').trim();
@@ -5022,7 +5100,10 @@ function testService(serviceId){
   $('svcTestAuth').textContent = svc && svc.authType && svc.authType !== 'none'
     ? svc.authType + (svc.secretConfigured ? '（密钥已配置）' : '（密钥未配置）')
     : 'none —— 不向上游注入任何凭证';
-  $('svcTestPath').value = '';
+  // 预填服务登记的探测配置——「按录入的接口请求方式测试」就是这里生效的
+  $('svcTestMethod').value = (svc && svc.probeMethod) || 'GET';
+  $('svcTestPath').value   = (svc && svc.probePath) || '';
+  $('svcTestBody').value   = (svc && svc.probeBody) || '';
   clearSvcTestResp();
   updateSvcTestPreview();
   openModal('svcTestModal');
@@ -5035,7 +5116,11 @@ function updateSvcTestPreview(){
   let path = ($('svcTestPath').value||'').trim();
   if(path && !path.startsWith('/')) path = '/' + path;
   if(!path) path = '/';
-  $('svcTestPreview').textContent = base ? ('GET ' + base + path) : '(该服务未配置上游地址)';
+  const m = $('svcTestMethod').value || 'GET';
+  const writes = (m !== 'GET' && m !== 'HEAD');
+  $('svcTestBodyRow').style.display   = writes ? '' : 'none';
+  $('svcTestWriteWarn').style.display = writes ? '' : 'none';
+  $('svcTestPreview').textContent = base ? (m + ' ' + base + path) : '(该服务未配置上游地址)';
 }
 
 function clearSvcTestResp(){
@@ -5055,12 +5140,17 @@ async function runSvcTest(){
   $('svcTestMetaBar').style.display = 'flex';
   $('svcTestVerdict').innerHTML = '<span class="tag tag-gray">探测中…</span>';
   $('svcTestMeta').textContent = '-';
-  $('svcTestRespBox').innerHTML = '<span class="rph">// 正在从服务端 GET 上游…</span>';
+  $('svcTestRespBox').innerHTML = '<span class="rph">// 正在从服务端 '
+    + escapeHtml($('svcTestMethod').value || 'GET') + ' 上游…</span>';
 
-  const probePath = ($('svcTestPath').value||'').trim();
+  const probePath   = ($('svcTestPath').value||'').trim();
+  const probeMethod = $('svcTestMethod').value || 'GET';
+  const probeBody   = ($('svcTestBody').value||'').trim();
   try{
     const qs = 'serviceId=' + encodeURIComponent(svcTestCtx.serviceId)
-             + (probePath ? '&probePath=' + encodeURIComponent(probePath) : '');
+             + '&probeMethod=' + encodeURIComponent(probeMethod)
+             + (probePath ? '&probePath=' + encodeURIComponent(probePath) : '')
+             + (probeBody ? '&probeBody=' + encodeURIComponent(probeBody) : '');
     const r = await fetch(apiUrl('/modelgate/services/test?' + qs), {method:'POST', headers:hdrs()});
     const j = await r.json();
     if(!isOk(j)){

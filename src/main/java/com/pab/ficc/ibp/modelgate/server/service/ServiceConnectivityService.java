@@ -62,20 +62,36 @@ public class ServiceConnectivityService {
     /**
      * 探测服务上游是否可达。
      *
-     * @param probePath 探测路径，为空则取 {@code "/"}。让调用方能指定一个真实存在的健康检查路径，
-     *                  拿到 200 比拿到 404 更有说服力；但即使 404 也仍判连通（见类注释）。
+     * <p>方法 / 路径 / 请求体<b>优先取入参，为空则回落到服务录入时登记的探测配置</b>
+     * （{@code mg_service.probe_method / probe_path / probe_body}）。
+     * 这样"平时点一下测试"用登记好的方式，"临时换个路径试试"也不用改配置。
+     *
+     * <p>⚠️ <b>非 GET 的探测会对上游产生真实副作用</b>：通用服务的写接口可能真的建一条数据。
+     * 网关无法替业务判断哪个接口幂等，所以这件事交给录入者决定，管理页面上有显著警告。
+     *
+     * @param method   探测方法，为空则取服务登记值（再为空则 GET）
+     * @param probePath 探测路径，为空则取服务登记值（再为空则根路径）
+     * @param body     探测请求体，为空则取服务登记值；GET/HEAD 一律忽略
      */
     public Mono<ConnectivityTestVO> probe(ServiceEntity service, ServiceCredentialEntity credential,
-                                          String probePath) {
+                                          String method, String probePath, String body) {
         String base = service.normalizedUpstreamUrl();
         if (base == null || base.isBlank()) {
             return Mono.just(ConnectivityTestVO.of(false, 0L, "上游地址为空，无法发起探测", null, null, null));
         }
 
-        String path = (probePath == null || probePath.isBlank()) ? "/" : probePath.trim();
+        String effPath = firstNonBlank(probePath, service.getProbePath());
+        String path = (effPath == null || effPath.isBlank()) ? "/" : effPath.trim();
         if (!path.startsWith("/")) {
             path = "/" + path;
         }
+
+        String verb = firstNonBlank(method, service.resolveProbeMethod());
+        HttpMethod httpMethod = HttpMethod.valueOf(verb.toUpperCase());
+        // GET / HEAD 不允许带请求体；带了会被 WebClient 忽略或直接报错，
+        // 这里显式置空而不是交给下游猜
+        boolean bodyAllowed = !HttpMethod.GET.equals(httpMethod) && !HttpMethod.HEAD.equals(httpMethod);
+        String effBody = bodyAllowed ? firstNonBlank(body, service.getProbeBody()) : null;
 
         URI uri;
         try {
@@ -91,14 +107,23 @@ public class ServiceConnectivityService {
         String uriText = uri.toString();
         long startNanos = System.nanoTime();
 
-        // 用 GET 而不是 POST：探测不该对上游产生副作用。通用服务的 POST 往往是业务写操作，
-        // 拿它去"测连通"可能真的建一条数据出来——这是管理面绝不能做的事。
-        return webClient.method(HttpMethod.GET)
+        // 默认 GET（无副作用）；录入者显式登记了其它方法才会用其它方法。
+        // 非 GET 打一条 WARN 留痕：万一探测在上游建了脏数据，日志里能查到是谁什么时候点的。
+        if (bodyAllowed) {
+            log.warn("[ServiceConnectivity] 使用非 GET 方法探测，可能对上游产生副作用: "
+                    + "serviceId={}, method={}, uri={}", service.getServiceId(), verb, uriText);
+        }
+        WebClient.RequestBodySpec spec = webClient.method(httpMethod)
                 .uri(uri)
-                .headers(h -> h.addAll(headers))
+                .headers(h -> h.addAll(headers));
+        WebClient.RequestHeadersSpec<?> req = effBody == null || effBody.isBlank()
+                ? spec
+                : spec.contentType(org.springframework.http.MediaType.APPLICATION_JSON).bodyValue(effBody);
+
+        return req
                 .exchangeToMono(resp -> resp.bodyToMono(String.class)
                         .defaultIfEmpty("")
-                        .map(body -> classify(resp.statusCode().value(), body,
+                        .map(respBody -> classify(resp.statusCode().value(), respBody,
                                 elapsedMs(startNanos), uriText)))
                 .timeout(timeout)
                 .onErrorResume(e -> Mono.just(
@@ -174,10 +199,10 @@ public class ServiceConnectivityService {
                             + "若已配置上游凭证，请确认鉴权类型与密钥是否正确；未配置则属正常。",
                     status, uriText, snippet);
         }
-        // 404 / 405 / 400 等：探测打的是根路径，上游不认很正常，网络这一层是通的
+        // 404 / 405 / 400 等：上游不认这个路径或方法很正常，网络这一层是通的
         return ConnectivityTestVO.of(true, latencyMs,
-                "上游可达（HTTP " + status + "）：网络与地址正确。探测打的是根路径，"
-                        + "上游不认属正常；如需更确切的结果，请指定一个真实存在的探测路径。",
+                "上游可达（HTTP " + status + "）：网络与地址正确，但上游不认这个路径或方法。"
+                        + "如需更确切的结果，请在服务配置里登记正确的探测方法与路径。",
                 status, uriText, snippet);
     }
 
@@ -208,6 +233,12 @@ public class ServiceConnectivityService {
             return DEFAULT_PROBE_TIMEOUT_MS;
         }
         return Math.min(Math.max(configured, 1_000), MAX_PROBE_TIMEOUT_MS);
+    }
+
+    /** 取第一个非空白值；两个都空返回 null。 */
+    private static String firstNonBlank(String a, String b) {
+        if (a != null && !a.isBlank()) return a;
+        return (b != null && !b.isBlank()) ? b : null;
     }
 
     private String snippet(String body) {

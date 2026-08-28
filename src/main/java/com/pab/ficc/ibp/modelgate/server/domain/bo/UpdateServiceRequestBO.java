@@ -32,6 +32,11 @@ public class UpdateServiceRequestBO {
 
     private Boolean sse;
     private Boolean payloadLogEnabled;
+
+    // ===== 连通性探测配置 =====
+    private String probeMethod;
+    private String probePath;
+    private String probeBody;
     private String description;
     private Boolean enabled;
 
