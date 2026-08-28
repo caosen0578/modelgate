@@ -1090,59 +1090,59 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
 </div>
 
 <!-- ========== MODAL: 新增/编辑服务 ========== -->
-<div class="modal" id="serviceModal">
-  <div class="modal-box" style="max-width:720px">
-    <div class="modal-head">
+<div class="modal-backdrop" id="serviceModal">
+  <div class="modal modal-wide">
+    <div class="modal-header">
       <h3 id="serviceModalTitle">新增服务</h3>
       <button class="modal-close" onclick="closeModal('serviceModal')">&times;</button>
     </div>
     <div class="modal-body">
-      <div class="form-row">
-        <label>服务编码 <span style="color:#dc2626">*</span></label>
+      <div class="form-group">
+        <label>服务编码 <span style="color:red">*</span></label>
         <input type="text" id="svcId" placeholder="crm" maxlength="32" oninput="updateSvcPreview()"/>
         <!-- 编码是对外 URL 的一段，创建后不可改（改名等于换 URL，接入方必须同步改代码），
              编辑时置灰。格式约束与后端 ServiceRegistryService.SERVICE_ID_PATTERN 一致。 -->
-        <div class="form-hint">小写字母 / 数字 / 连字符，2~32 位，不能以连字符开头。<b>创建后不可修改</b>。</div>
+        <span class="hint">小写字母 / 数字 / 连字符，2~32 位，不能以连字符开头。<b>创建后不可修改</b>。</span>
       </div>
-      <div class="form-row">
-        <label>服务名称 <span style="color:#dc2626">*</span></label>
+      <div class="form-group">
+        <label>服务名称 <span style="color:red">*</span></label>
         <input type="text" id="svcName" placeholder="CRM 客户查询服务"/>
       </div>
-      <div class="form-row">
+      <div class="form-group">
         <label>所属系统</label>
         <input type="text" id="svcOwnerSystem" placeholder="客户中心"/>
       </div>
-      <div class="form-row">
-        <label>上游地址 <span style="color:#dc2626">*</span></label>
+      <div class="form-group">
+        <label>上游地址 <span style="color:red">*</span></label>
         <input type="text" id="svcUpstreamUrl" placeholder="http://crm.intranet:8080" oninput="updateSvcPreview()"/>
-        <div class="form-hint">协议 + 域名 + 端口（可带固定前缀路径）；末尾斜杠会被自动去掉。</div>
+        <span class="hint">协议 + 域名 + 端口（可带固定前缀路径）；末尾斜杠会被自动去掉。</span>
       </div>
-      <div class="form-row">
+      <div class="form-group">
         <label>剥离前缀</label>
         <label style="font-weight:400"><input type="checkbox" id="svcStripPrefix" checked onchange="updateSvcPreview()"/> 转发前剥掉 /svc/{服务编码}</label>
-        <div class="form-hint">默认开启。关闭后完整路径原样转发，供上游确实需要看到 /svc/{编码} 的场景。</div>
+        <span class="hint">默认开启。关闭后完整路径原样转发，供上游确实需要看到 /svc/{编码} 的场景。</span>
       </div>
       <!-- 实时翻译示例：路径规则最容易理解错，直接把结果显示出来比写多少说明都有效 -->
-      <div class="form-row">
+      <div class="form-group">
         <label>转发预览</label>
         <div id="svcPreview" style="font-size:12px;line-height:1.9;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:8px 10px;color:#334155;font-family:ui-monospace,Menlo,Consolas,monospace">
           填入服务编码与上游地址后显示
         </div>
       </div>
-      <div class="form-row" style="display:flex;gap:12px">
-        <div style="flex:1">
+      <div class="form-group" style="display:flex;gap:12px">
+        <div class="form-group" style="flex:1">
           <label>单请求超时（毫秒）</label>
           <input type="number" id="svcTimeoutMs" placeholder="0" min="0"/>
-          <div class="form-hint">0 = 沿用全局。<b>注意</b>：该值管的是「等上游吐出响应头」，管不到响应体，SSE 流不受它约束。</div>
+          <span class="hint">0 = 沿用全局。<b>注意</b>：该值管的是「等上游吐出响应头」，管不到响应体，SSE 流不受它约束。</span>
         </div>
-        <div style="flex:1">
+        <div class="form-group" style="flex:1">
           <label>服务属性</label>
           <label style="font-weight:400;display:block;margin-top:6px"><input type="checkbox" id="svcSse"/> SSE 服务（流式）</label>
           <label style="font-weight:400;display:block;margin-top:4px"><input type="checkbox" id="svcPayloadLog"/> 记录请求/响应报文</label>
-          <div class="form-hint">报文含完整请求与响应原文，保留期见「报文记录」页。</div>
+          <span class="hint">报文含完整请求与响应原文，保留期见「报文记录」页。</span>
         </div>
       </div>
-      <div class="form-row">
+      <div class="form-group">
         <label>上游鉴权类型</label>
         <select id="svcAuthType" onchange="onSvcAuthTypeChange()">
           <option value="none">none —— 不注入（上游在内网且自身不鉴权）</option>
@@ -1150,32 +1150,32 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
           <option value="ak_sk">ak_sk —— X-Access-Key + X-Secret-Key</option>
           <option value="custom_header">custom_header —— 仅注入下方附加请求头</option>
         </select>
-        <div class="form-hint">调用方带的是<b>本网关</b>凭证，转发前会被剔除，换成这里配置的上游凭证。</div>
+        <span class="hint">调用方带的是<b>本网关</b>凭证，转发前会被剔除，换成这里配置的上游凭证。</span>
       </div>
-      <div class="form-row" id="svcAkRow" style="display:none">
+      <div class="form-group" id="svcAkRow" style="display:none">
         <label>Access Key</label>
         <input type="text" id="svcAccessKey" placeholder="AK 明文"/>
       </div>
-      <div class="form-row" id="svcSkRow" style="display:none">
+      <div class="form-group" id="svcSkRow" style="display:none">
         <label>Secret Key</label>
         <input type="password" id="svcSecretKey" placeholder="留空 = 保持原值"/>
-        <div class="form-hint">加密存储，列表与详情均不回显。<b>编辑时留空表示保持原值</b>，要清空请把鉴权类型改为 none。</div>
+        <span class="hint">加密存储，列表与详情均不回显。<b>编辑时留空表示保持原值</b>，要清空请把鉴权类型改为 none。</span>
       </div>
-      <div class="form-row">
+      <div class="form-group">
         <label>附加请求头</label>
         <textarea id="svcExtraHeaders" rows="3" placeholder='{"X-Tenant":"ficc","X-Channel":"gateway"}'></textarea>
-        <div class="form-hint">JSON 对象，值须为字符串。整体加密存储。四种鉴权类型都会额外注入这些头。</div>
+        <span class="hint">JSON 对象，值须为字符串。整体加密存储。四种鉴权类型都会额外注入这些头。</span>
       </div>
-      <div class="form-row">
+      <div class="form-group">
         <label>描述</label>
         <textarea id="svcDescription" rows="2" placeholder="备注"></textarea>
       </div>
-      <div class="form-row">
+      <div class="form-group">
         <label>状态</label>
         <label style="font-weight:400"><input type="checkbox" id="svcEnabled" checked/> 启用（禁用后请求该服务返回 503）</label>
       </div>
     </div>
-    <div class="modal-foot">
+    <div class="modal-footer">
       <button class="btn" onclick="closeModal('serviceModal')">取消</button>
       <button class="btn btn-primary" onclick="saveService()">保存</button>
     </div>
@@ -1183,9 +1183,9 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
 </div>
 
 <!-- ========== MODAL: 服务的授权系统（反查） ========== -->
-<div class="modal" id="serviceAppsModal">
-  <div class="modal-box" style="max-width:860px">
-    <div class="modal-head">
+<div class="modal-backdrop" id="serviceAppsModal">
+  <div class="modal modal-wide">
+    <div class="modal-header">
       <h3 id="serviceAppsTitle">授权系统</h3>
       <button class="modal-close" onclick="closeModal('serviceAppsModal')">&times;</button>
     </div>
@@ -1200,7 +1200,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
         </table>
       </div>
     </div>
-    <div class="modal-foot"><button class="btn" onclick="closeModal('serviceAppsModal')">关闭</button></div>
+    <div class="modal-footer"><button class="btn" onclick="closeModal('serviceAppsModal')">关闭</button></div>
   </div>
 </div>
 
@@ -4291,12 +4291,12 @@ function renderServices(list){
   tb.innerHTML = list.map(s => {
     const prefix = s.publicPrefix || ('/svc/' + s.serviceId + '/');
     const authBadge = s.authType && s.authType !== 'none'
-      ? `<span class="badge">${escHtml(s.authType)}</span>` : '<span style="color:#9ca3af">none</span>';
+      ? `<span class="tag tag-blue">${escHtml(s.authType)}</span>` : '<span style="color:#9ca3af">none</span>';
     return `<tr>
       <td><code>${escHtml(s.serviceId)}</code></td>
       <td>${escHtml(s.serviceName || '')}</td>
       <td><code style="font-size:11px">${escHtml(prefix)}</code>
-          <button class="btn btn-xs" onclick="copyText('${escHtml(prefix)}')">复制</button></td>
+          <button class="btn btn-sm" onclick="copyText('${escHtml(prefix)}')">复制</button></td>
       <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis"><span title="${escHtml(s.upstreamUrl||'')}">${escHtml(s.upstreamUrl||'')}</span></td>
       <td>${s.stripPrefix === false ? '否' : '是'}</td>
       <td>${s.sse ? '✅' : '—'}</td>
@@ -4305,9 +4305,9 @@ function renderServices(list){
       <td><a href="javascript:void(0)" onclick="viewServiceApps('${escHtml(s.serviceId)}')">${s.authorizedAppCount ?? 0}</a></td>
       <td>${s.enabled === false ? '<span style="color:#dc2626">已禁用</span>' : '<span style="color:#16a34a">启用中</span>'}</td>
       <td>
-        <button class="btn btn-xs" onclick="openServiceModal('${escHtml(s.serviceId)}')">编辑</button>
-        <button class="btn btn-xs" onclick="toggleService('${escHtml(s.serviceId)}', ${s.enabled === false})">${s.enabled === false ? '启用' : '禁用'}</button>
-        <button class="btn btn-xs btn-danger" onclick="deleteService('${escHtml(s.serviceId)}')">删除</button>
+        <button class="btn btn-sm" onclick="openServiceModal('${escHtml(s.serviceId)}')">编辑</button>
+        <button class="btn btn-sm" onclick="toggleService('${escHtml(s.serviceId)}', ${s.enabled === false})">${s.enabled === false ? '启用' : '禁用'}</button>
+        <button class="btn btn-sm btn-danger" onclick="deleteService('${escHtml(s.serviceId)}')">删除</button>
       </td>
     </tr>`;
   }).join('');
