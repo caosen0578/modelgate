@@ -26,8 +26,10 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * 通用服务注册的管理面服务（{@code mg_service} + {@code mg_service_credential}）。
@@ -96,6 +98,21 @@ public class ServiceRegistryService {
     public Optional<ServiceEntity> getServiceCached(String serviceId) {
         return cacheManager.getService(serviceId, () -> Optional.ofNullable(serviceMapper.selectOne(
                 new LambdaQueryWrapper<ServiceEntity>().eq(ServiceEntity::getServiceId, serviceId))));
+    }
+
+    /**
+     * 一次性取全部服务凭证，按 serviceId 归集。
+     *
+     * <p>专供列表接口避免 N+1：整表加载与分页无关——分页只收敛服务主表的返回行数，
+     * 凭证表与服务表一对一、行数同量级（个位数到几十），一次全量比逐行查划算得多。
+     * 与 {@code ModelService.findAllCredentials} 同一手法。
+     *
+     * <p>⚠️ <b>不解密</b>：列表只需要"配没配"这个事实，解密几十条纯属浪费，
+     * 而且解出来的明文会随 VO 一路带到序列化层，多一次泄露机会。
+     */
+    public Map<String, ServiceCredentialEntity> findAllCredentials() {
+        return credentialMapper.selectList(null).stream()
+                .collect(Collectors.toMap(ServiceCredentialEntity::getServiceId, c -> c, (a, b) -> a));
     }
 
     public Optional<ServiceCredentialEntity> getCredential(String serviceId) {

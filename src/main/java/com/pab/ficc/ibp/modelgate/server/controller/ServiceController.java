@@ -1,6 +1,8 @@
 package com.pab.ficc.ibp.modelgate.server.controller;
 
-import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.pab.ficc.ibp.domain.base.vo.PageVo;
+import com.pab.ficc.ibp.modelgate.server.common.AdminScheduler;
+import com.pab.ficc.ibp.modelgate.server.common.PageSupport;
 import com.pab.ficc.ibp.modelgate.server.constant.UrlConstant;
 import com.pab.ficc.ibp.modelgate.server.domain.Result;
 import com.pab.ficc.ibp.modelgate.server.domain.bo.CreateServiceRequestBO;
@@ -25,7 +27,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
-import reactor.core.scheduler.Schedulers;
 
 import java.util.HashMap;
 import java.util.List;
@@ -34,10 +35,13 @@ import java.util.Map;
 /**
  * 服务管理（通用服务注册）。
  *
- * <p><b>所有 DB 操作必须 {@code subscribeOn(Schedulers.boundedElastic())}</b>：
- * 这是 WebFlux 项目，MyBatis/Druid 是同步阻塞的，直接跑在 Netty 事件循环线程上
- * 会拖垮<b>整个进程</b>的转发能力——被拖慢的不只是管理接口，而是所有在途的业务请求。
- * 这条约束见 spec/modelgate/05 §WebFlux 线程禁令。
+ * <p><b>所有 DB 操作必须切出 Netty 事件循环线程</b>：这是 WebFlux 项目，
+ * MyBatis/Druid 是同步阻塞的，直接跑在事件循环上会拖垮<b>整个进程</b>的转发能力——
+ * 被拖慢的不只是管理接口，而是所有在途的业务请求。见 spec/modelgate/05 §WebFlux 线程禁令。
+ *
+ * <p>切到 {@link AdminScheduler} 而不是公共的 {@code boundedElastic}：管理面查询有独立的
+ * 并发上限（8）与排队上限（128），混进公共池会让一条慢查询挤占业务转发的线程。
+ * 配套的 {@code timeout(REQUEST_TIMEOUT)} 是兜底，与 {@code ModelController} 同一套约定。
  */
 @Slf4j
 @Tag(name = "服务管理", description = "通用服务注册：/svc/{服务编码}/** 流量的上游目标与凭证")
@@ -49,26 +53,38 @@ public class ServiceController {
     private final ServiceRegistryService serviceRegistryService;
     private final ServiceAuthService serviceAuthService;
 
+    /**
+     * 服务列表。
+     *
+     * <p><b>返回类型必须是 {@code PageVo}，不能自己拼 Map</b>：前端的 {@code applyPage}
+     * 读的是 {@code items} / {@code total} / {@code pageIndex} / {@code pageSize} / {@code pages}
+     * 这五个字段（{@code PageVo} 的字段名）。第一版这里手拼了一个用 {@code records} 当键的 Map，
+     * 结果 {@code pv.items} 取到 undefined、列表恒空，而 {@code total} 恰好给对了——
+     * 页面表现为「顶上写着共 1 个服务、表格里一行没有」，看起来像数据没存进去。
+     *
+     * <p>同理走 {@code AdminScheduler} 而不是 {@code boundedElastic}：管理面查询有独立的
+     * 并发上限与排队上限，混进公共池会让一条慢查询挤占业务转发的线程。
+     * {@code PageSupport.validate} 与 {@code timeout} 也是管理面列表接口的统一约定。
+     */
     @Operation(summary = "服务列表（分页 + 关键字/状态筛选，带授权系统数量）")
     @GetMapping(UrlConstant.ROOT)
-    public Mono<Result<Map<String, Object>>> list(ServiceQueryBO query) {
+    public Mono<Result<PageVo<ServiceVO>>> list(ServiceQueryBO query) {
+        // 分页护栏放在 Mono 外：参数非法应当立刻返回，不必占用管理面线程池的名额
+        PageSupport.validate(query, "服务");
         return Mono.fromCallable(() -> {
-            IPage<ServiceEntity> page = serviceRegistryService.page(query);
-            // 授权数量一次性聚合，避免列表逐行查询造成 N+1
-            Map<String, Long> counts = serviceAuthService.countByServiceId();
-            List<ServiceVO> records = page.getRecords().stream().map(e -> {
-                ServiceVO vo = ServiceVO.of(e, serviceRegistryService.getCredential(e.getServiceId()).orElse(null));
-                vo.setAuthorizedAppCount(counts.getOrDefault(e.getServiceId(), 0L));
-                return vo;
-            }).toList();
-
-            Map<String, Object> data = new HashMap<>();
-            data.put("records", records);
-            data.put("total", page.getTotal());
-            data.put("pageIndex", page.getCurrent());
-            data.put("pageSize", page.getSize());
-            return data;
-        }).subscribeOn(Schedulers.boundedElastic()).map(Result::success);
+                    // 凭证与授权计数各一次性取全，避免列表逐行查询造成 N+1。
+                    // 两张表整表加载与分页无关——分页只收敛服务主表的返回行数。
+                    Map<String, ServiceCredentialEntity> credentials = serviceRegistryService.findAllCredentials();
+                    Map<String, Long> authCounts = serviceAuthService.countByServiceId();
+                    return PageVo.of(serviceRegistryService.page(query), e -> {
+                        ServiceVO vo = ServiceVO.of(e, credentials.get(e.getServiceId()));
+                        vo.setAuthorizedAppCount(authCounts.getOrDefault(e.getServiceId(), 0L));
+                        return vo;
+                    });
+                })
+                .subscribeOn(AdminScheduler.get())
+                .timeout(AdminScheduler.REQUEST_TIMEOUT)
+                .map(Result::success);
     }
 
     @Operation(summary = "服务详情")
@@ -78,14 +94,18 @@ public class ServiceController {
         return Mono.fromCallable(() -> {
             ServiceEntity e = serviceRegistryService.findByServiceId(serviceId);
             return ServiceVO.of(e, serviceRegistryService.getCredential(serviceId).orElse(null));
-        }).subscribeOn(Schedulers.boundedElastic()).map(Result::success);
+        })
+                .subscribeOn(AdminScheduler.get())
+                .timeout(AdminScheduler.REQUEST_TIMEOUT)
+                .map(Result::success);
     }
 
     @Operation(summary = "新增服务（含上游凭证，事务写两表）")
     @PostMapping(UrlConstant.CREATE)
     public Mono<Result<ServiceVO>> create(@RequestBody @Valid CreateServiceRequestBO req) {
         return Mono.fromCallable(() -> ServiceVO.of(serviceRegistryService.create(req)))
-                .subscribeOn(Schedulers.boundedElastic())
+                .subscribeOn(AdminScheduler.get())
+                .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .map(Result::success);
     }
 
@@ -95,7 +115,10 @@ public class ServiceController {
         return Mono.fromCallable(() -> {
             ServiceEntity e = serviceRegistryService.update(req);
             return ServiceVO.of(e, serviceRegistryService.getCredential(e.getServiceId()).orElse(null));
-        }).subscribeOn(Schedulers.boundedElastic()).map(Result::success);
+        })
+                .subscribeOn(AdminScheduler.get())
+                .timeout(AdminScheduler.REQUEST_TIMEOUT)
+                .map(Result::success);
     }
 
     @Operation(summary = "删除服务（逻辑删除，级联软删凭证与全部授权行）")
@@ -103,7 +126,8 @@ public class ServiceController {
     public Mono<Result<Void>> delete(
             @Parameter(description = "服务编码") @RequestParam("serviceId") String serviceId) {
         return Mono.fromRunnable(() -> serviceRegistryService.delete(serviceId))
-                .subscribeOn(Schedulers.boundedElastic())
+                .subscribeOn(AdminScheduler.get())
+                .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .then(Mono.just(Result.<Void>success(null)));
     }
 
@@ -111,7 +135,8 @@ public class ServiceController {
     @PostMapping(UrlConstant.ENABLE)
     public Mono<Result<Void>> enable(@RequestParam("serviceId") String serviceId) {
         return Mono.fromRunnable(() -> serviceRegistryService.enable(serviceId))
-                .subscribeOn(Schedulers.boundedElastic())
+                .subscribeOn(AdminScheduler.get())
+                .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .then(Mono.just(Result.<Void>success(null)));
     }
 
@@ -119,7 +144,8 @@ public class ServiceController {
     @PostMapping(UrlConstant.DISABLE)
     public Mono<Result<Void>> disable(@RequestParam("serviceId") String serviceId) {
         return Mono.fromRunnable(() -> serviceRegistryService.disable(serviceId))
-                .subscribeOn(Schedulers.boundedElastic())
+                .subscribeOn(AdminScheduler.get())
+                .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .then(Mono.just(Result.<Void>success(null)));
     }
 
@@ -142,7 +168,10 @@ public class ServiceController {
             m.put("secretKey", c == null ? null : c.getSecretKey());
             m.put("extraHeaders", c == null ? null : c.getExtraHeaders());
             return m;
-        }).subscribeOn(Schedulers.boundedElastic()).map(Result::success);
+        })
+                .subscribeOn(AdminScheduler.get())
+                .timeout(AdminScheduler.REQUEST_TIMEOUT)
+                .map(Result::success);
     }
 
     @Operation(summary = "反查：某服务被哪些接入系统授权（含是否实际生效）")
@@ -150,7 +179,8 @@ public class ServiceController {
     public Mono<Result<List<ServiceAuthorizedAppVO>>> listAuthorizedApps(
             @Parameter(description = "服务编码") @RequestParam("serviceId") String serviceId) {
         return Mono.fromCallable(() -> serviceAuthService.listAuthorizedApps(serviceId))
-                .subscribeOn(Schedulers.boundedElastic())
+                .subscribeOn(AdminScheduler.get())
+                .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .map(Result::success);
     }
 }

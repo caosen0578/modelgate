@@ -1,5 +1,6 @@
 package com.pab.ficc.ibp.modelgate.server.controller;
 
+import com.pab.ficc.ibp.modelgate.server.common.AdminScheduler;
 import com.pab.ficc.ibp.modelgate.server.constant.UrlConstant;
 import com.pab.ficc.ibp.modelgate.server.domain.Result;
 import com.pab.ficc.ibp.modelgate.server.domain.bo.AddServiceAuthRequestBO;
@@ -19,7 +20,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
-import reactor.core.scheduler.Schedulers;
 
 import java.util.List;
 
@@ -45,7 +45,8 @@ public class ServiceAuthController {
     public Mono<Result<List<ServiceAuthVO>>> list(
             @Parameter(description = "接入系统 ID") @RequestParam("appId") String appId) {
         return Mono.fromCallable(() -> serviceAuthService.listByAppIdWithServiceName(appId))
-                .subscribeOn(Schedulers.boundedElastic())
+                .subscribeOn(AdminScheduler.get())
+                .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .map(Result::success);
     }
 
@@ -54,7 +55,8 @@ public class ServiceAuthController {
     public Mono<Result<Void>> add(@RequestBody @Valid AddServiceAuthRequestBO req) {
         return Mono.fromRunnable(() -> serviceAuthService.addAuthorizations(
                         req.getAppId(), req.getServiceIds(), req.toTemplate()))
-                .subscribeOn(Schedulers.boundedElastic())
+                .subscribeOn(AdminScheduler.get())
+                .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .then(Mono.just(Result.<Void>success(null)));
     }
 
@@ -64,7 +66,8 @@ public class ServiceAuthController {
         return Mono.fromRunnable(() -> serviceAuthService.updateAuthorization(
                         req.getAppId(), req.getServiceId(), req.getEnabled(),
                         req.getQpsLimit(), req.getDailyLimit(), req.getExpiresAt()))
-                .subscribeOn(Schedulers.boundedElastic())
+                .subscribeOn(AdminScheduler.get())
+                .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .then(Mono.just(Result.<Void>success(null)));
     }
 
@@ -74,7 +77,8 @@ public class ServiceAuthController {
             @Parameter(description = "接入系统 ID") @RequestParam("appId") String appId,
             @Parameter(description = "服务编码") @RequestParam("serviceId") String serviceId) {
         return Mono.fromRunnable(() -> serviceAuthService.revoke(appId, serviceId))
-                .subscribeOn(Schedulers.boundedElastic())
+                .subscribeOn(AdminScheduler.get())
+                .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .then(Mono.just(Result.<Void>success(null)));
     }
 }
