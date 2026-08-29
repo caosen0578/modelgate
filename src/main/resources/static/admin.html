@@ -1737,8 +1737,36 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
 <div class="toast" id="toast"></div>
 
 <script>
+// ============================================================================
+//  admin.html 脚本区 · 目录
+// ----------------------------------------------------------------------------
+//  搜索 "// ===== 模块名" 可跳到对应区块。区块名与顺序由 PageContractTest
+//  的结构守卫钉住（SECTIONS 常量），改这里必须同步改那里，反之亦然。
+//
+//  【公共层】—— 被两个以上模块共用的东西，只能定义在这里
+//    全局状态
+//    工具函数
+//    部署文根（context root）自适应
+//    分页（服务端分页，对齐行内 PageVo 契约）
+//    通用渲染
+//    弹窗
+//    服务地址拼接
+//
+//  【模块层】—— 各自独立，不得互相调用对方的内部函数
+//    导航 / 模型管理 / 接入系统 / Drawer / 凭证管理
+//    接入示例（请求报文） / 接入示例 · 连通性测试
+//    模型授权 / 服务授权（接入系统 × 通用服务） / 访问控制
+//    审计日志 & 统计摘要 / 报文记录 / 网关配置
+//    服务管理（通用服务接入 /svc/**） / 模型测试工具 / Demo Data / 初始化
+//
+//  为什么不拆成多个 html：见 spec/modelgate/05 §1（禁前端 SPA 路由）。
+//  另有实证理由——svcJoinUpstream 一个函数被服务管理页、服务测试工具、
+//  凭证接入示例三处共用，按模块拆文件会让它变成三份副本，
+//  而它们不一致正是 32d77c7 / 0722f24 两次修的那个 404。
+// ============================================================================
+
 // ============================================================
-// 全局状态
+// ===== 公共层 · 全局状态
 // ============================================================
 let allModels = [];
 let allApps   = [];
@@ -1753,12 +1781,12 @@ let currentStep = 1;
 const PAGE_TITLES = {models:'模型管理', services:'服务管理', apps:'接入系统', audit:'审计日志', payload:'报文记录', settings:'网关配置'};
 
 // ============================================================
-// 工具函数
+// ===== 公共层 · 工具函数
 // ============================================================
 const $  = id => document.getElementById(id);
 
 // ============================================================
-// 部署文根（context root）自适应
+// ===== 公共层 · 部署文根（context root）自适应
 // ============================================================
 /**
  * 内网部署时域名后固定挂一段文根 `/backend`，如 https://host/backend/modelgate/models。
@@ -1842,7 +1870,7 @@ function errMsg(j){
   return j.resultMessage || j.message || `未知错误(resultCode=${j.resultCode ?? j.code ?? '空'})`;
 }
 // ============================================================
-// 分页（服务端分页，对齐行内 PageVo 契约）
+// ===== 公共层 · 分页（服务端分页，对齐行内 PageVo 契约）
 // 后端返回 {items, total, pageIndex, pageSize, pages}
 // ============================================================
 const PAGE_SIZES = [10, 20, 50, 100];
@@ -1951,7 +1979,78 @@ function setStatus(ok){
 }
 
 // ============================================================
-// 导航
+// ===== 公共层 · 通用渲染
+// 这几个原先散在模块里（escapeHtml 在模型管理、statusTag 在报文记录、
+// copyText/escHtml 在文件末尾），谁先用到就写在谁那儿。结果是"公共"只是习惯，
+// 不是约束——新人照着最近的模块抄，很容易在另一个模块里再写一份。
+// 现在统一收口到公共层，由 PageContractTest 的结构守卫钉住。
+// ============================================================
+function escapeHtml(s){
+  return String(s??'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+/** escapeHtml 的短别名，历史遗留；新代码统一用 escapeHtml。 */
+function escHtml(s){ return escapeHtml(s); }
+
+/** 把动态值安全地放进 inline onclick 参数；HTML 转义不能替代 JavaScript 字符串转义。 */
+function jsArg(s){
+  return escapeHtml(JSON.stringify(String(s??'')));
+}
+
+/** HTTP 状态码染色标签，审计页与报文页共用。 */
+function statusTag(s){
+  if(s>=200&&s<300) return `<span class="tag tag-green">${s}</span>`;
+  if(s===429) return `<span class="tag tag-yellow">${s}</span>`;
+  if(s>=400&&s<500) return `<span class="tag tag-red">${s}</span>`;
+  if(s>=500) return `<span class="tag tag-red">${s}</span>`;
+  return `<span class="tag tag-gray">${s||'-'}</span>`;
+}
+
+function copyText(t){
+  navigator.clipboard.writeText(t).then(()=>toast('已复制到剪贴板')).catch(()=>{
+    const ta = document.createElement('textarea');
+    ta.value=t; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
+    toast('已复制到剪贴板');
+  });
+}
+
+// ============================================================
+// ===== 公共层 · 弹窗
+// 外层容器的类名必须是 modal-backdrop（内层才是 modal）。写成 modal 会让
+// 弹窗常驻页面、切到任何页都显示——2b141a8 修的就是这个。
+// ============================================================
+function openModal(id){ $(id).classList.add('open'); }
+function closeModal(id){ $(id).classList.remove('open'); }
+
+// ============================================================
+// ===== 公共层 · 服务地址拼接
+// 前端镜像后端 ServiceEntity.joinUpstream / baseHasPath，改一处要同步另一处。
+//
+// ⚠️ 本区块是"按模块拆文件会立刻出事"的实证：这两个函数被**三个模块**共用——
+// 服务管理页的转发预览、服务测试工具、凭证页的接入示例。三处曾各拼各的，
+// 结果上游地址自带路径时多补一个尾斜杠，上游 404（32d77c7 / 0722f24）。
+// 新增任何"多个模块都要用"的逻辑，一律放公共层，不要在模块里再写一份。
+// ============================================================
+
+/** 上游地址是否已经带了业务路径（不只是 host:port）。 */
+function svcBaseHasPath(base){
+  try { return new URL(base).pathname.replace(/^\/+$/,'') !== ''; }
+  catch(e){ return false; }
+}
+
+/**
+ * 把剩余路径拼到上游地址之后。remainder 为空（或只有一个 "/"）时补不补尾斜杠，
+ * 取决于上游地址自己带不带路径——带了就不能补，补了上游按另一条路由处理并回 404。
+ */
+function svcJoinUpstream(base, remainder){
+  const b = (base||'').replace(/\/+$/,'');
+  if(!b) return '';
+  if(remainder && remainder !== '/') return b + remainder;
+  return svcBaseHasPath(b) ? b : b + '/';
+}
+
+// ============================================================
+// ===== 模块 · 导航
 // ============================================================
 function navTo(page, skipLoad = false){
   document.querySelectorAll('.nav-item').forEach(el=>{
@@ -1985,7 +2084,7 @@ function navTo(page, skipLoad = false){
 }
 
 // ============================================================
-// 模型管理
+// ===== 模块 · 模型管理
 // ============================================================
 async function loadModels(){
   try{
@@ -2113,15 +2212,6 @@ function renderModelAuthApps(data){
 // 这样看到的就是数据库里真实存的值，可用于确认保存是否真的落库。
 const AUTH_TYPE_LABEL = {api_key:'api_key（Bearer Token）', ak_sk:'ak_sk（HMAC 签名）',
                          azure:'azure（api-key Header）', none:'none（不鉴权）'};
-
-function escapeHtml(s){
-  return String(s??'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-}
-
-/** 把动态值安全地放进 inline onclick 参数；HTML 转义不能替代 JavaScript 字符串转义。 */
-function jsArg(s){
-  return escapeHtml(JSON.stringify(String(s??'')));
-}
 
 function viewRow(label, value, mono){
   const v = (value===null||value===undefined||value==='') ? '<span style="color:#94a3b8">-</span>'
@@ -2594,7 +2684,7 @@ function onUpstreamPathContextChange(){
 }
 
 // ============================================================
-// 接入系统
+// ===== 模块 · 接入系统
 // ============================================================
 async function loadApps(){
   try{
@@ -2703,7 +2793,7 @@ async function deleteAppById(appId){
 }
 
 // ============================================================
-// Drawer
+// ===== 模块 · Drawer
 // ============================================================
 function openDrawer(appId, tab='info'){
   currentApp = allApps.find(a=>a.appId===appId) || {appId};
@@ -2784,7 +2874,7 @@ function deleteApp(){
 }
 
 // ============================================================
-// 凭证管理
+// ===== 模块 · 凭证管理
 // ============================================================
 // 当前系统的凭证列表缓存：接入示例弹窗要按 credId 回查凭证类型/AK/是否可取明文，
 // 避免把这些值全塞进 onclick 参数（凭证名含引号时会直接把 HTML 拼坏）
@@ -2858,7 +2948,7 @@ function closeSecretView(){
 }
 
 // ============================================================
-// 接入示例（请求报文）
+// ===== 模块 · 接入示例（请求报文）
 // ============================================================
 // 弹窗上下文；secret 只在用户显式点「填入真实密钥」后才有值，关窗即清空，不进任何缓存
 let usageCtx = null;
@@ -3235,7 +3325,7 @@ function renderUsage(){
 }
 
 // ============================================================
-// 接入示例 · 连通性测试
+// ===== 模块 · 接入示例 · 连通性测试
 // ============================================================
 // 与「模型管理 → 🧪 测试」的区别（别混淆）：
 //   那个走 POST /modelgate/models/chat/test，是**服务端**直连上游，
@@ -3529,7 +3619,7 @@ async function deleteCred(id){
 }
 
 // ============================================================
-// 模型授权
+// ===== 模块 · 模型授权
 // ============================================================
 // 当前系统的授权列表；编辑弹窗要按 modelId 回填配额，需要留一份
 let currentAuths = [];
@@ -3702,7 +3792,7 @@ async function revokeAuth(modelId){
 }
 
 // ============================================================
-// 服务授权（接入系统 × 通用服务）
+// ===== 模块 · 服务授权（接入系统 × 通用服务）
 // ============================================================
 let currentServiceAuths = [];
 // null = 新增授权；非空 = 正在编辑该 serviceId 的授权
@@ -3880,7 +3970,7 @@ async function revokeServiceAuth(serviceId){
 }
 
 // ============================================================
-// 访问控制
+// ===== 模块 · 访问控制
 // ============================================================
 async function loadAccess(){
   if(!currentApp) return;
@@ -3942,7 +4032,7 @@ async function deleteAccessRule(id){
 }
 
 // ============================================================
-// 审计日志 & 统计摘要
+// ===== 模块 · 审计日志 & 统计摘要
 // ============================================================
 
 /** 加载统计摘要卡片 — GET /modelgate/stats/usage */
@@ -4085,14 +4175,6 @@ function renderAudit(data){
   `).join('');
 }
 
-function statusTag(s){
-  if(s>=200&&s<300) return `<span class="tag tag-green">${s}</span>`;
-  if(s===429) return `<span class="tag tag-yellow">${s}</span>`;
-  if(s>=400&&s<500) return `<span class="tag tag-red">${s}</span>`;
-  if(s>=500) return `<span class="tag tag-red">${s}</span>`;
-  return `<span class="tag tag-gray">${s||'-'}</span>`;
-}
-
 /**
  * 从审计行跳到报文页并按 traceId 定位。审计看到一条异常调用，下一步必然是看它的报文。
  *
@@ -4107,7 +4189,7 @@ function payloadOfTrace(traceId){
 }
 
 // ============================================================
-// 报文记录
+// ===== 模块 · 报文记录
 // ============================================================
 
 /**
@@ -4831,7 +4913,7 @@ function prettyJson(s){
 }
 
 // ============================================================
-// 网关配置
+// ===== 模块 · 网关配置
 // ============================================================
 async function loadConfig(){
   try{
@@ -4909,7 +4991,7 @@ async function addConfig(){
 }
 
 // ============================================================
-// 服务管理（通用服务接入 /svc/**）
+// ===== 模块 · 服务管理（通用服务接入 /svc/**）
 // ============================================================
 let allServices = [];
 // null=新增，string=编辑。编辑时服务编码置灰——它是对外 URL 的一段，改名等于换 URL。
@@ -4966,26 +5048,6 @@ function renderServices(list){
       </td>
     </tr>`;
   }).join('');
-}
-
-/**
- * 上游地址是否已经带了业务路径（不只是 host:port）。
- * 与后端 ServiceEntity.baseHasPath 同一判定，改一处要同步另一处。
- */
-function svcBaseHasPath(base){
-  try { return new URL(base).pathname.replace(/^\/+$/,'') !== ''; }
-  catch(e){ return false; }
-}
-
-/**
- * 前端镜像 ServiceEntity.joinUpstream —— 预览必须与真实转发落到同一个地址，
- * 否则预览会把人往错的方向引（这正是 upstreamUrl 带路径时 404 的来源）。
- */
-function svcJoinUpstream(base, remainder){
-  const b = (base||'').replace(/\/+$/,'');
-  if(!b) return '';
-  if(remainder && remainder !== '/') return b + remainder;
-  return svcBaseHasPath(b) ? b : b + '/';
 }
 
 /** 转发预览：路径规则最容易理解错，直接把结果显示出来比写多少说明都有效 */
@@ -5280,31 +5342,7 @@ async function viewServiceApps(serviceId){
 }
 
 // ============================================================
-// Modal helpers
-// ============================================================
-function openModal(id){ $(id).classList.add('open'); }
-function closeModal(id){ $(id).classList.remove('open'); }
-
-// ============================================================
-// Utils
-// ============================================================
-function copyText(t){
-  navigator.clipboard.writeText(t).then(()=>toast('已复制到剪贴板')).catch(()=>{
-    const ta = document.createElement('textarea');
-    ta.value=t; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
-    toast('已复制到剪贴板');
-  });
-}
-
-function escHtml(s){ return escapeHtml(s); }
-
-// Close modal on backdrop click
-document.querySelectorAll('.modal-backdrop').forEach(el=>{
-  el.addEventListener('click', e=>{ if(e.target===el) el.classList.remove('open'); });
-});
-
-// ============================================================
-// 模型测试工具
+// ===== 模块 · 模型测试工具
 // ============================================================
 let _tstMsgCnt = 0;
 // 测试弹窗自己的模型列表（全量），不共用只有当前页的 allModels
@@ -5573,7 +5611,7 @@ function _jsonHL(json) {
 }
 
 // ============================================================
-// Demo Data
+// ===== 模块 · Demo Data
 // ============================================================
 const DEMO_MODELS = [
   {modelId:'gpt-4o',modelName:'GPT-4o',provider:'openai',modelType:'chat',apiSpec:'openai',upstreamUrl:'https://api.openai.com',timeoutMs:30000,enabled:true},
@@ -5624,8 +5662,15 @@ const DEMO_CONFIG = [
 ];
 
 // ============================================================
-// 初始化
+// ===== 模块 · 初始化
 // ============================================================
+
+// 点遮罩关弹窗。挂在这里而不是公共层：它是一次性副作用，不是可复用函数。
+// 必须只匹配 .modal-backdrop（内层 .modal 不能挂，否则点弹窗内容也会关掉）。
+document.querySelectorAll('.modal-backdrop').forEach(el=>{
+  el.addEventListener('click', e=>{ if(e.target===el) el.classList.remove('open'); });
+});
+
 window.onload = () => {
   loadModels();
   loadApps();
