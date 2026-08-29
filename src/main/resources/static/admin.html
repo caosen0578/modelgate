@@ -1779,19 +1779,29 @@ const $  = id => document.getElementById(id);
  *
  * location.hostname 不含端口，所以出现冒号只可能是 IPv6，可以直接据此判定。
  */
-function isDirectHost(h){
-  h = (h || '').toLowerCase().replace(/^\[|\]$/g, '');
-  if (h === 'localhost') return true;
-  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(h)) return true;   // IPv4：含 127.0.0.1 与任意内网 IP
-  if (h.indexOf(':') >= 0) return true;                 // IPv6：含 ::1
-  return false;                                          // 其余视为行内域名
-}
-
 /**
- * 部署文根。行内部署时域名后固定挂一段 /backend，用于前后端分离时同域名按文根区分；
- * 直连应用端口时为空。
+ * 部署文根：取「当前页面自身所在目录」，**不按域名猜**。
+ *
+ * <p>照抄内网通用库 `pab-gateway-auth.js` 的 `pageBase()` 约定：
+ * <pre>
+ *   页面在 https://域名/backend/admin.html → '/backend'（接口必须带前缀，否则被 SLB 404）
+ *   页面在 https://域名/admin.html         → ''       （域名根即应用根）
+ *   直连 http://内网IP:10811/admin.html    → ''
+ * </pre>
+ *
+ * <p>⚠️ **应用侧不配任何 context-path**（`server.port: 10811`，application.yml 里没有
+ * `spring.webflux.base-path`），`/backend` 由 SLB/Nginx 剥掉后再转给应用——
+ * 这与内网 `user-behavior-track` 的做法一致：服务端根本不知道 `/backend` 的存在。
+ *
+ * <p>原实现按 `location.hostname` 判断（域名 ⇒ 固定拼 `/backend`），
+ * 那是**猜**而不是**读**：页面挂在域名根下时会凭空拼出一段 `/backend`，
+ * 请求被 SLB 按文根规则转走、应用收到 `/backend/modelgate/...` 无 handler 匹配，
+ * 表现为管理接口成片 400/404。页面自身的路径才是 SLB 期望的前缀，读它一定对。
  */
-const CTX_ROOT = isDirectHost(location.hostname) ? '' : '/backend';
+const CTX_ROOT = (function(){
+  var dir = location.pathname.replace(/[^/]*$/, '');   // 去掉文件名：'/backend/' 或 '/'
+  return dir === '/' ? '' : dir.replace(/\/+$/, '');   // 去尾斜杠：'/backend' 或 ''
+})();
 
 /** 所有后端请求的唯一入口：把应用内绝对路径转成带文根的实际地址 */
 function apiUrl(path){
@@ -1807,6 +1817,9 @@ function apiUrl(path){
  * 页面上的「测试连通」也永远失败。
  *
  * 管理接口走 apiUrl() 早就带上了文根，唯独业务流量这一处漏了，两者必须一致。
+ *
+ * 文根取值见 CTX_ROOT——由**页面自身路径**推导，页面挂在域名根下时为空串，
+ * 此处自然退化为裸 origin，不会再凭空多出一段 /backend。
  */
 function defaultGatewayBase(){
   return location.origin + CTX_ROOT;
