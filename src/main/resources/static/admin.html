@@ -1234,7 +1234,12 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
       <div class="form-group">
         <label>上游地址 <span style="color:red">*</span></label>
         <input type="text" id="svcUpstreamUrl" placeholder="http://crm.intranet:8080" oninput="updateSvcPreview()"/>
-        <span class="hint">协议 + 域名 + 端口（可带固定前缀路径）；末尾斜杠会被自动去掉。</span>
+        <!-- 原文写的是"可带固定前缀路径"，实测这句会直接把人引到"把完整接口路径填进来"，
+             结果该服务只能被调根路径一个接口。推荐用法要写在前面。 -->
+        <span class="hint"><b>建议只填到协议 + 域名 + 端口</b>，接口路径由调用方在
+          <code>/svc/{服务编码}/…</code> 后面带——这样同一个服务的多个接口都能走网关。<br>
+          也可以带固定前缀路径（如网关只代理该服务的某个子路径），但那样接入方就只能调这一个接口。<br>
+          末尾斜杠会被自动去掉。</span>
       </div>
       <div class="form-group">
         <label>剥离前缀</label>
