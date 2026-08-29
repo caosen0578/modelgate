@@ -1710,7 +1710,11 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
           <div class="rbody" id="testRespBox">
             <span class="rph">// 点击「▶ 发送请求」后，响应将显示在此处
 // 管理面测试固定按非流式发送
-// 此处显示聚合后的完整 JSON 响应（含 usage / tokens）</span>
+// 此处显示聚合后的完整 JSON 响应（含 usage / tokens）
+//
+// ⚠️ 要等模型把整段结果生成完才返回，慢模型或 max tokens 调得大时会等很久
+//    （上限 120 秒）。超时不代表模型不可用——按真实流式链路验证请用
+//    「接入系统 → 凭证管理 → 接入示例 → 测试连通」</span>
           </div>
           <!-- 原始请求体折叠 -->
           <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">

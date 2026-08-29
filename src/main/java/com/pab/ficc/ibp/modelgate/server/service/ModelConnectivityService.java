@@ -44,6 +44,21 @@ public class ModelConnectivityService {
     private static final int DEFAULT_PROBE_TIMEOUT_MS = 10_000;
 
     /**
+     * 对话测试（{@link #chat}）的超时，与探测<b>必须分开</b>。
+     *
+     * <p>探测发的是 {@code max_tokens=1} 的最小请求，15s 足够；而对话测试用的是
+     * 管理页表单填的请求体，默认 {@code max_tokens=1024}——让一个大模型生成 1024 个 token
+     * 远不止 15 秒。两者共用 15s 上限的后果是：<b>慢模型的对话测试必然超时</b>，
+     * 而报错写的是"上游无响应，请检查地址与网络策略"，把人往网络问题上引，
+     * 但同一个模型走「接入示例」（网关 response-timeout 1800s）却是通的。
+     *
+     * <p>放宽到 5 分钟不会占住 {@code AdminScheduler} 的名额：等待发生在 WebClient 的
+     * 事件循环上，调度器线程只用于前面那次查库。
+     */
+    private static final int MAX_CHAT_TIMEOUT_MS = 300_000;
+    private static final int DEFAULT_CHAT_TIMEOUT_MS = 120_000;
+
+    /**
      * 上游响应体回传上限（字符）。
      *
      * <p>原为 500，导致管理页「测试」看到的模型回答永远是半截，
@@ -88,7 +103,7 @@ public class ModelConnectivityService {
     public Mono<ConnectivityTestVO> probe(ModelInstanceEntity model, ModelCredentialEntity credential) {
         // 探测的是供应商真实模型，不是 ModelGate 对外路由别名。
         byte[] body = probeBody(model.resolveUpstreamModelId(), model.getModelType());
-        return exchange(model, credential, body, probePath(model));
+        return exchange(model, credential, body, probePath(model), false);
     }
 
     /**
@@ -97,7 +112,7 @@ public class ModelConnectivityService {
      * 保证两者的适配器逻辑、超时策略、失败判定完全一致。
      */
     private Mono<ConnectivityTestVO> exchange(ModelInstanceEntity model, ModelCredentialEntity credential,
-                                              byte[] requestBody, String path) {
+                                              byte[] requestBody, String path, boolean chatMode) {
         String apiSpec = model.getApiSpec() != null ? model.getApiSpec() : "openai";
 
         ProviderAdapter adapter = adapters.stream()
@@ -133,12 +148,14 @@ public class ModelConnectivityService {
                     null, null, null));
         }
 
-        Duration timeout = Duration.ofMillis(probeTimeoutMs(model.getTimeoutMs()));
+        Duration timeout = Duration.ofMillis(chatMode
+                ? chatTimeoutMs(model.getTimeoutMs())
+                : probeTimeoutMs(model.getTimeoutMs()));
         String uriText = upstreamUri.toString();
         long start = System.nanoTime();
 
-        log.info("[Connectivity] 开始探测: modelId={}, apiSpec={}, authType={}, uri={}, timeout={}ms",
-                model.getModelId(), apiSpec,
+        log.info("[Connectivity] 开始{}: modelId={}, apiSpec={}, authType={}, uri={}, timeout={}ms",
+                chatMode ? "对话测试" : "探测", model.getModelId(), apiSpec,
                 credential != null ? credential.getAuthType() : "none", uriText, timeout.toMillis());
 
         return probeWebClient()
@@ -151,7 +168,7 @@ public class ModelConnectivityService {
                         .defaultIfEmpty("")
                         .map(body -> classify(resp.statusCode().value(), body, elapsedMs(start), uriText)))
                 .timeout(timeout)
-                .onErrorResume(e -> Mono.just(classifyError(e, elapsedMs(start), uriText, timeout)))
+                .onErrorResume(e -> Mono.just(classifyError(e, elapsedMs(start), uriText, timeout, chatMode)))
                 .doOnNext(vo -> {
                     if (Boolean.TRUE.equals(vo.getSuccess())) {
                         log.info("[Connectivity] 探测成功: modelId={}, latency={}ms, httpStatus={}",
@@ -181,7 +198,7 @@ public class ModelConnectivityService {
      * @param rawBody OpenAI 规范的请求体（非 openai 规范由对应适配器转换）
      */
     public Mono<ConnectivityTestVO> chat(ModelInstanceEntity model, ModelCredentialEntity credential, byte[] rawBody) {
-        return exchange(model, credential, rawBody, probePath(model));
+        return exchange(model, credential, rawBody, probePath(model), true);
     }
 
     // ===== 结果判定 =====
@@ -218,11 +235,20 @@ public class ModelConnectivityService {
     /**
      * 按异常类型判定连接层失败（未拿到 HTTP 状态码）。
      */
-    private ConnectivityTestVO classifyError(Throwable e, long latencyMs, String uriText, Duration timeout) {
+    private ConnectivityTestVO classifyError(Throwable e, long latencyMs, String uriText,
+                                             Duration timeout, boolean chatMode) {
         Throwable root = rootCause(e);
         String message;
         if (e instanceof TimeoutException || root instanceof TimeoutException) {
-            message = "连接超时（超过 " + timeout.toMillis() + "ms）：上游无响应，请检查地址与网络策略";
+            // 对话测试与探测的超时含义完全不同，不能共用一句话：
+            // 探测超时基本是网络问题；对话测试超时多半是"模型就是慢"，
+            // 让人去查网络策略会把排查方向带偏一整轮。
+            message = chatMode
+                    ? "等待响应超时（超过 " + timeout.toMillis() + "ms）。本通道返回的是"
+                      + "**聚合响应**（不透传 SSE），要等模型把整段结果生成完才返回，"
+                      + "慢模型或 max tokens 调得大时容易超时。可先调小 max tokens 重试；"
+                      + "若要按真实流式链路验证，请用「凭证管理 → 接入示例 → 测试连通」。"
+                    : "连接超时（超过 " + timeout.toMillis() + "ms）：上游无响应，请检查地址与网络策略";
         } else if (root instanceof UnknownHostException) {
             message = "域名无法解析：" + root.getMessage() + "，请检查上游地址";
         } else if (root instanceof ConnectException) {
@@ -275,11 +301,27 @@ public class ModelConnectivityService {
         return root.toString().getBytes(StandardCharsets.UTF_8);
     }
 
-    private int probeTimeoutMs(Integer configured) {
+    static int probeTimeoutMs(Integer configured) {
         if (configured == null || configured <= 0) {
             return DEFAULT_PROBE_TIMEOUT_MS;
         }
         return Math.min(configured, MAX_PROBE_TIMEOUT_MS);
+    }
+
+    /**
+     * 对话测试超时：默认 {@value #DEFAULT_CHAT_TIMEOUT_MS}ms，
+     * 模型配了 {@code timeout_ms} 就取它，上限 {@value #MAX_CHAT_TIMEOUT_MS}ms。
+     *
+     * <p>注意与探测不同：这里对配置值取 {@code max}，不是直接用。
+     * {@code mg_model.timeout_ms} 的建表默认值是 30000，远小于大模型生成完整回答的实际耗时
+     * （见 12 §8.3，该字段本就是"仅用于连通性测试"的死字段），直接采信会让对话测试
+     * 在 30 秒被切断——那正是这次要修的现象换个数字重演一遍。
+     */
+    static int chatTimeoutMs(Integer configured) {
+        if (configured == null || configured <= 0) {
+            return DEFAULT_CHAT_TIMEOUT_MS;
+        }
+        return Math.min(Math.max(configured, DEFAULT_CHAT_TIMEOUT_MS), MAX_CHAT_TIMEOUT_MS);
     }
 
     private long elapsedMs(long startNanos) {
