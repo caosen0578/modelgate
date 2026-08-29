@@ -2880,7 +2880,7 @@ async function openUsageModal(credId){
   const svcUsable = (currentServiceAuths||[]).filter(a => a.effective !== false);
   const ssel = $('ug_service');
   ssel.innerHTML = svcUsable.length
-    ? svcUsable.map(a=>`<option value="${escapeHtml(a.serviceId)}" data-prefix="${escapeHtml(a.publicPrefix||('/svc/'+a.serviceId+'/'))}" data-sse="${a.sse?'1':'0'}">${escapeHtml(a.serviceName||a.serviceId)}（${escapeHtml(a.serviceId)}）</option>`).join('')
+    ? svcUsable.map(a=>`<option value="${escapeHtml(a.serviceId)}" data-prefix="${escapeHtml(a.publicPrefix||('/svc/'+a.serviceId+'/'))}" data-sse="${a.sse?'1':'0'}" data-upstream="${escapeHtml(a.upstreamUrl||'')}" data-strip="${a.stripPrefix===false?'0':'1'}">${escapeHtml(a.serviceName||a.serviceId)}（${escapeHtml(a.serviceId)}）</option>`).join('')
     : '<option value="">（该系统暂无可用服务授权，请先到「服务授权」页授权）</option>';
 
   const usable = (currentAuths||[]).filter(isAuthUsable);
@@ -3186,13 +3186,26 @@ function renderUsage(){
     // 把「调用方打给网关的地址」与「网关转发到上游的地址」并排显示：
     // 光看一个 /svc/crm/api/v2/query 很难反推出上游收到的是什么
     const svcOpt = $('ug_service').selectedOptions[0];
-    const stripped = p.path.replace(/^\/svc\/[^/]*/, '') || '/';
+    const upstream = (svcOpt && svcOpt.dataset.upstream) || '';
+    const strip    = !(svcOpt && svcOpt.dataset.strip === '0');
+    // 走与真实转发同一套拼接（svcJoinUpstream 镜像 ServiceEntity.joinUpstream）：
+    // 留空调服务根时补不补尾斜杠取决于上游地址带不带路径，自己拼必然和后端对不上
+    const remainder = strip ? p.path.replace(/^\/svc\/[^/]*/, '') : p.path;
+    const target = upstream
+        ? svcJoinUpstream(upstream, remainder)
+        : '{该服务的上游地址}' + (remainder && remainder !== '/' ? remainder : '');
     $('ug_svcPathPreview').innerHTML =
       '<span style="color:#64748b">调用方 →  网关</span>  ' + escapeHtml(p.method + ' ' + p.path) + '<br>'
-      + '<span style="color:#64748b">网关   → 上游</span>  '
-      + escapeHtml(p.method + ' {该服务的上游地址}' + stripped)
-      + '<div style="margin-top:4px;color:#94a3b8">网关剥掉 <b>/svc/' + escapeHtml(p.serviceId)
-      + '</b> 后把剩余部分原样拼到上游地址之后（该服务若关闭「剥离前缀」则完整透传）</div>';
+      + '<span style="color:#64748b">网关   → 上游</span>  ' + escapeHtml(p.method + ' ' + target)
+      + '<div style="margin-top:4px;color:#94a3b8">'
+      + (strip
+          ? '网关剥掉 <b>/svc/' + escapeHtml(p.serviceId) + '</b> 后把剩余部分拼到上游地址之后'
+          : '该服务已关闭「剥离前缀」，<b>完整路径原样透传</b>')
+      + (upstream && svcBaseHasPath(upstream)
+          ? '<br><span style="color:#b45309">⚠️ 该服务的上游地址里已经带了接口路径，'
+            + '所以这里应<b>留空</b>；填了会拼在它后面。</span>'
+          : '')
+      + '</div>';
     notes.push('路径第二段就是服务编码，网关按它定路由 —— 服务接口的路由键在 URL 上，不在请求体里。');
     notes.push('网关**不解析也不改写**服务请求体，原样流式透传；请求体格式由接入方自己的接口决定。');
     notes.push('调用方带的是本网关凭证，转发前会被剔除并换成该服务配置的上游凭证。');
