@@ -142,6 +142,7 @@ public class TraceFilter implements GlobalFilter, Ordered {
                             if (appId != null && serviceId != null && responseBytes != null
                                     && capture.isFullMode()) {
                                 payloadService.submit(traceId, appId, null, "service", serviceId,
+                                        exchange.getRequest().getMethod().name(), fullPath(exchange),
                                         exchange.getRequest().getHeaders(), requestBytes, responseBytes,
                                         stream, Boolean.TRUE.equals(exchange.getAttribute(
                                                 PayloadCaptureFilter.ATTR_RESPONSE_TRUNCATED)),
@@ -151,6 +152,7 @@ public class TraceFilter implements GlobalFilter, Ordered {
                                 && capture.isFullMode()
                                 && modelAuthService.isPayloadLogEnabled(appId, modelId)) {
                             payloadService.submit(traceId, appId, modelId,
+                                    exchange.getRequest().getMethod().name(), fullPath(exchange),
                                     exchange.getRequest().getHeaders(), requestBytes, responseBytes,
                                     stream, Boolean.TRUE.equals(exchange.getAttribute(
                                             PayloadCaptureFilter.ATTR_RESPONSE_TRUNCATED)),
@@ -170,6 +172,18 @@ public class TraceFilter implements GlobalFilter, Ordered {
                         log.warn("[Trace] 审计记录写入失败（不影响本次请求）: traceId={}", traceId, e);
                     }
                 });
+    }
+
+    /**
+     * 入站路径 + 原始 query，供报文回放还原原始请求。
+     *
+     * <p>取 {@code getRawPath()} 而不是 {@code getPath()}：留档要的是"当时发过来的那一串"，
+     * 解码后再回放会把 {@code %2F} 之类的编码字符变成真正的分隔符，路径语义就变了。
+     */
+    private static String fullPath(ServerWebExchange exchange) {
+        java.net.URI uri = exchange.getRequest().getURI();
+        String path = uri.getRawPath();
+        return uri.getRawQuery() == null ? path : path + "?" + uri.getRawQuery();
     }
 
 }

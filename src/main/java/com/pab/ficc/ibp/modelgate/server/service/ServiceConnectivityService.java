@@ -51,6 +51,15 @@ public class ServiceConnectivityService {
     /** 响应体片段上限：探测只是为了让人看一眼上游到底回了什么，不需要完整报文 */
     private static final int SNIPPET_LIMIT = 2048;
 
+    /**
+     * 报文回放超时，<b>不能沿用探测的 10s</b>。
+     *
+     * <p>回放发的是真实业务请求（可能是 SSE、可能是慢接口），10s 会让它必然超时，
+     * 而现象看起来像"上游不可达"——模型侧刚因为探测/对话共用 15s 踩过同一个坑。
+     * 与模型对话测试取同一个量级（120s）。
+     */
+    private static final int REPLAY_TIMEOUT_MS = 120_000;
+
     private final WebClient webClient;
     private final ObjectMapper objectMapper;
 
@@ -75,6 +84,31 @@ public class ServiceConnectivityService {
      */
     public Mono<ConnectivityTestVO> probe(ServiceEntity service, ServiceCredentialEntity credential,
                                           String method, String probePath, String body) {
+        return send(service, credential, method, probePath, body,
+                probeTimeoutMs(service.getTimeoutMs()), false);
+    }
+
+    /**
+     * 报文回放：把留档里的那一发请求原样（或改过之后）重新打给上游。
+     *
+     * <p>与 {@link #probe} 共用同一段实现，<b>只有超时不同</b>——这一点是刻意的：
+     * 探测发的是最小请求、10s 足够；回放发的是真实业务请求，SSE 服务或慢接口
+     * 远不止 10 秒。两者共用短超时会让回放对慢接口<b>必然超时</b>，
+     * 而报错看起来像"上游不可达"（模型侧刚踩过一模一样的坑，见 11 §34.10）。
+     *
+     * <p>⚠️ <b>回放会对上游产生真实副作用</b>：原请求是写操作时，回放会再写一次。
+     * 管理页在发送前有显著警告，但网关无法替业务判断哪个接口幂等。
+     */
+    public Mono<ConnectivityTestVO> replay(ServiceEntity service, ServiceCredentialEntity credential,
+                                           String method, String path, String body) {
+        log.warn("[ServiceConnectivity] 报文回放：将向上游重新发送请求，可能产生副作用: "
+                + "serviceId={}, method={}, path={}", service.getServiceId(), method, path);
+        return send(service, credential, method, path, body, REPLAY_TIMEOUT_MS, true);
+    }
+
+    private Mono<ConnectivityTestVO> send(ServiceEntity service, ServiceCredentialEntity credential,
+                                          String method, String probePath, String body,
+                                          int timeoutMs, boolean replayMode) {
         String base = service.normalizedUpstreamUrl();
         if (base == null || base.isBlank()) {
             return Mono.just(ConnectivityTestVO.of(false, 0L, "上游地址为空，无法发起探测", null, null, null));
@@ -112,14 +146,14 @@ public class ServiceConnectivityService {
                     "上游地址非法，无法构造请求：" + e.getMessage(), null, target, null));
         }
 
-        Duration timeout = Duration.ofMillis(probeTimeoutMs(service.getTimeoutMs()));
+        Duration timeout = Duration.ofMillis(timeoutMs);
         HttpHeaders headers = buildHeaders(credential, service.getServiceId());
         String uriText = uri.toString();
         long startNanos = System.nanoTime();
 
         // 默认 GET（无副作用）；录入者显式登记了其它方法才会用其它方法。
         // 非 GET 打一条 WARN 留痕：万一探测在上游建了脏数据，日志里能查到是谁什么时候点的。
-        if (bodyAllowed) {
+        if (bodyAllowed && !replayMode) {
             log.warn("[ServiceConnectivity] 使用非 GET 方法探测，可能对上游产生副作用: "
                     + "serviceId={}, method={}, uri={}", service.getServiceId(), verb, uriText);
         }

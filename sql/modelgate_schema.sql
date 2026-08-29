@@ -220,6 +220,8 @@ CREATE TABLE IF NOT EXISTS mg_request_payload (
     model_id        VARCHAR(64)                                 COMMENT '模型 ID（冗余自审计，便于按模型直接筛选）',
     service_id      VARCHAR(64)                                 COMMENT '服务编码（traffic_type=service 时写入，model 流量为 NULL）',
     is_stream       TINYINT(1)   NOT NULL DEFAULT 0             COMMENT '是否流式响应：1=SSE 流式，0=一次性返回',
+    request_method  VARCHAR(10)                                 COMMENT '入站请求的 HTTP 方法（回放用）。模型流量恒为 POST，服务流量由接入方接口决定；upgrade_20260829 之前的历史报文为 NULL',
+    request_path    VARCHAR(512)                                COMMENT '入站请求路径含 query（回放用），如 /svc/crm/api/v2/query?x=1；upgrade_20260829 之前的历史报文为 NULL',
     request_headers MEDIUMTEXT                                  COMMENT '全部入站请求头 JSON 快照，包含 Authorization/Cookie/API Key/Token/JWT/签名等凭证字段；代码限制单值与总字符数',
     request_body    LONGTEXT                                    COMMENT '请求报文原文（JSON）。⚠️ 含用户原始 prompt，脱敏方案待定',
     response_raw    LONGTEXT                                    COMMENT '响应报文原文：流式为完整 SSE 流（含 data: 前缀与所有分帧），非流式为原始 JSON。供排查时完整复现上游返回',

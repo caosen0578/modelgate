@@ -1014,6 +1014,96 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
   </div>
 </div>
 
+<!-- ========== MODAL: 报文回放 ==========
+     把留档的那一发请求重新打给上游用于复现。左侧改请求、右侧看结果，
+     与「服务测试工具」同一套双栏布局与信息层级。 -->
+<div class="modal-backdrop" id="payloadReplayModal">
+  <div class="modal modal-xl">
+    <div class="modal-header">
+      <h3>▶ 报文回放 · <span id="rp_trace" style="font-family:monospace;font-size:13px"></span></h3>
+      <button class="modal-close" onclick="closeModal('payloadReplayModal')">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="test-split">
+        <!-- ── 左侧：要发出去的请求 ── -->
+        <div class="test-left">
+          <div class="form-group">
+            <label>回放目标</label>
+            <div id="rp_target" style="font-size:13px;color:#475569;padding:8px 10px;
+                 background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;
+                 font-family:ui-monospace,Menlo,Consolas,monospace;word-break:break-all">-</div>
+          </div>
+
+          <!-- 副作用警告必须常驻、不可折叠：回放是本页唯一会真实写上游的动作 -->
+          <div class="warn-box" style="font-size:12px;line-height:1.7">
+            ⚠️ <b>回放会真实调用上游。</b>模型请求会消耗 token；服务的写接口会<b>再写一次</b>
+            （可能重复下单/建单）。网关无法替业务判断哪个接口是幂等的。<br>
+            回放<b>直连上游</b>，跳过凭证鉴权 / 访问控制 / 授权 / 配额——
+            所以它复现不了 403、429 这类被网关拦下的问题；那类请用
+            「接入系统 → 凭证管理 → 接入示例 → 测试连通」。
+          </div>
+
+          <!-- 服务流量才需要方法与路径：模型侧上游路径由 mg_model 自己算得出 -->
+          <div id="rp_svcRow" style="display:none">
+            <div class="form-group" style="display:flex;gap:8px;align-items:flex-end">
+              <div style="flex:none">
+                <label>HTTP 方法</label>
+                <select id="rp_method" style="width:110px" onchange="updateReplayTarget()">
+                  <option value="POST">POST</option>
+                  <option value="GET">GET</option>
+                  <option value="PUT">PUT</option>
+                  <option value="PATCH">PATCH</option>
+                  <option value="DELETE">DELETE</option>
+                </select>
+              </div>
+              <div style="flex:1">
+                <label>上游路径</label>
+                <input type="text" id="rp_path" placeholder="/api/v2/query" oninput="updateReplayTarget()"/>
+              </div>
+            </div>
+            <span class="hint" id="rp_pathHint"></span>
+          </div>
+
+          <div class="form-group" style="flex:1;display:flex;flex-direction:column;min-height:0">
+            <label>请求体（可改）
+              <span class="hint" style="font-weight:400">改小 max_tokens、删掉某个字段再发，是排查时最常用的两步</span>
+            </label>
+            <textarea id="rp_body" style="flex:1;min-height:160px;font-size:12px;
+                      font-family:ui-monospace,Menlo,Consolas,monospace"></textarea>
+            <div style="margin-top:6px;display:flex;gap:8px;align-items:center">
+              <button class="btn btn-neutral btn-sm" onclick="resetReplayBody()">还原为原始请求体</button>
+              <span class="hint" id="rp_bodyDirty"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── 右侧：回放结果 ── -->
+        <div class="test-right">
+          <div class="rmeta" id="rp_metaBar" style="display:none">
+            <span id="rp_verdict">-</span>
+            <span style="font-size:12px;font-family:monospace;color:#64748b" id="rp_meta">-</span>
+            <span style="flex:1"></span>
+            <button class="btn btn-neutral btn-sm"
+                    onclick="copyText($('rp_respBox').textContent.trim())">复制结果</button>
+          </div>
+          <div class="rbody" id="rp_respBox"></div>
+          <span class="rawtog" id="rp_rawTog"
+                onclick="$('rp_raw').classList.toggle('open');
+                         $('rp_rawTog').textContent=($('rp_raw').classList.contains('open')?'▼':'▶')+' 上游原始返回'">
+            ▶ 上游原始返回
+          </span>
+          <pre class="rawbox" id="rp_raw"></pre>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <span style="flex:1;font-size:12px;color:#94a3b8">回放不写入新的审计与报文记录，也不消耗调用方配额</span>
+      <button class="btn btn-neutral" onclick="closeModal('payloadReplayModal')">关闭</button>
+      <button class="btn btn-primary" id="rp_sendBtn" onclick="runReplay()">▶ 发送到上游</button>
+    </div>
+  </div>
+</div>
+
 <!-- ========== MODAL: 查看凭证明文 ========== -->
 <div class="modal-backdrop" id="secretViewModal">
   <div class="modal">
@@ -4418,7 +4508,11 @@ function renderPayload(data){
           title="${escHtml(p.requestPreview||'')}${p.requestLen?`（共 ${fmtLen(p.requestLen)}）`:''}">${escHtml(p.requestPreview||'-')}</td>
       <td style="font-size:12px;color:#475569;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
           title="${escHtml(p.responsePreview||'')}${p.responseTextLen?`（共 ${fmtLen(p.responseTextLen)}）`:''}">${escHtml(p.responsePreview||'-')}${truncTag(p.truncated)}</td>
-      <td><button class="btn btn-neutral btn-sm" onclick="openPayloadDetail(${p.id})">查看</button></td>
+      <td style="white-space:nowrap">
+        <button class="btn btn-neutral btn-sm" onclick="openPayloadDetail(${p.id})">查看</button>
+        <button class="btn btn-warning btn-sm" title="把这一发请求重新打给上游复现问题（会真实调用上游）"
+                onclick="openPayloadReplay(${p.id})">▶ 回放</button>
+      </td>
     </tr>
   `).join('');
 }
@@ -4524,11 +4618,148 @@ async function openPayloadDetail(id){
       <span>Token ${tokenCell(_payloadDetail)}</span>
       <span>${truncTag(_payloadDetail.truncated) || '<span class="tag tag-green">完整</span>'}</span>
       <span style="flex:1"></span>
-      <button class="btn btn-neutral btn-sm" onclick="payloadToAudit('${escHtml(_payloadDetail.traceId||'')}')">看审计记录</button>`;
+      <button class="btn btn-neutral btn-sm" onclick="payloadToAudit('${escHtml(_payloadDetail.traceId||'')}')">看审计记录</button>
+      <button class="btn btn-warning btn-sm" onclick="openPayloadReplay(${_payloadDetail.id})">▶ 回放</button>`;
     setPayloadTab('request');
   }catch(e){
     console.warn('[ModelGate] 报文详情异常', e);
     $('pd_meta').textContent = '请求异常: ' + e.message;
+  }
+}
+
+// ── 报文回放 ──────────────────────────────────────────────
+// 「直连上游」而非走网关：与「模型对话测试」「服务测试工具」同一条后端通道。
+// 复现的是"上游对这个请求体的反应"；403/429 这类被网关拦下的问题它复现不了。
+let _replayCtx = null;
+
+async function openPayloadReplay(id){
+  _replayCtx = null;
+  $('rp_trace').textContent = '';
+  $('rp_target').textContent = '加载中…';
+  $('rp_body').value = '';
+  $('rp_svcRow').style.display = 'none';
+  $('rp_bodyDirty').textContent = '';
+  $('rp_metaBar').style.display = 'none';
+  $('rp_raw').textContent = '';
+  $('rp_raw').classList.remove('open');
+  $('rp_rawTog').textContent = '▶ 上游原始返回';
+  $('rp_respBox').innerHTML = '<span class="rph">// 点「▶ 发送到上游」后，结果显示在此处\n'
+    + '// 回放直连上游，不走网关鉴权链，也不消耗调用方配额</span>';
+  openModal('payloadReplayModal');
+
+  try{
+    // 复用详情接口：回放要的请求体全文只有它返回（列表接口为了不拖 LONGTEXT 只给前 160 字预览）
+    const r = await fetch(apiUrl(`/modelgate/payload/detail?id=${encodeURIComponent(id)}`), {headers:hdrs()});
+    const j = await r.json();
+    if(!isOk(j)){ $('rp_target').textContent = '加载失败: ' + errMsg(j); return; }
+    const d = j.data || {};
+    _replayCtx = {id, d, originalBody: d.requestBody || ''};
+
+    $('rp_trace').textContent = d.traceId || '-';
+    $('rp_body').value = _replayCtx.originalBody;
+
+    const isSvc = d.trafficType === 'service';
+    $('rp_svcRow').style.display = isSvc ? '' : 'none';
+    if(isSvc){
+      $('rp_method').value = (d.requestMethod || 'POST').toUpperCase();
+      // 后端按同一规则剥前缀；这里只是把结果显示出来，让人能看见要发到哪
+      $('rp_path').value = stripSvcPrefixForReplay(d.requestPath, d.serviceId) || '';
+      // upgrade_20260829 之前的报文没有 requestPath，这时必须由人填——说清楚，别让人猜
+      $('rp_pathHint').innerHTML = d.requestPath
+        ? `原始入站路径：<code>${escHtml(d.requestPath)}</code>`
+        : '<span style="color:#b45309">⚠️ 该报文记录于本功能上线前，未留存原始路径，'
+          + '请手工填写要发往上游的路径（留空 = 服务根）。</span>';
+    }
+    updateReplayTarget();
+  }catch(e){
+    console.warn('[ModelGate] 报文回放加载异常', e);
+    $('rp_target').textContent = '请求异常: ' + e.message;
+  }
+}
+
+/** 与后端 PayloadController.stripSvcPrefix 同一规则，改一处要同步另一处。 */
+function stripSvcPrefixForReplay(requestPath, serviceId){
+  if(!requestPath || !serviceId) return null;
+  const prefix = '/svc/' + serviceId;
+  if(!requestPath.startsWith(prefix)) return requestPath;
+  const rest = requestPath.slice(prefix.length);
+  return (rest === '' || rest === '/') ? null : rest;
+}
+
+/** 把"这一发会发到哪"直接显示出来——与服务测试工具、接入示例是同一条约定 */
+function updateReplayTarget(){
+  if(!_replayCtx){ return; }
+  const d = _replayCtx.d;
+  if(d.trafficType === 'service'){
+    const m = $('rp_method').value || 'POST';
+    $('rp_target').textContent =
+      `${m} {服务 ${d.serviceId} 的上游地址}${$('rp_path').value || ''}`;
+  }else{
+    $('rp_target').textContent = `POST 模型 ${d.modelId || '-'} 的上游接口（路径由模型配置决定）`;
+  }
+}
+
+function resetReplayBody(){
+  if(!_replayCtx) return;
+  $('rp_body').value = _replayCtx.originalBody;
+  $('rp_bodyDirty').textContent = '';
+}
+
+async function runReplay(){
+  if(!_replayCtx) return;
+  const btn = $('rp_sendBtn');
+  btn.disabled = true; btn.textContent = '发送中…';
+  $('rp_metaBar').style.display = 'flex';
+  $('rp_verdict').innerHTML = '<span class="tag tag-gray">发送中…</span>';
+  $('rp_meta').textContent = '-';
+  $('rp_respBox').innerHTML = '<span class="rph">// 正在从服务端直连上游…\n'
+    + '// 模型回放要等整段结果生成完，慢模型可能等较久（上限 120 秒）</span>';
+
+  const d = _replayCtx.d;
+  const payload = {requestBody: $('rp_body').value};
+  if(d.trafficType === 'service'){
+    payload.method = $('rp_method').value || 'POST';
+    payload.path   = $('rp_path').value || '';
+  }
+  const edited = $('rp_body').value !== _replayCtx.originalBody;
+  $('rp_bodyDirty').textContent = edited ? '已改动，发出的不是原始请求体' : '';
+
+  try{
+    const r = await fetch(apiUrl(`/modelgate/payload/replay?id=${encodeURIComponent(_replayCtx.id)}`),
+                          {method:'POST', headers:hdrs(), body:JSON.stringify(payload)});
+    const j = await r.json();
+    if(!isOk(j)){
+      $('rp_verdict').innerHTML = '<span class="tag tag-red">❌ 回放失败</span>';
+      $('rp_meta').textContent = 'HTTP ' + r.status;
+      $('rp_respBox').textContent = errMsg(j);
+      return;
+    }
+    const v = j.data || {};
+    $('rp_verdict').innerHTML = v.success
+      ? '<span class="tag tag-green">✅ 上游已响应</span>'
+      : '<span class="tag tag-red">❌ 回放未成功</span>';
+    $('rp_meta').textContent = [
+      v.httpStatus != null ? 'HTTP ' + v.httpStatus : '无 HTTP 响应',
+      v.latencyMs != null ? v.latencyMs + 'ms' : null,
+      edited ? '请求体已改动' : '原始请求体',
+      v.upstreamUri
+    ].filter(Boolean).join(' · ');
+    $('rp_respBox').innerHTML =
+      '<span style="color:' + (v.success ? '#86efac' : '#fca5a5') + '">// 结论</span>\n'
+      + escapeHtml(v.message || '(无)');
+    if(v.upstreamBody){
+      let raw;
+      try { raw = JSON.stringify(JSON.parse(v.upstreamBody), null, 2); }
+      catch(e){ raw = v.upstreamBody; }
+      $('rp_raw').textContent = raw;
+      $('rp_raw').classList.add('open');
+      $('rp_rawTog').textContent = '▼ 上游原始返回';
+    }
+  }catch(e){
+    $('rp_verdict').innerHTML = '<span class="tag tag-red">❌ 请求异常</span>';
+    $('rp_respBox').textContent = e.message;
+  }finally{
+    btn.disabled = false; btn.textContent = '▶ 发送到上游';
   }
 }
 

@@ -11,23 +11,37 @@ import com.pab.ficc.ibp.modelgate.server.common.PageSupport;
 import com.pab.ficc.ibp.modelgate.server.constant.UrlConstant;
 import com.pab.ficc.ibp.modelgate.server.domain.Result;
 import com.pab.ficc.ibp.modelgate.server.domain.bo.PayloadQueryBO;
+import com.pab.ficc.ibp.modelgate.server.domain.bo.ReplayPayloadRequestBO;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.RequestPayloadEntity;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.ModelCredentialEntity;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.ModelInstanceEntity;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.ServiceCredentialEntity;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.ServiceEntity;
+import com.pab.ficc.ibp.modelgate.server.domain.vo.ConnectivityTestVO;
 import com.pab.ficc.ibp.modelgate.server.domain.vo.PayloadDetailVO;
 import com.pab.ficc.ibp.modelgate.server.domain.vo.PayloadListVO;
 import com.pab.ficc.ibp.modelgate.server.mapper.RequestPayloadMapper;
 import com.pab.ficc.ibp.modelgate.server.service.AppScopeResolver;
+import com.pab.ficc.ibp.modelgate.server.service.ModelConnectivityService;
+import com.pab.ficc.ibp.modelgate.server.service.ModelService;
+import com.pab.ficc.ibp.modelgate.server.service.ServiceConnectivityService;
+import com.pab.ficc.ibp.modelgate.server.service.ServiceRegistryService;
 import com.pab.ficc.ibp.modelgate.server.service.RequestHeaderSnapshotter;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
 
+import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
@@ -49,12 +63,17 @@ import java.util.Set;
  * </ul>
  */
 @Tag(name = "报文记录", description = "查询模型调用的请求/响应报文，支持按 appId、应用编码、模型、traceId、时间、正文关键字检索")
+@Slf4j
 @RestController
 @RequestMapping(UrlConstant.MG_PAYLOAD)
 @RequiredArgsConstructor
 public class PayloadController {
 
     private final RequestPayloadMapper payloadMapper;
+    private final ModelService modelService;
+    private final ModelConnectivityService modelConnectivityService;
+    private final ServiceRegistryService serviceRegistryService;
+    private final ServiceConnectivityService serviceConnectivityService;
     private final RequestHeaderSnapshotter requestHeaderSnapshotter;
     private final AppScopeResolver appScopeResolver;
 
@@ -98,6 +117,135 @@ public class PayloadController {
                 .subscribeOn(AdminScheduler.get())
                 .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .map(Result::success);
+    }
+
+    /**
+     * 报文回放：把留档的那一发请求<b>重新打给上游</b>，用于复现问题。
+     *
+     * <p><b>回放走的是"直连上游"，不是走网关。</b> 与「模型管理 → 对话测试」
+     * 和「服务测试工具」同一条路：服务端解密库中的上游凭证注入请求头，
+     * 走真实的参数合并与适配器逻辑。
+     *
+     * <p>因此本通道<b>跳过</b>凭证鉴权、访问控制、模型/服务授权、配额限流。
+     * 它能复现的是"上游对这个请求体的反应"；复现不了 403/429 这类被网关拦下的问题——
+     * 那类要用「接入示例 → 测试连通」按接入方身份打真实的 {@code /v1|/svc} 路径。
+     *
+     * <p>好处也在这里：不消耗调用方配额、不产生新的审计与报文记录、密钥不出服务端。
+     *
+     * <p>⚠️ <b>回放会对上游产生真实副作用</b>：原请求是写操作时会再写一次；
+     * 模型请求会真实消耗 token。管理页发送前有显著警告。
+     */
+    @Operation(summary = "报文回放：把留档的这一发请求重新打给上游（直连上游，跳过网关鉴权链）")
+    @PostMapping(UrlConstant.REPLAY)
+    public Mono<Result<ConnectivityTestVO>> replay(
+            @Parameter(description = "报文记录主键 id") @RequestParam(name = "id") Long id,
+            @RequestBody(required = false) ReplayPayloadRequestBO req) {
+
+        ReplayPayloadRequestBO body = req == null ? new ReplayPayloadRequestBO() : req;
+
+        return Mono.fromCallable(() -> {
+                    PayloadDetailVO p = payloadMapper.selectDetailById(id);
+                    if (p == null) {
+                        throw new BusinessException(ErrorCode.INVALID_PARAMETER,
+                                "报文不存在或已过保留期被清理: id=" + id);
+                    }
+                    return p;
+                })
+                .subscribeOn(AdminScheduler.get())
+                .timeout(AdminScheduler.REQUEST_TIMEOUT)
+                .flatMap(p -> {
+                    String payload = firstNonBlank(body.getRequestBody(), p.getRequestBody());
+                    if (payload == null) {
+                        throw new BusinessException(ErrorCode.INVALID_PARAMETER,
+                                "该报文没有留存请求体，无法回放");
+                    }
+                    return "service".equals(p.getTrafficType())
+                            ? replayService(p, body, payload)
+                            : replayModel(p, payload);
+                })
+                .map(Result::success);
+    }
+
+    /** 模型报文：上游路径由 mg_model 自己算得出，只需请求体。 */
+    private Mono<ConnectivityTestVO> replayModel(PayloadDetailVO p, String payload) {
+        if (p.getModelId() == null || p.getModelId().isBlank()) {
+            throw new BusinessException(ErrorCode.INVALID_PARAMETER,
+                    "该报文没有 modelId，无法定位要回放到哪个模型");
+        }
+        return Mono.fromCallable(() -> {
+                    ModelInstanceEntity model = modelService.findByModelId(p.getModelId());
+                    ModelCredentialEntity cred = modelService.getCredentialDecrypted(p.getModelId());
+                    return new Object[]{model, cred};
+                })
+                .subscribeOn(AdminScheduler.get())
+                .timeout(AdminScheduler.REQUEST_TIMEOUT)
+                .flatMap(mc -> {
+                    log.warn("[Payload][replay] 回放模型报文，将真实调用上游并消耗 token: "
+                            + "id={}, traceId={}, modelId={}", p.getId(), p.getTraceId(), p.getModelId());
+                    return modelConnectivityService.chat((ModelInstanceEntity) mc[0],
+                            (ModelCredentialEntity) mc[1], payload.getBytes(StandardCharsets.UTF_8));
+                });
+    }
+
+    /**
+     * 服务报文：必须知道上游路径，而它只存在于当时那个请求的 URL 里。
+     *
+     * <p>取值顺序：入参 path → 留档 {@code request_path} 剥掉 {@code /svc/{编码}} → 空（服务根）。
+     * {@code upgrade_20260829} 之前的历史报文没有 {@code request_path}，只能由使用者手工填。
+     */
+    private Mono<ConnectivityTestVO> replayService(PayloadDetailVO p, ReplayPayloadRequestBO body,
+                                                   String payload) {
+        String serviceId = p.getServiceId();
+        if (serviceId == null || serviceId.isBlank()) {
+            throw new BusinessException(ErrorCode.INVALID_PARAMETER,
+                    "该报文没有 serviceId，无法定位要回放到哪个服务");
+        }
+        String method = firstNonBlank(body.getMethod(), p.getRequestMethod());
+        String path = firstNonBlank(body.getPath(), stripSvcPrefix(p.getRequestPath(), serviceId));
+
+        return Mono.fromCallable(() -> {
+                    ServiceEntity svc = serviceRegistryService.findByServiceId(serviceId);
+                    if (svc == null) {
+                        throw new BusinessException(ErrorCode.INVALID_PARAMETER,
+                                "服务不存在（可能已删除）: serviceId=" + serviceId);
+                    }
+                    ServiceCredentialEntity cred = serviceRegistryService.getCredentialDecrypted(serviceId);
+                    return new Object[]{svc, cred};
+                })
+                .subscribeOn(AdminScheduler.get())
+                .timeout(AdminScheduler.REQUEST_TIMEOUT)
+                .flatMap(sc -> {
+                    log.warn("[Payload][replay] 回放服务报文，将真实调用上游、可能产生副作用: "
+                                    + "id={}, traceId={}, serviceId={}, method={}, path={}",
+                            p.getId(), p.getTraceId(), serviceId, method, path);
+                    return serviceConnectivityService.replay((ServiceEntity) sc[0],
+                            (ServiceCredentialEntity) sc[1], method, path, payload);
+                });
+    }
+
+    /**
+     * 从留档的入站路径里剥掉 {@code /svc/{编码}}，得到要拼到上游地址之后的那一段。
+     *
+     * <p>与 {@code ServiceRouteFilter.resolveRemainder} 同一规则；<b>但这里不处理
+     * {@code stripPrefix=false} 的情况</b>——那种服务转发的就是完整路径，
+     * 交给 {@code ServiceEntity.joinUpstream} 时会重复拼一次 {@code /svc/...}。
+     * 因此该配置下回放需使用者显式填 path，管理页会带出原始入站路径供直接粘贴。
+     */
+    static String stripSvcPrefix(String requestPath, String serviceId) {
+        if (requestPath == null || requestPath.isBlank()) {
+            return null;
+        }
+        String prefix = "/svc/" + serviceId;
+        if (!requestPath.startsWith(prefix)) {
+            return requestPath;
+        }
+        String remainder = requestPath.substring(prefix.length());
+        return remainder.isEmpty() || "/".equals(remainder) ? null : remainder;
+    }
+
+    private static String firstNonBlank(String a, String b) {
+        if (a != null && !a.isBlank()) return a;
+        return (b != null && !b.isBlank()) ? b : null;
     }
 
     @Operation(summary = "报文记录功能的配置回显（总开关 / 保留天数 / 清理时间 / 采集上限）")

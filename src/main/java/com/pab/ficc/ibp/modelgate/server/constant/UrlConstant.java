@@ -106,4 +106,6 @@ public interface UrlConstant {
     String USAGE        = "/usage";
     /** 功能自身的配置回显（如报文记录的保留期/清理时间），供页面展示"数据能查多久" */
     String META         = "/meta";
+    /** 报文回放：把留档的那一发请求重新打给上游 */
+    String REPLAY       = "/replay";
 }

@@ -139,7 +139,7 @@ public interface RequestPayloadMapper extends BaseMapper<RequestPayloadEntity> {
      * 同样用标量子查询，理由见 {@link #selectListPage}。
      */
     @Options(timeout = QUERY_TIMEOUT_SECONDS)
-    @Select("SELECT id, trace_id, app_id, traffic_type, model_id, service_id, is_stream, request_headers, request_body, response_raw, " +
+    @Select("SELECT id, trace_id, app_id, traffic_type, model_id, service_id, is_stream, request_method, request_path, request_headers, request_body, response_raw, " +
             "       response_text, finish_reason, upstream_status, truncated, create_time, " +
             "       (SELECT a.input_tokens  FROM mg_audit_log a " +
             "         WHERE a.trace_id = mg_request_payload.trace_id " +

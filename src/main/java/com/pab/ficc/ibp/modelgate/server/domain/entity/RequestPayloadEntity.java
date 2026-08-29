@@ -55,6 +55,18 @@ public class RequestPayloadEntity {
     private Boolean isStream;
 
     /**
+     * 入站请求的 HTTP 方法与路径（含 query），供「报文回放」还原原始请求。
+     *
+     * <p><b>为什么要存</b>：模型侧上游路径能由 {@code mg_model} 自己算出来，
+     * 但服务侧上游路径 = {@code upstream_url} + 剥掉 {@code /svc/{编码}} 后的剩余路径，
+     * 而剩余路径<b>只存在于当时那个请求的 URL 里</b>，不留就没法回放。
+     *
+     * <p>{@code upgrade_20260829} 之前的历史报文为 {@code null}，回放时需手工填写。
+     */
+    private String requestMethod;
+    private String requestPath;
+
+    /**
      * 全部入站请求头 JSON 快照，包含 Authorization/Cookie/API Key 等凭证字段；
      * 仅受字符保险丝限制，生产环境必须限制管理面与数据库访问权限。
      */

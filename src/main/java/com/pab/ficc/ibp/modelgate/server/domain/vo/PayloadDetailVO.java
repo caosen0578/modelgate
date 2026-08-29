@@ -25,6 +25,9 @@ public class PayloadDetailVO {
     /** 服务编码（traffic_type=service 时有值；模型流量为 null） */
     private String        serviceId;
     private Boolean       isStream;
+    /** 入站请求方法与路径（回放用）；upgrade_20260829 之前的历史报文为 null */
+    private String        requestMethod;
+    private String        requestPath;
     /** 全部入站请求头 JSON，可能包含可直接使用的凭证信息 */
     private String        requestHeaders;
     /** 请求报文原文（JSON）。⚠️ 含用户原始 prompt，脱敏方案待定 */

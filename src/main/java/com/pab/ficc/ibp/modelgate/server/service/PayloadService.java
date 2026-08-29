@@ -77,6 +77,7 @@ public class PayloadService {
      */
     private record PendingPayload(String traceId, String appId, String modelId,
                                   String trafficType, String serviceId,
+                                  String requestMethod, String requestPath,
                                   Map<String, String> requestHeaders,
                                   byte[] requestBytes, byte[] responseBytes,
                                   boolean stream, boolean truncated, Integer upstreamStatus,
@@ -99,16 +100,18 @@ public class PayloadService {
      * 请求线程单次遍历入站 Header，复制量受总字符上限约束，开销不随请求/响应报文体积增长。
      */
     public void submit(String traceId, String appId, String modelId,
+                       String requestMethod, String requestPath,
                        HttpHeaders requestHeaders,
                        byte[] requestBytes, byte[] responseBytes,
                        boolean stream, boolean truncated, Integer upstreamStatus) {
-        submit(traceId, appId, modelId, "model", null, requestHeaders,
+        submit(traceId, appId, modelId, "model", null, requestMethod, requestPath, requestHeaders,
                 requestBytes, responseBytes, stream, truncated, upstreamStatus);
     }
 
     /** 带流量类型的重载；服务流量传 {@code ("service", serviceId)}，modelId 传 null。 */
     public void submit(String traceId, String appId, String modelId,
                        String trafficType, String serviceId,
+                       String requestMethod, String requestPath,
                        HttpHeaders requestHeaders,
                        byte[] requestBytes, byte[] responseBytes,
                        boolean stream, boolean truncated, Integer upstreamStatus) {
@@ -118,7 +121,8 @@ public class PayloadService {
         // 只在报文开关已命中后做全部 Header 的有界快照；JSON 序列化仍留在消费线程。
         Map<String, String> headerSnapshot = requestHeaderSnapshotter.capture(requestHeaders);
         boolean offered = queue.offer(new PendingPayload(traceId, appId, modelId,
-                trafficType == null ? "model" : trafficType, serviceId, headerSnapshot,
+                trafficType == null ? "model" : trafficType, serviceId,
+                requestMethod, truncatePath(requestPath), headerSnapshot,
                 requestBytes, responseBytes, stream, truncated, upstreamStatus, LocalDateTime.now()));
         if (!offered) {
             // 满了就丢，绝不阻塞业务线程；累计数打出来，否则报文断流时无人知晓
@@ -231,6 +235,8 @@ public class PayloadService {
         e.setTrafficType(p.trafficType());
         e.setServiceId(p.serviceId());
         e.setIsStream(p.stream());
+        e.setRequestMethod(p.requestMethod());
+        e.setRequestPath(p.requestPath());
         e.setRequestHeaders(toJson(p.requestHeaders()));
         e.setRequestBody(toText(p.requestBytes()));
         e.setResponseRaw(toText(p.responseBytes()));
@@ -240,6 +246,19 @@ public class PayloadService {
         e.setTruncated(p.truncated() ? "response" : "none");
         e.setCreateTime(p.createTime());
         return e;
+    }
+
+    /**
+     * 路径列是 VARCHAR(512)，超长直接截断。
+     *
+     * <p>不截会让整条 INSERT 因 data too long 失败——为了一个"回放时方便"的辅助字段
+     * 丢掉整条报文留档，代价与收益完全不成比例。截断只影响回放的便利性。
+     */
+    private static String truncatePath(String path) {
+        if (path == null) {
+            return null;
+        }
+        return path.length() <= 512 ? path : path.substring(0, 512);
     }
 
     private static String toText(byte[] bytes) {
