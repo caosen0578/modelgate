@@ -58,6 +58,7 @@ public class AdminPageStructureTest {
             "公共层 · 部署文根（context root）自适应",
             "公共层 · 分页（服务端分页，对齐行内 PageVo 契约）",
             "公共层 · 通用渲染",
+            "公共层 · 上游响应解析",
             "公共层 · 弹窗",
             "公共层 · 服务地址拼接",
             "模块 · 导航",
@@ -89,6 +90,7 @@ public class AdminPageStructureTest {
             "applyPage", "renderPager", "fmt", "fmtTime", "toast", "setStatus",
             "escapeHtml", "escHtml", "jsArg", "statusTag", "copyText",
             "openModal", "closeModal",
+            "extractModelAnswer", "extractUsageLabel",
             "svcBaseHasPath", "svcJoinUpstream");
 
     private static int pass;
@@ -105,6 +107,7 @@ public class AdminPageStructureTest {
         sectionsMatchExpected(html);
         commonFunctionsLiveInCommonLayer(html);
         noDuplicateTopLevelFunctions(html);
+        responseParsersHandleSse(html);
         tocListsEverySection(html);
 
         report();
@@ -161,6 +164,27 @@ public class AdminPageStructureTest {
             }
         }
         check("没有重复定义的顶层函数" + (dup.isEmpty() ? "" : "，重复的是 " + dup), dup.isEmpty());
+    }
+
+    /**
+     * 上游响应解析必须能处理 SSE 分帧，不能只会整串 {@code JSON.parse}。
+     *
+     * <p>流式响应的 usage 在<b>某一帧里</b>、正文在<b>逐帧的 delta 里</b>——
+     * 只 parse 整串时两者都拿不到，表现是"回放/测试结果里 token 和正文都空着"，
+     * 而这恰恰是流式排查最需要的两个数（{@code extractUsageLabel} 原先就漏了 SSE 这一半）。
+     */
+    private static void responseParsersHandleSse(String html) {
+        for (String fn : new String[]{"extractModelAnswer", "extractUsageLabel"}) {
+            int i = html.indexOf("function " + fn + "(");
+            if (i < 0) {
+                check(fn + " 存在", false);
+                continue;
+            }
+            int end = html.indexOf("\n}", i);
+            String body = html.substring(i, end < 0 ? Math.min(i + 1600, html.length()) : end);
+            check(fn + " 有 SSE 分帧分支", body.contains("data:"));
+            check(fn + " 跳过 [DONE] 标记", body.contains("[DONE]"));
+        }
     }
 
     /** 文件头目录必须列全所有分区名，否则目录会慢慢变成一份过时的说明。 */

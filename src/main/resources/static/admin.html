@@ -222,6 +222,11 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
 .rawtog:hover{text-decoration:underline}
 .rawbox{background:#1e293b;border-radius:8px;padding:10px 12px;font-family:monospace;font-size:11px;color:#94a3b8;white-space:pre-wrap;word-break:break-all;max-height:100px;overflow-y:auto;display:none;flex-shrink:0}
 .rawbox.open{display:block}
+/* 回放面板专用：正文才是这里要看的东西，所以它吃掉剩余高度而不是被压成 100px。
+   resize:vertical 让人能自己拖——拖过之后浏览器写死 height，会盖掉 flex-basis，
+   这正是想要的行为（一旦手动调过就以手调的为准）。 */
+.rawbox-lg{flex:1;min-height:200px;max-height:none;display:block;resize:vertical;overflow:auto}
+.rawbox-lg.nowrap{white-space:pre;word-break:normal}
 .stok{font-size:13px;font-weight:700;color:#10b981}
 .sterr{font-size:13px;font-weight:700;color:#ef4444}
 </style>
@@ -1077,22 +1082,38 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
           </div>
         </div>
 
-        <!-- ── 右侧：回放结果 ── -->
+        <!-- ── 右侧：回放结果 ──
+             不用「结论大框 + 折叠原始返回」那套：回放要看的是上游到底返回了什么，
+             一行结论却占了 flex:1、原始返回被 max-height:100px 压着，正好反了。
+             改成「结论一行 + 标签页 + 大正文框」，与报文详情弹窗同一套信息层级。 -->
         <div class="test-right">
           <div class="rmeta" id="rp_metaBar" style="display:none">
             <span id="rp_verdict">-</span>
             <span style="font-size:12px;font-family:monospace;color:#64748b" id="rp_meta">-</span>
             <span style="flex:1"></span>
             <button class="btn btn-neutral btn-sm"
-                    onclick="copyText($('rp_respBox').textContent.trim())">复制结果</button>
+                    onclick="copyText($('rp_view').textContent.trim())">复制当前内容</button>
           </div>
-          <div class="rbody" id="rp_respBox"></div>
-          <span class="rawtog" id="rp_rawTog"
-                onclick="$('rp_raw').classList.toggle('open');
-                         $('rp_rawTog').textContent=($('rp_raw').classList.contains('open')?'▼':'▶')+' 上游原始返回'">
-            ▶ 上游原始返回
-          </span>
-          <pre class="rawbox" id="rp_raw"></pre>
+
+          <!-- 结论：一行就够，不该占满整个面板 -->
+          <div id="rp_conclusion" style="font-size:12px;line-height:1.6;padding:8px 10px;
+               background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;flex:none;
+               max-height:88px;overflow:auto"></div>
+
+          <div class="flex gap-8" style="flex:none;align-items:center;margin-top:2px">
+            <button class="btn btn-neutral btn-sm" id="rp_tab_text" onclick="setReplayTab('text')">响应正文</button>
+            <button class="btn btn-neutral btn-sm" id="rp_tab_raw"  onclick="setReplayTab('raw')">原始返回</button>
+            <span class="hint" id="rp_tabHint" style="margin-left:2px"></span>
+            <span style="flex:1"></span>
+            <label style="font-size:12px;color:#64748b;display:flex;align-items:center;gap:5px;cursor:pointer">
+              <input type="checkbox" id="rp_wrap" checked onchange="applyReplayWrap()" style="width:auto;margin:0"> 自动换行
+            </label>
+            <span style="font-size:12px;color:#64748b">字号</span>
+            <button class="btn btn-neutral btn-sm" onclick="replayFontStep(-1)" title="缩小">A−</button>
+            <button class="btn btn-neutral btn-sm" onclick="replayFontStep(1)"  title="放大">A+</button>
+          </div>
+          <!-- 可拖拽调高：右下角是浏览器原生 resize 手柄 -->
+          <pre class="rawbox rawbox-lg" id="rp_view"></pre>
         </div>
       </div>
     </div>
@@ -1843,6 +1864,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
 //    部署文根（context root）自适应
 //    分页（服务端分页，对齐行内 PageVo 契约）
 //    通用渲染
+//    上游响应解析
 //    弹窗
 //    服务地址拼接
 //
@@ -2106,6 +2128,86 @@ function copyText(t){
     ta.value=t; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
     toast('已复制到剪贴板');
   });
+}
+
+// ============================================================
+// ===== 公共层 · 上游响应解析
+// 原先只长在「接入示例 · 连通性测试」模块里。报文回放也要把 SSE 解析成
+// 可读正文，于是它变成了两个模块共用——按公共层规则必须挪到这里，
+// 否则下一个人会在自己模块里再写一份，两份慢慢分叉。
+// ============================================================
+/**
+ * 从上游响应里抽出「模型实际回答的文字」。
+ *
+ * 与后端 UpstreamResponseParser 同一套规则，兼容四种形态：
+ *   OpenAI 非流式  choices[0].message.content
+ *   OpenAI 流式    逐帧 choices[0].delta.content 拼接
+ *   Anthropic 非流 content[0].text
+ *   Anthropic 流式 逐帧 delta.text 拼接
+ * 抽不出来返回 null，调用方回落展示原始报文。
+ */
+function extractModelAnswer(text){
+  if(!text) return null;
+  try{
+    const j = JSON.parse(text);
+    const c = j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
+    if(typeof c === 'string') return c;
+    const a = j && j.content && j.content[0] && j.content[0].text;
+    if(typeof a === 'string') return a;
+  }catch(_){}
+  if(text.indexOf('data:') >= 0){
+    let out = '';
+    text.split(String.fromCharCode(10)).forEach(function(line){
+      const f = line.trim();
+      if(f.indexOf('data:') !== 0) return;
+      const payload = f.slice(5).trim();
+      if(!payload || payload === '[DONE]') return;
+      try{
+        const n = JSON.parse(payload);
+        let d = n && n.choices && n.choices[0] && n.choices[0].delta && n.choices[0].delta.content;
+        if(typeof d !== 'string') d = n && n.delta && n.delta.text;
+        if(typeof d === 'string') out += d;
+      }catch(_){}
+    });
+    if(out) return out;
+  }
+  return null;
+}
+
+/**
+ * 提取 usage 用于结果栏显示 token 消耗；OpenAI 与 Anthropic 两种字段名都认。
+ *
+ * 流式响应的 usage 在**某一帧里**（多数上游放在最后一帧或 [DONE] 前一帧），
+ * 整串 JSON.parse 必然失败。原实现只处理了非流式，SSE 一律显示不出 token——
+ * 而回放模型报文是真实计费的，这个数正是要看的。
+ */
+function extractUsageLabel(text){
+  if(!text) return '';
+  const label = u => {
+    if(!u) return '';
+    if(u.prompt_tokens != null) return ' · tokens ' + u.prompt_tokens + '+' + (u.completion_tokens||0);
+    if(u.input_tokens != null)  return ' · tokens ' + u.input_tokens + '+' + (u.output_tokens||0);
+    return '';
+  };
+  try{
+    const s = label(JSON.parse(text).usage);
+    if(s) return s;
+  }catch(_){}
+  if(text.indexOf('data:') >= 0){
+    // 从后往前扫：usage 帧在尾部，早停能省掉整串解析
+    const lines = text.split(String.fromCharCode(10));
+    for(let i = lines.length - 1; i >= 0; i--){
+      const f = lines[i].trim();
+      if(f.indexOf('data:') !== 0) continue;
+      const payload = f.slice(5).trim();
+      if(!payload || payload === '[DONE]') continue;
+      try{
+        const s = label(JSON.parse(payload).usage);
+        if(s) return s;
+      }catch(_){}
+    }
+  }
+  return '';
 }
 
 // ============================================================
@@ -3474,54 +3576,6 @@ function diagnoseUsageTest(status, kind){
   return '';
 }
 
-/**
- * 从上游响应里抽出「模型实际回答的文字」。
- *
- * 与后端 UpstreamResponseParser 同一套规则，兼容四种形态：
- *   OpenAI 非流式  choices[0].message.content
- *   OpenAI 流式    逐帧 choices[0].delta.content 拼接
- *   Anthropic 非流 content[0].text
- *   Anthropic 流式 逐帧 delta.text 拼接
- * 抽不出来返回 null，调用方回落展示原始报文。
- */
-function extractModelAnswer(text){
-  if(!text) return null;
-  try{
-    const j = JSON.parse(text);
-    const c = j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
-    if(typeof c === 'string') return c;
-    const a = j && j.content && j.content[0] && j.content[0].text;
-    if(typeof a === 'string') return a;
-  }catch(_){}
-  if(text.indexOf('data:') >= 0){
-    let out = '';
-    text.split(String.fromCharCode(10)).forEach(function(line){
-      const f = line.trim();
-      if(f.indexOf('data:') !== 0) return;
-      const payload = f.slice(5).trim();
-      if(!payload || payload === '[DONE]') return;
-      try{
-        const n = JSON.parse(payload);
-        let d = n && n.choices && n.choices[0] && n.choices[0].delta && n.choices[0].delta.content;
-        if(typeof d !== 'string') d = n && n.delta && n.delta.text;
-        if(typeof d === 'string') out += d;
-      }catch(_){}
-    });
-    if(out) return out;
-  }
-  return null;
-}
-
-/** 提取 usage 用于结果栏显示 token 消耗；OpenAI 与 Anthropic 两种字段名都认。 */
-function extractUsageLabel(text){
-  try{
-    const u = JSON.parse(text).usage;
-    if(!u) return '';
-    if(u.prompt_tokens != null) return ' · tokens ' + u.prompt_tokens + '+' + (u.completion_tokens||0);
-    if(u.input_tokens != null)  return ' · tokens ' + u.input_tokens + '+' + (u.output_tokens||0);
-  }catch(_){}
-  return '';
-}
 
 async function runUsageTest(){
   if(!usageCtx || !currentApp) return;
@@ -4631,6 +4685,7 @@ async function openPayloadDetail(id){
 // 「直连上游」而非走网关：与「模型对话测试」「服务测试工具」同一条后端通道。
 // 复现的是"上游对这个请求体的反应"；403/429 这类被网关拦下的问题它复现不了。
 let _replayCtx = null;
+let _replayResult = null;   // {raw, pretty, text}
 
 async function openPayloadReplay(id){
   _replayCtx = null;
@@ -4640,11 +4695,11 @@ async function openPayloadReplay(id){
   $('rp_svcRow').style.display = 'none';
   $('rp_bodyDirty').textContent = '';
   $('rp_metaBar').style.display = 'none';
-  $('rp_raw').textContent = '';
-  $('rp_raw').classList.remove('open');
-  $('rp_rawTog').textContent = '▶ 上游原始返回';
-  $('rp_respBox').innerHTML = '<span class="rph">// 点「▶ 发送到上游」后，结果显示在此处\n'
-    + '// 回放直连上游，不走网关鉴权链，也不消耗调用方配额</span>';
+  _replayResult = null;
+  $('rp_conclusion').innerHTML = '<span class="rph">// 点「▶ 发送到上游」后，结论显示在此处</span>';
+  $('rp_view').innerHTML = '<span class="rph">// 回放直连上游，不走网关鉴权链，也不消耗调用方配额\n'
+    + '// SSE 响应会自动解析成可读正文，可切到「原始返回」看逐帧原文</span>';
+  $('rp_tabHint').textContent = '';
   openModal('payloadReplayModal');
 
   try{
@@ -4712,8 +4767,9 @@ async function runReplay(){
   $('rp_metaBar').style.display = 'flex';
   $('rp_verdict').innerHTML = '<span class="tag tag-gray">发送中…</span>';
   $('rp_meta').textContent = '-';
-  $('rp_respBox').innerHTML = '<span class="rph">// 正在从服务端直连上游…\n'
-    + '// 模型回放要等整段结果生成完，慢模型可能等较久（上限 120 秒）</span>';
+  $('rp_conclusion').innerHTML = '<span class="rph">// 正在从服务端直连上游…</span>';
+  $('rp_view').innerHTML = '<span class="rph">// 模型回放要等整段结果生成完，'
+    + '慢模型可能等较久（上限 120 秒）</span>';
 
   const d = _replayCtx.d;
   const payload = {requestBody: $('rp_body').value};
@@ -4731,36 +4787,92 @@ async function runReplay(){
     if(!isOk(j)){
       $('rp_verdict').innerHTML = '<span class="tag tag-red">❌ 回放失败</span>';
       $('rp_meta').textContent = 'HTTP ' + r.status;
-      $('rp_respBox').textContent = errMsg(j);
+      $('rp_conclusion').textContent = errMsg(j);
       return;
     }
     const v = j.data || {};
     $('rp_verdict').innerHTML = v.success
       ? '<span class="tag tag-green">✅ 上游已响应</span>'
       : '<span class="tag tag-red">❌ 回放未成功</span>';
+    // 能解析出 usage 就把 token 消耗一并显示：回放模型报文是真实计费的，
+    // 不显示等于让人自己去翻原文数
     $('rp_meta').textContent = [
       v.httpStatus != null ? 'HTTP ' + v.httpStatus : '无 HTTP 响应',
       v.latencyMs != null ? v.latencyMs + 'ms' : null,
       edited ? '请求体已改动' : '原始请求体',
       v.upstreamUri
-    ].filter(Boolean).join(' · ');
-    $('rp_respBox').innerHTML =
-      '<span style="color:' + (v.success ? '#86efac' : '#fca5a5') + '">// 结论</span>\n'
+    ].filter(Boolean).join(' · ') + (v.upstreamBody ? extractUsageLabel(v.upstreamBody) : '');
+    $('rp_conclusion').innerHTML =
+      '<span style="color:' + (v.success ? '#15803d' : '#b91c1c') + '">结论：</span>'
       + escapeHtml(v.message || '(无)');
-    if(v.upstreamBody){
-      let raw;
-      try { raw = JSON.stringify(JSON.parse(v.upstreamBody), null, 2); }
-      catch(e){ raw = v.upstreamBody; }
-      $('rp_raw').textContent = raw;
-      $('rp_raw').classList.add('open');
-      $('rp_rawTog').textContent = '▼ 上游原始返回';
-    }
+    renderReplayResult(v.upstreamBody);
   }catch(e){
     $('rp_verdict').innerHTML = '<span class="tag tag-red">❌ 请求异常</span>';
-    $('rp_respBox').textContent = e.message;
+    $('rp_conclusion').textContent = e.message;
   }finally{
     btn.disabled = false; btn.textContent = '▶ 发送到上游';
   }
+}
+
+/**
+ * 渲染回放结果。
+ *
+ * 没有做成「一个 SSE 解析按钮」——那会多出一个"要不要点"的决定，而人每次都想点。
+ * 直接照抄报文详情弹窗那套：两个标签页 + 一个大正文框，
+ * **能解析出正文就默认停在「响应正文」**，解析不出来才回落到「原始返回」。
+ * 解析复用公共层的 extractModelAnswer（OpenAI/Anthropic × 流式/非流式四种形态都认），
+ * 与报文详情页「响应正文」看到的是同一套规则的结果。
+ */
+function renderReplayResult(upstreamBody){
+  _replayResult = {raw: upstreamBody || '', text: null, pretty: null};
+  if(!upstreamBody){
+    $('rp_view').innerHTML = '<span class="rph">// 上游没有返回响应体</span>';
+    $('rp_tabHint').textContent = '';
+    return;
+  }
+  // 原始返回：是 JSON 就美化；SSE 分帧原样保留——美化会毁掉 data: 的分帧结构
+  try { _replayResult.pretty = JSON.stringify(JSON.parse(upstreamBody), null, 2); }
+  catch(e){ _replayResult.pretty = upstreamBody; }
+  _replayResult.text = extractModelAnswer(upstreamBody);
+
+  setReplayTab(_replayResult.text ? 'text' : 'raw');
+}
+
+function setReplayTab(tab){
+  if(!_replayResult) return;
+  const isSse = _replayResult.raw.indexOf('data:') >= 0;
+  ['text','raw'].forEach(t => {
+    $('rp_tab_' + t).className = 'btn btn-sm ' + (t === tab ? 'btn-primary' : 'btn-neutral');
+  });
+  if(tab === 'text'){
+    if(_replayResult.text){
+      $('rp_view').textContent = _replayResult.text;
+      $('rp_tabHint').textContent = isSse ? 'SSE 逐帧 delta 拼接后的模型回答' : '从响应里抽出的模型回答';
+    }else{
+      // 说清楚"为什么没有正文"：空白框看起来像功能坏了
+      $('rp_view').innerHTML = '<span class="rph">// 解析不出模型回答\n'
+        + '// 可能是上游返回了错误结构，或这是通用服务接口（非 OpenAI/Anthropic 规范）\n'
+        + '// 请切到「原始返回」看上游到底回了什么</span>';
+      $('rp_tabHint').textContent = '未能解析出正文';
+    }
+  }else{
+    $('rp_view').textContent = _replayResult.pretty;
+    $('rp_tabHint').textContent = isSse
+      ? '完整 SSE 流（保留 data: 前缀与全部分帧）'
+      : '上游返回的原始内容';
+  }
+  applyReplayWrap();
+}
+
+/** SSE 原文常有超长单行：不换行要横向拖着看，换行又打乱缩进。两种读法都有用，交给用户切。 */
+function applyReplayWrap(){
+  $('rp_view').classList.toggle('nowrap', !$('rp_wrap').checked);
+}
+
+function replayFontStep(delta){
+  const el = $('rp_view');
+  const cur = parseInt(getComputedStyle(el).fontSize, 10) || 11;
+  el.style.fontSize = Math.min(22, Math.max(9, cur + delta)) + 'px';
 }
 
 /**
