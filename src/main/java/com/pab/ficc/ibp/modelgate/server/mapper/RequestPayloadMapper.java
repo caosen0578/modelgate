@@ -154,4 +154,29 @@ public interface RequestPayloadMapper extends BaseMapper<RequestPayloadEntity> {
             "         WHERE a.trace_id = mg_request_payload.trace_id) AS audit_match_count " +
             "  FROM mg_request_payload WHERE id = #{id}")
     PayloadDetailVO selectDetailById(@Param("id") Long id);
+
+    /**
+     * 某个服务最近实际被调用过的入站路径（去重、按最后一次调用时间倒序）。
+     *
+     * <p>供「接入示例」把接口路径**带出来**而不是让人凭空填——
+     * 这个服务真实在被怎么调，答案就在留档里，没有理由让使用者去回忆。
+     *
+     * <p>走 {@code idx_service_time (service_id, create_time)} 定位到该服务的行；
+     * 报文有保留期（{@code payload-log.retention-days}），扫描范围天然有界。
+     * 只取 {@code request_path} 这一个小列，不碰任何 LONGTEXT。
+     *
+     * <p>⚠️ 结果可能为空：报文留档是<b>逐服务开关</b>（{@code mg_service.payload_log_enabled}），
+     * 没开就没有历史；{@code upgrade_20260829} 之前的老报文该列也是 NULL。
+     * 调用方必须能接受空结果，不能把它当成"这个服务没被调过"。
+     */
+    @Options(timeout = QUERY_TIMEOUT_SECONDS)
+    @Select("SELECT t.request_path FROM ("
+            + "  SELECT request_path, MAX(create_time) AS last_time"
+            + "    FROM mg_request_payload"
+            + "   WHERE service_id = #{serviceId}"
+            + "     AND request_path IS NOT NULL AND request_path <> ''"
+            + "   GROUP BY request_path"
+            + ") t ORDER BY t.last_time DESC LIMIT #{limit}")
+    List<String> selectRecentRequestPaths(@Param("serviceId") String serviceId,
+                                          @Param("limit") int limit);
 }

@@ -26,6 +26,13 @@ public class ServiceAuthVO {
      */
     private String        upstreamUrl;
     private Boolean       stripPrefix;
+    /**
+     * 服务登记的探测路径，供「接入示例」在没有历史调用记录时兜底带出接口路径。
+     *
+     * <p>它不等于"业务接口路径"，但它是录入者<b>唯一登记过的一个真实路径</b>——
+     * 比让使用者对着空输入框凭空猜要好。
+     */
+    private String        probePath;
     private Boolean       sse;
     private Boolean       enabled;
     private Integer       qpsLimit;
@@ -50,6 +57,7 @@ public class ServiceAuthVO {
             vo.serviceName  = svc.getServiceName();
             vo.publicPrefix = "/svc/" + svc.getServiceId() + "/";
             vo.upstreamUrl  = svc.normalizedUpstreamUrl();
+            vo.probePath    = svc.getProbePath();
             vo.stripPrefix  = svc.shouldStripPrefix();
             vo.sse          = Boolean.TRUE.equals(svc.getSse());
         }

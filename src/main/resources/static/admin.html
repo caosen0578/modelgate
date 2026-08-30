@@ -1202,14 +1202,18 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
         </div>
         <div class="form-group" id="ug_serviceRow" style="display:none">
           <label>调用服务</label>
-          <select id="ug_service" onchange="renderUsage()"></select>
+          <select id="ug_service" onchange="onUsageServiceChange()"></select>
           <span class="hint">只列该系统已授权、且授权与服务本身都处于启用、未过期的服务</span>
         </div>
         <div class="form-group" id="ug_svcPathRow" style="display:none">
           <label>接口路径</label>
-          <input id="ug_svcPath" oninput="renderUsage()" placeholder="/api/v2/query">
-          <!-- 「填什么」是这里最容易卡住的地方：填的是**接入方自己那个接口原本的路径**，
-               和网关无关。下面的实时预览把"你填的" -> "网关转发到哪"直接摆出来。 -->
+          <!-- 选中服务后会**自动带出**（最近真实调用过的路径 → 服务登记的探测路径 →
+               上游地址自带路径时留空），datalist 列出该服务最近调过的其它路径。
+               原先这里是个空输入框，等于让人凭空回忆接入方在调什么，很误导。 -->
+          <input id="ug_svcPath" oninput="onUsageSvcPathInput()" placeholder="/api/v2/query"
+                 list="ug_svcPathList" autocomplete="off">
+          <datalist id="ug_svcPathList"></datalist>
+          <span class="hint" id="ug_svcPathOrigin"></span>
           <span class="hint">填<b>该服务自己接口原本的路径</b>——就是不走网关时你直接调它用的那一段。<br>
             例如原本调 <code>http://crm.intranet:8080/api/v2/query</code>，这里就填 <code>/api/v2/query</code>。<br>
             留空表示调根路径 <code>/</code>。</span>
@@ -3203,7 +3207,7 @@ async function openUsageModal(credId){
   const svcUsable = (currentServiceAuths||[]).filter(a => a.effective !== false);
   const ssel = $('ug_service');
   ssel.innerHTML = svcUsable.length
-    ? svcUsable.map(a=>`<option value="${escapeHtml(a.serviceId)}" data-prefix="${escapeHtml(a.publicPrefix||('/svc/'+a.serviceId+'/'))}" data-sse="${a.sse?'1':'0'}" data-upstream="${escapeHtml(a.upstreamUrl||'')}" data-strip="${a.stripPrefix===false?'0':'1'}">${escapeHtml(a.serviceName||a.serviceId)}（${escapeHtml(a.serviceId)}）</option>`).join('')
+    ? svcUsable.map(a=>`<option value="${escapeHtml(a.serviceId)}" data-prefix="${escapeHtml(a.publicPrefix||('/svc/'+a.serviceId+'/'))}" data-sse="${a.sse?'1':'0'}" data-upstream="${escapeHtml(a.upstreamUrl||'')}" data-strip="${a.stripPrefix===false?'0':'1'}" data-probepath="${escapeHtml(a.probePath||'')}">${escapeHtml(a.serviceName||a.serviceId)}（${escapeHtml(a.serviceId)}）</option>`).join('')
     : '<option value="">（该系统暂无可用服务授权，请先到「服务授权」页授权）</option>';
 
   const usable = (currentAuths||[]).filter(isAuthUsable);
@@ -3247,6 +3251,81 @@ function onUsageKindChange(){
   $('ug_svcBodyRow').style.display   = svc ? '' : 'none';
   // 切换类型后旧的测试结果不再对应当前配置，留着会让人误读
   $('ug_testWrap').style.display = 'none';
+  if(svc){ onUsageServiceChange(); } else { renderUsage(); }
+}
+
+/**
+ * 选中服务后**自动带出接口路径**，而不是给一个空输入框让人凭空回忆。
+ *
+ * 取值优先级（越靠前越接近"接入方实际在调什么"）：
+ *   1. 该服务最近真实被调用过的路径 —— 答案本来就在报文留档里
+ *   2. 服务登记的探测路径 probe_path —— 录入者唯一登记过的真实路径
+ *   3. 上游地址自带完整接口路径时：留空（此时只能调服务根，填了反而错）
+ *
+ * 只有在三者都取不到时才是空框，并且会说明"没有历史调用记录"，
+ * 不让人对着一个没有任何提示的输入框猜。
+ */
+async function onUsageServiceChange(){
+  const opt = $('ug_service').selectedOptions[0];
+  const serviceId = $('ug_service').value;
+  $('ug_svcPathList').innerHTML = '';
+  if(!serviceId || !opt){ $('ug_svcPathOrigin').textContent = ''; renderUsage(); return; }
+
+  const upstream = opt.dataset.upstream || '';
+  const probePath = opt.dataset.probepath || '';
+
+  // 上游地址自带接口路径时只能调服务根，此时留空才是对的（预览里也有橙色警告）
+  if(svcBaseHasPath(upstream)){
+    $('ug_svcPath').value = '';
+    $('ug_svcPathOrigin').innerHTML =
+      '<span style="color:#b45309">该服务的上游地址已含接口路径，此处应留空。</span>';
+    renderUsage();
+    return;
+  }
+
+  // 先用探测路径垫上，历史记录回来了再覆盖——网络慢时不至于一直空着
+  $('ug_svcPath').value = probePath && probePath !== '/' ? probePath : '';
+  $('ug_svcPathOrigin').textContent = probePath && probePath !== '/'
+    ? '已按服务登记的探测路径带出，可改' : '正在查最近调用记录…';
+  renderUsage();
+
+  try{
+    const r = await fetch(apiUrl('/modelgate/payload/recent-paths?serviceId='
+                                 + encodeURIComponent(serviceId)), {headers:hdrs()});
+    const j = await r.json();
+    if(!isOk(j)) throw new Error(errMsg(j));
+    const paths = j.data || [];
+    // 服务可能已被切走（连点两个服务），回来的结果不能盖掉当前选择
+    if($('ug_service').value !== serviceId) return;
+
+    $('ug_svcPathList').innerHTML = paths
+        .map(p => `<option value="${escapeHtml(p)}"></option>`).join('');
+    if(paths.length){
+      $('ug_svcPath').value = paths[0];
+      $('ug_svcPathOrigin').innerHTML = `已带出<b>最近一次真实调用</b>的路径`
+        + (paths.length > 1 ? `，另有 ${paths.length - 1} 条历史路径可在输入框下拉选择` : '')
+        + '，可改';
+    }else if(!probePath || probePath === '/'){
+      // 说清楚"为什么没带出来"，否则空框看起来像功能没做
+      $('ug_svcPathOrigin').innerHTML =
+        '<span style="color:#94a3b8">没有可参考的历史：该服务未开启报文留档，或还没有被调用过。'
+        + '请填接入方接口原本的路径。</span>';
+    }
+  }catch(e){
+    console.warn('[ModelGate] 最近调用路径查询失败', e);
+    if($('ug_service').value !== serviceId) return;
+    if(!$('ug_svcPath').value){
+      $('ug_svcPathOrigin').innerHTML =
+        '<span style="color:#94a3b8">历史路径查询失败，请手工填写接口路径。</span>';
+    }
+  }finally{
+    renderUsage();
+  }
+}
+
+/** 手工改过之后就别再声称是"带出来的"。 */
+function onUsageSvcPathInput(){
+  $('ug_svcPathOrigin').textContent = '已手工修改';
   renderUsage();
 }
 

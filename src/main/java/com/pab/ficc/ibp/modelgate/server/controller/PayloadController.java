@@ -43,6 +43,7 @@ import reactor.core.publisher.Mono;
 
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -246,6 +247,40 @@ public class PayloadController {
     private static String firstNonBlank(String a, String b) {
         if (a != null && !a.isBlank()) return a;
         return (b != null && !b.isBlank()) ? b : null;
+    }
+
+    /** 「接入示例」带出接口路径时最多列几条历史；再多下拉就没法一眼扫完了。 */
+    private static final int RECENT_PATH_LIMIT = 10;
+
+    /**
+     * 某服务最近被实际调用过的入站路径。
+     *
+     * <p>存在的理由：「接入示例」原先让使用者<b>凭空填</b>服务的接口路径，
+     * 而这个服务真实在被怎么调，答案就在报文留档里。
+     *
+     * <p>返回的是<b>剥掉 {@code /svc/{编码}} 之后</b>的那一段，即调用方要填进
+     * 「接口路径」输入框的值，前端拿到即可直接用，不必再各剥一次
+     * （剥前缀这条规则已经有三份实现了，不再增加第四份）。
+     *
+     * <p>可能返回空数组：报文留档是逐服务开关，没开就没有历史。这不代表服务没被调过，
+     * 管理页对空结果有单独的文案。
+     */
+    @Operation(summary = "某服务最近被实际调用过的接口路径（供接入示例带出，去重按时间倒序）")
+    @GetMapping(UrlConstant.RECENT_PATHS)
+    public Mono<Result<List<String>>> recentPaths(
+            @Parameter(description = "服务编码") @RequestParam("serviceId") String serviceId) {
+        if (serviceId == null || serviceId.isBlank()) {
+            throw new BusinessException(ErrorCode.INVALID_PARAMETER, "serviceId 不能为空");
+        }
+        return Mono.fromCallable(() -> payloadMapper
+                        .selectRecentRequestPaths(serviceId, RECENT_PATH_LIMIT).stream()
+                        .map(p -> stripSvcPrefix(p, serviceId))
+                        .filter(p -> p != null && !p.isBlank())
+                        .distinct()
+                        .toList())
+                .subscribeOn(AdminScheduler.get())
+                .timeout(AdminScheduler.REQUEST_TIMEOUT)
+                .map(Result::success);
     }
 
     @Operation(summary = "报文记录功能的配置回显（总开关 / 保留天数 / 清理时间 / 采集上限）")

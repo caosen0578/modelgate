@@ -108,4 +108,6 @@ public interface UrlConstant {
     String META         = "/meta";
     /** 报文回放：把留档的那一发请求重新打给上游 */
     String REPLAY       = "/replay";
+    /** 某服务最近被实际调用过的入站路径，供「接入示例」带出接口路径 */
+    String RECENT_PATHS = "/recent-paths";
 }
