@@ -199,11 +199,37 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
 .modal-test{width:960px}
 .modal-test .modal-body{padding:0;overflow:hidden}
 .test-pane{display:flex;height:570px}
-/* 回放弹窗用的变体：.test-pane 是固定 570px，看长 SSE 太挤。
-   放进 .modal-xl（90vh，modal-body 已是 flex 列 + min-height:0）后让它撑满剩余高度，
-   右栏才拿得到**确定高度**——没有确定高度时 flex:1 的正文框会一路撑高、溢出弹窗底部。 */
-.test-pane-flex{height:auto;flex:1;min-height:0}
+/* .modal-body 自带 20px/24px 内边距，而分栏/上下栏各自管自己的 padding，
+   叠加会让内容框离边框忽远忽近。与 .modal-test .modal-body 同一套处理。 */
 .modal-xl .modal-body.test-body{padding:0;overflow:hidden}
+
+/* 回放弹窗是**上下布局**而不是左右分栏：请求体是 JSON、结果是 SSE 原文，
+   两者都吃宽度，挤在 360px 的 .test-left 里读不了。上下排后两块都拿到弹窗全宽。
+   min-height:0 是结果区能滚动的前提——去掉它 .replay-view 会撑高而不是滚。 */
+.replay-pane{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;padding:16px 20px;gap:10px}
+/* 请求区：**flex:none 保住自然高度，靠 max-height 封顶**，两者缺一不可。
+   - 写 flex:none 而不封顶：自然高度 461px（目标+警告+服务方法路径+请求体）会把
+     结果区挤到放不下正文框，直接溢出弹窗底部；
+   - 写 flex:0 1 auto 让它可压缩：结果区一 grow 就把它压到 min-content（实测只剩 37px），
+     请求体几乎看不见。
+   所以取"不压缩 + 上限 52% + 超出自身滚动"。
+
+   scrollbar-gutter:stable 两处都要写：请求区出现滚动条时会吃掉约 15px 内容宽度，
+   上下两块就差了 15px——而"上下同宽"正是这个布局要的。让两侧**恒定**预留同样的
+   槽位，有没有滚动条都对齐。（下方 .replay-res 的 overflow:hidden 是让 gutter
+   生效的前提，本身也兜住手动拖高正文框时不撑破弹窗。） */
+.replay-req{display:flex;flex-direction:column;gap:10px;flex:none;max-height:48%;
+  overflow:auto;scrollbar-gutter:stable}
+.replay-res{display:flex;flex-direction:column;gap:8px;flex:1 1 auto;min-height:0;
+  overflow:hidden;scrollbar-gutter:stable}
+/* 请求体固定高度 + 可拖拽：它不该跟结果区抢剩余空间（结果通常长得多）。 */
+.replay-body{height:120px;min-height:64px;resize:vertical;font-size:12px;
+  font-family:ui-monospace,Menlo,Consolas,monospace}
+.replay-target{font-size:13px;color:#475569;padding:8px 10px;background:#f8fafc;
+  border:1px solid #e2e8f0;border-radius:6px;
+  font-family:ui-monospace,Menlo,Consolas,monospace;word-break:break-all}
+.replay-conclusion{font-size:12px;line-height:1.6;padding:8px 10px;background:#f8fafc;
+  border:1px solid #e2e8f0;border-radius:6px;flex:none;max-height:88px;overflow:auto}
 .test-left{width:360px;flex-shrink:0;border-right:1px solid #f1f5f9;padding:16px 20px;overflow-y:auto;display:flex;flex-direction:column;gap:14px}
 .test-right{flex:1;padding:16px 20px;display:flex;flex-direction:column;gap:8px;overflow:hidden;min-width:0}
 .tsec-hd{font-size:10px;font-weight:700;color:#6366f1;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;display:flex;align-items:center;gap:6px}
@@ -230,7 +256,9 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
 /* 回放面板专用：正文才是这里要看的东西，所以它吃掉剩余高度而不是被压成 100px。
    resize:vertical 让人能自己拖——拖过之后浏览器写死 height，会盖掉 flex-basis，
    这正是想要的行为（一旦手动调过就以手调的为准）。 */
-.rawbox-lg{flex:1;min-height:200px;max-height:none;display:block;resize:vertical;overflow:auto}
+/* min-height 取 100px 而不是 200：它是**下限**，屏幕矮时 200 会顶破容器而不是让框变小。
+   正常高度由 flex:1 分配剩余空间决定，实测 900 高屏能拿到 ~200px 以上。 */
+.rawbox-lg{flex:1;min-height:100px;max-height:none;display:block;resize:vertical;overflow:auto}
 .rawbox-lg.nowrap{white-space:pre;word-break:normal}
 .stok{font-size:13px;font-weight:700;color:#10b981}
 .sterr{font-size:13px;font-weight:700;color:#ef4444}
@@ -1025,8 +1053,9 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
 </div>
 
 <!-- ========== MODAL: 报文回放 ==========
-     把留档的那一发请求重新打给上游用于复现。左侧改请求、右侧看结果，
-     与「服务测试工具」同一套双栏布局与信息层级。 -->
+     把留档的那一发请求重新打给上游用于复现。
+     **上下布局而不是左右分栏**：请求体是 JSON、结果是 SSE 原文，两者都吃宽度，
+     挤在 360px 的左栏里读不了。上下排后两块都拿到弹窗全宽。 -->
 <div class="modal-backdrop" id="payloadReplayModal">
   <div class="modal modal-xl">
     <div class="modal-header">
@@ -1034,20 +1063,18 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
       <button class="modal-close" onclick="closeModal('payloadReplayModal')">×</button>
     </div>
     <div class="modal-body test-body">
-      <div class="test-pane test-pane-flex">
-        <!-- ── 左侧：要发出去的请求 ── -->
-        <div class="test-left">
-          <div class="form-group">
+      <div class="replay-pane">
+        <!-- ── 上：要发出去的请求（全宽） ── -->
+        <div class="replay-req">
+          <div class="form-group" style="margin:0">
             <label>回放目标</label>
-            <div id="rp_target" style="font-size:13px;color:#475569;padding:8px 10px;
-                 background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;
-                 font-family:ui-monospace,Menlo,Consolas,monospace;word-break:break-all">-</div>
+            <div id="rp_target" class="replay-target">-</div>
           </div>
 
           <!-- 副作用警告必须常驻、不可折叠：回放是本页唯一会真实写上游的动作 -->
           <div class="warn-box" style="font-size:12px;line-height:1.7">
             ⚠️ <b>回放会真实调用上游。</b>模型请求会消耗 token；服务的写接口会<b>再写一次</b>
-            （可能重复下单/建单）。网关无法替业务判断哪个接口是幂等的。<br>
+            （可能重复下单/建单）。网关无法替业务判断哪个接口是幂等的。
             回放<b>直连上游</b>，跳过凭证鉴权 / 访问控制 / 授权 / 配额——
             所以它复现不了 403、429 这类被网关拦下的问题；那类请用
             「接入系统 → 凭证管理 → 接入示例 → 测试连通」。
@@ -1055,7 +1082,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
 
           <!-- 服务流量才需要方法与路径：模型侧上游路径由 mg_model 自己算得出 -->
           <div id="rp_svcRow" style="display:none">
-            <div class="form-group" style="display:flex;gap:8px;align-items:flex-end">
+            <div class="form-group" style="display:flex;gap:8px;align-items:flex-end;margin:0">
               <div style="flex:none">
                 <label>HTTP 方法</label>
                 <select id="rp_method" style="width:110px" onchange="updateReplayTarget()">
@@ -1074,24 +1101,24 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
             <span class="hint" id="rp_pathHint"></span>
           </div>
 
-          <div class="form-group" style="flex:1;display:flex;flex-direction:column;min-height:0">
-            <label>请求体（可改）
-              <span class="hint" style="font-weight:400">改小 max_tokens、删掉某个字段再发，是排查时最常用的两步</span>
-            </label>
-            <textarea id="rp_body" style="flex:1;min-height:160px;font-size:12px;
-                      font-family:ui-monospace,Menlo,Consolas,monospace"></textarea>
-            <div style="margin-top:6px;display:flex;gap:8px;align-items:center">
+          <div class="form-group" style="margin:0">
+            <div class="flex gap-8" style="align-items:center;margin-bottom:4px">
+              <label style="margin:0">请求体（可改）</label>
+              <span class="hint">改小 max_tokens、删掉某个字段再发，是排查时最常用的两步</span>
+              <span style="flex:1"></span>
               <button class="btn btn-neutral btn-sm" onclick="resetReplayBody()">还原为原始请求体</button>
               <span class="hint" id="rp_bodyDirty"></span>
             </div>
+            <!-- 固定高度 + 可拖拽：不跟结果区抢剩余空间（结果通常长得多） -->
+            <textarea id="rp_body" class="replay-body"></textarea>
           </div>
         </div>
 
-        <!-- ── 右侧：回放结果 ──
+        <!-- ── 下：回放结果（同样全宽） ──
              不用「结论大框 + 折叠原始返回」那套：回放要看的是上游到底返回了什么，
              一行结论却占了 flex:1、原始返回被 max-height:100px 压着，正好反了。
              改成「结论一行 + 标签页 + 大正文框」，与报文详情弹窗同一套信息层级。 -->
-        <div class="test-right">
+        <div class="replay-res">
           <div class="rmeta" id="rp_metaBar" style="display:none">
             <span id="rp_verdict">-</span>
             <span style="font-size:12px;font-family:monospace;color:#64748b" id="rp_meta">-</span>
@@ -1101,11 +1128,9 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
           </div>
 
           <!-- 结论：一行就够，不该占满整个面板 -->
-          <div id="rp_conclusion" style="font-size:12px;line-height:1.6;padding:8px 10px;
-               background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;flex:none;
-               max-height:88px;overflow:auto"></div>
+          <div id="rp_conclusion" class="replay-conclusion"></div>
 
-          <div class="flex gap-8" style="flex:none;align-items:center;margin-top:2px">
+          <div class="flex gap-8" style="flex:none;align-items:center">
             <button class="btn btn-neutral btn-sm" id="rp_tab_text" onclick="setReplayTab('text')">响应正文</button>
             <button class="btn btn-neutral btn-sm" id="rp_tab_raw"  onclick="setReplayTab('raw')">原始返回</button>
             <span class="hint" id="rp_tabHint" style="margin-left:2px"></span>
