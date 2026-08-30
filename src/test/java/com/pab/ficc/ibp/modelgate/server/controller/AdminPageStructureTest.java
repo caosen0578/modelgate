@@ -108,6 +108,7 @@ public class AdminPageStructureTest {
         commonFunctionsLiveInCommonLayer(html);
         noDuplicateTopLevelFunctions(html);
         responseParsersHandleSse(html);
+        everyCssClassHasARule(html);
         tocListsEverySection(html);
 
         report();
@@ -185,6 +186,52 @@ public class AdminPageStructureTest {
             check(fn + " 有 SSE 分帧分支", body.contains("data:"));
             check(fn + " 跳过 [DONE] 标记", body.contains("[DONE]"));
         }
+    }
+
+    /**
+     * 静态标记里出现的每个 class，都必须在 {@code <style>} 里有对应规则。
+     *
+     * <p><b>这是本页反复出问题的第一名。</b>34.4 记过一次：
+     * {@code form-row}/{@code form-hint}/{@code btn-xs}/{@code badge} 是项目里不存在的类，
+     * 写上去<b>不报错、样式全不生效</b>；后来回放弹窗又用了不存在的 {@code test-split}，
+     * 于是两栏没形成 flex 布局、右栏拿不到确定高度，正文框一路撑高溢出弹窗底部。
+     *
+     * <p>两次都不是打错字，而是"以为项目里有这个类"。人靠肉眼比对发现不了——
+     * 类名存在于 DOM 上和类名有样式是两回事，
+     * {@code querySelector('.x') != null} 只能证明前者（第一次排查就栽在这上面）。
+     *
+     * <p>只扫静态 HTML 里的 {@code class="..."}：JS 里拼出来的类名多为动态状态类，
+     * 静态扫描覆盖不到，那部分仍靠浏览器实测。
+     */
+    private static void everyCssClassHasARule(String html) {
+        int st = html.indexOf("<style>");
+        int se = html.indexOf("</style>", st < 0 ? 0 : st);
+        if (st < 0 || se < 0) {
+            check("找得到 <style> 块", false);
+            return;
+        }
+        String css = html.substring(st, se);
+        String markup = html.substring(se);
+
+        Set<String> used = new java.util.TreeSet<>();
+        Matcher m = Pattern.compile("class=\"([^\"]*)\"").matcher(markup);
+        while (m.find()) {
+            for (String c : m.group(1).trim().split("\\s+")) {
+                if (!c.isEmpty() && !c.startsWith("${")) {
+                    used.add(c);
+                }
+            }
+        }
+
+        List<String> missing = new ArrayList<>();
+        for (String c : used) {
+            // 规则里出现 ".c" 且后面不接标识符字符，才算这个类被定义过
+            if (!Pattern.compile("\\." + Pattern.quote(c) + "(?![A-Za-z0-9_-])").matcher(css).find()) {
+                missing.add(c);
+            }
+        }
+        check("静态标记里没有未定义样式的 class" + (missing.isEmpty() ? "" : "，缺规则的是 " + missing),
+                missing.isEmpty());
     }
 
     /** 文件头目录必须列全所有分区名，否则目录会慢慢变成一份过时的说明。 */

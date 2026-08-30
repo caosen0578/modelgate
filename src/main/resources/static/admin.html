@@ -199,6 +199,11 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
 .modal-test{width:960px}
 .modal-test .modal-body{padding:0;overflow:hidden}
 .test-pane{display:flex;height:570px}
+/* 回放弹窗用的变体：.test-pane 是固定 570px，看长 SSE 太挤。
+   放进 .modal-xl（90vh，modal-body 已是 flex 列 + min-height:0）后让它撑满剩余高度，
+   右栏才拿得到**确定高度**——没有确定高度时 flex:1 的正文框会一路撑高、溢出弹窗底部。 */
+.test-pane-flex{height:auto;flex:1;min-height:0}
+.modal-xl .modal-body.test-body{padding:0;overflow:hidden}
 .test-left{width:360px;flex-shrink:0;border-right:1px solid #f1f5f9;padding:16px 20px;overflow-y:auto;display:flex;flex-direction:column;gap:14px}
 .test-right{flex:1;padding:16px 20px;display:flex;flex-direction:column;gap:8px;overflow:hidden;min-width:0}
 .tsec-hd{font-size:10px;font-weight:700;color:#6366f1;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;display:flex;align-items:center;gap:6px}
@@ -1028,8 +1033,8 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
       <h3>▶ 报文回放 · <span id="rp_trace" style="font-family:monospace;font-size:13px"></span></h3>
       <button class="modal-close" onclick="closeModal('payloadReplayModal')">×</button>
     </div>
-    <div class="modal-body">
-      <div class="test-split">
+    <div class="modal-body test-body">
+      <div class="test-pane test-pane-flex">
         <!-- ── 左侧：要发出去的请求 ── -->
         <div class="test-left">
           <div class="form-group">
