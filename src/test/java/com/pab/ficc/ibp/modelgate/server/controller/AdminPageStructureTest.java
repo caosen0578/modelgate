@@ -108,6 +108,7 @@ public class AdminPageStructureTest {
         commonFunctionsLiveInCommonLayer(html);
         noDuplicateTopLevelFunctions(html);
         responseParsersHandleSse(html);
+        structuredResponseViewIsShared(html);
         everyCssClassHasARule(html);
         tocListsEverySection(html);
 
@@ -185,6 +186,40 @@ public class AdminPageStructureTest {
             String body = html.substring(i, end < 0 ? Math.min(i + 1600, html.length()) : end);
             check(fn + " 有 SSE 分帧分支", body.contains("data:"));
             check(fn + " 跳过 [DONE] 标记", body.contains("[DONE]"));
+        }
+    }
+
+    /**
+     * 「响应正文」的结构化展示必须<b>只有一份实现</b>，报文详情与报文回放共用。
+     *
+     * <p>两个入口看的是同一次调用，呈现却分叉的话，人会以为是两次不同的结果。
+     * 这类"同一规则多份副本"是本页反复出问题的形状（尾斜杠 404 就是三份预览各拼各的）。
+     *
+     * <p>钉法：{@code buildPayloadResponseHtml} 只能有一处定义，
+     * 而 {@code renderPayloadResponse}（详情）与 {@code setReplayTab}（回放）都必须调它。
+     */
+    private static void structuredResponseViewIsShared(String html) {
+        int builder = html.indexOf("function buildPayloadResponseHtml(");
+        check("存在唯一的 buildPayloadResponseHtml",
+                builder >= 0
+                        && html.indexOf("function buildPayloadResponseHtml(", builder + 1) < 0);
+
+        for (String caller : new String[]{"renderPayloadResponse", "setReplayTab"}) {
+            int i = html.indexOf("function " + caller + "(");
+            if (i < 0) {
+                check(caller + " 存在", false);
+                continue;
+            }
+            int end = html.indexOf("\n}", i);
+            String body = html.substring(i, end < 0 ? Math.min(i + 2400, html.length()) : end);
+            check(caller + " 调用 buildPayloadResponseHtml", body.contains("buildPayloadResponseHtml("));
+        }
+        // 两侧都要有承载结构化视图的容器，且用的是同一个 CSS 类
+        for (String id : new String[]{"pd_response_structured", "rp_response_structured"}) {
+            check(id + " 使用 payload-response-view 类",
+                    Pattern.compile("id=\"" + id + "\"[^>]*class=\"payload-response-view\"|"
+                                    + "class=\"payload-response-view\"[^>]*id=\"" + id + "\"")
+                            .matcher(html).find());
         }
     }
 

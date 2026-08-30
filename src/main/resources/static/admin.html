@@ -1122,9 +1122,6 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
           <div class="rmeta" id="rp_metaBar" style="display:none">
             <span id="rp_verdict">-</span>
             <span style="font-size:12px;font-family:monospace;color:#64748b" id="rp_meta">-</span>
-            <span style="flex:1"></span>
-            <button class="btn btn-neutral btn-sm"
-                    onclick="copyText($('rp_view').textContent.trim())">复制当前内容</button>
           </div>
 
           <!-- 结论：一行就够，不该占满整个面板 -->
@@ -1141,9 +1138,14 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
             <span style="font-size:12px;color:#64748b">字号</span>
             <button class="btn btn-neutral btn-sm" onclick="replayFontStep(-1)" title="缩小">A−</button>
             <button class="btn btn-neutral btn-sm" onclick="replayFontStep(1)"  title="放大">A+</button>
+            <!-- 复制按钮跟着标签页走：当前看的是哪份就复制哪份（响应正文 / 原始返回）。
+                 原先挂在 rmeta 上，而 rmeta 发送前不显示，等于"没发过就没法复制" -->
+            <button class="btn btn-neutral btn-sm" onclick="copyReplayCurrentContent()">复制当前内容</button>
           </div>
           <!-- 可拖拽调高：右下角是浏览器原生 resize 手柄 -->
           <pre class="rawbox rawbox-lg" id="rp_view"></pre>
+          <!-- 「响应正文」的结构化展示，与报文详情共用 .payload-response-view 与同一套区块 -->
+          <div id="rp_response_structured" class="payload-response-view"></div>
         </div>
       </div>
     </div>
@@ -4715,7 +4717,8 @@ async function openPayloadDetail(id){
 // 「直连上游」而非走网关：与「模型对话测试」「服务测试工具」同一条后端通道。
 // 复现的是"上游对这个请求体的反应"；403/429 这类被网关拦下的问题它复现不了。
 let _replayCtx = null;
-let _replayResult = null;   // {raw, pretty, text}
+let _replayResult = null;   // {raw, pretty, text, analysis}
+let _replayTab = 'text';
 
 async function openPayloadReplay(id){
   _replayCtx = null;
@@ -4727,8 +4730,12 @@ async function openPayloadReplay(id){
   $('rp_metaBar').style.display = 'none';
   _replayResult = null;
   $('rp_conclusion').innerHTML = '<span class="rph">// 点「▶ 发送到上游」后，结论显示在此处</span>';
+  // 结构化视图归位：不清会残留上一条报文的工具调用，看着像这次的结果
+  $('rp_response_structured').innerHTML = '';
+  $('rp_response_structured').style.display = 'none';
+  $('rp_view').style.display = 'block';
   $('rp_view').innerHTML = '<span class="rph">// 回放直连上游，不走网关鉴权链，也不消耗调用方配额\n'
-    + '// SSE 响应会自动解析成可读正文，可切到「原始返回」看逐帧原文</span>';
+    + '// SSE 响应会解析成「消息内容 / 工具调用 / 协议校验」，与报文详情同一套展示</span>';
   $('rp_tabHint').textContent = '';
   openModal('payloadReplayModal');
 
@@ -4798,6 +4805,9 @@ async function runReplay(){
   $('rp_verdict').innerHTML = '<span class="tag tag-gray">发送中…</span>';
   $('rp_meta').textContent = '-';
   $('rp_conclusion').innerHTML = '<span class="rph">// 正在从服务端直连上游…</span>';
+  // 上一次可能停在结构化视图；不切回来这段提示会看不见
+  $('rp_response_structured').style.display = 'none';
+  $('rp_view').style.display = 'block';
   $('rp_view').innerHTML = '<span class="rph">// 模型回放要等整段结果生成完，'
     + '慢模型可能等较久（上限 120 秒）</span>';
 
@@ -4854,8 +4864,10 @@ async function runReplay(){
  * 与报文详情页「响应正文」看到的是同一套规则的结果。
  */
 function renderReplayResult(upstreamBody){
-  _replayResult = {raw: upstreamBody || '', text: null, pretty: null};
+  _replayResult = {raw: upstreamBody || '', text: null, pretty: null, analysis: null};
   if(!upstreamBody){
+    $('rp_response_structured').style.display = 'none';
+    $('rp_view').style.display = 'block';
     $('rp_view').innerHTML = '<span class="rph">// 上游没有返回响应体</span>';
     $('rp_tabHint').textContent = '';
     return;
@@ -4864,27 +4876,45 @@ function renderReplayResult(upstreamBody){
   try { _replayResult.pretty = JSON.stringify(JSON.parse(upstreamBody), null, 2); }
   catch(e){ _replayResult.pretty = upstreamBody; }
   _replayResult.text = extractModelAnswer(upstreamBody);
+  _replayResult.analysis = analyzePayloadToolCalls(upstreamBody, upstreamBody.indexOf('data:') >= 0);
 
-  setReplayTab(_replayResult.text ? 'text' : 'raw');
+  // 有正文**或有工具调用**都停在「响应正文」：纯工具调用的响应本来就没有文本，
+  // 只按 text 判断会把这类响应甩到原始返回，而它恰恰是最需要看结构化视图的那种
+  const worthStructured = !!_replayResult.text || _replayResult.analysis.calls.length > 0;
+  setReplayTab(worthStructured ? 'text' : 'raw');
 }
 
+/**
+ * 切换回放结果的标签页。
+ *
+ * 「响应正文」走**与报文详情完全相同**的结构化展示（消息内容 / 工具调用 /
+ * OpenAI 工具调用基础校验），复用 analyzePayloadToolCalls + buildPayloadResponseHtml。
+ * 排查一次调用时该看的东西不该因为入口不同而不同——从报文详情看和从回放看，
+ * 呈现必须是一份。
+ */
 function setReplayTab(tab){
   if(!_replayResult) return;
+  _replayTab = tab;
   const isSse = _replayResult.raw.indexOf('data:') >= 0;
   ['text','raw'].forEach(t => {
     $('rp_tab_' + t).className = 'btn btn-sm ' + (t === tab ? 'btn-primary' : 'btn-neutral');
   });
-  if(tab === 'text'){
-    if(_replayResult.text){
-      $('rp_view').textContent = _replayResult.text;
-      $('rp_tabHint').textContent = isSse ? 'SSE 逐帧 delta 拼接后的模型回答' : '从响应里抽出的模型回答';
-    }else{
-      // 说清楚"为什么没有正文"：空白框看起来像功能坏了
-      $('rp_view').innerHTML = '<span class="rph">// 解析不出模型回答\n'
-        + '// 可能是上游返回了错误结构，或这是通用服务接口（非 OpenAI/Anthropic 规范）\n'
-        + '// 请切到「原始返回」看上游到底回了什么</span>';
-      $('rp_tabHint').textContent = '未能解析出正文';
+  const structured = (tab === 'text');
+  $('rp_view').style.display = structured ? 'none' : 'block';
+  $('rp_response_structured').style.display = structured ? 'block' : 'none';
+
+  if(structured){
+    // 解析一次就缓存：反复切标签不重复扫大段 SSE，与 payloadResponseAnalysis 同一考虑
+    if(!_replayResult.analysis){
+      _replayResult.analysis = analyzePayloadToolCalls(_replayResult.raw, isSse);
     }
+    const a = _replayResult.analysis;
+    $('rp_response_structured').innerHTML =
+        buildPayloadResponseHtml(_replayResult.text || '', a);
+    $('rp_tabHint').textContent =
+        (isSse ? 'SSE 逐帧 delta 拼接' : 'assistant 正文')
+        + (a.calls.length ? `，并解析 ${a.calls.length} 个工具调用` : '')
+        + `；OpenAI 工具调用基础校验：${a.protocol.label}`;
   }else{
     $('rp_view').textContent = _replayResult.pretty;
     $('rp_tabHint').textContent = isSse
@@ -4894,15 +4924,23 @@ function setReplayTab(tab){
   applyReplayWrap();
 }
 
+/** 复制当前可见的那一份：结构化正文复制的是消息、校验结果、工具与参数的可读文本。 */
+function copyReplayCurrentContent(){
+  const el = _replayTab === 'text' ? $('rp_response_structured') : $('rp_view');
+  copyText(el.innerText || el.textContent || '');
+}
+
 /** SSE 原文常有超长单行：不换行要横向拖着看，换行又打乱缩进。两种读法都有用，交给用户切。 */
 function applyReplayWrap(){
   $('rp_view').classList.toggle('nowrap', !$('rp_wrap').checked);
 }
 
+/** 两份视图都调：切标签后字号不该跳回去。 */
 function replayFontStep(delta){
-  const el = $('rp_view');
-  const cur = parseInt(getComputedStyle(el).fontSize, 10) || 11;
-  el.style.fontSize = Math.min(22, Math.max(9, cur + delta)) + 'px';
+  [$('rp_view'), $('rp_response_structured')].forEach(el => {
+    const cur = parseInt(getComputedStyle(el).fontSize, 10) || 11;
+    el.style.fontSize = Math.min(22, Math.max(9, cur + delta)) + 'px';
+  });
 }
 
 /**
@@ -5008,7 +5046,22 @@ function payloadProtocolTag(protocol){
  * 所有上游动态值均先转义后进入 innerHTML；参数代码块不会执行其中的 HTML/脚本。
  */
 function renderPayloadResponse(detail, analysis){
-  const answer = detail.responseText == null ? '' : String(detail.responseText);
+  $('pd_response_structured').innerHTML = buildPayloadResponseHtml(
+      detail.responseText == null ? '' : String(detail.responseText), analysis);
+}
+
+/**
+ * 生成「响应正文」的结构化 HTML。
+ *
+ * 与 renderPayloadResponse 拆开的唯一理由：**报文回放要用同一套展示**。
+ * 回放没有后端算好的 responseText（那是落库时解析的），正文由前端
+ * extractModelAnswer 从上游原文里抽；除此之外两边要看的东西完全一样，
+ * 所以把"拿什么数据"和"怎么画"分开，画的部分只此一份。
+ *
+ * @param answer   assistant 正文（可能为空——纯工具调用的响应就是这样）
+ * @param analysis analyzePayloadToolCalls 的结果
+ */
+function buildPayloadResponseHtml(answer, analysis){
   const protocol = analysis.protocol;
   const messages = protocol.messages.length
     ? `<ul class="payload-protocol-list">${protocol.messages.map(m=>`<li>${escHtml(m)}</li>`).join('')}</ul>`
@@ -5038,7 +5091,7 @@ function renderPayloadResponse(detail, analysis){
     </div>`;
   }).join('') : '<div style="font-size:12px;color:#94a3b8">未检测到工具调用。</div>';
 
-  $('pd_response_structured').innerHTML = `
+  return `
     <section class="payload-response-section">
       <div class="payload-response-title">消息内容 <span class="tag tag-blue">assistant</span></div>
       ${answer
