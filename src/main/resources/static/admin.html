@@ -2831,7 +2831,18 @@ async function testModelConn(){
     });
 
     if(!isOk(j)){
-      el.textContent = `❌ 请求失败(HTTP ${r.status}): ${errMsg(j)}`;
+      const msg = errMsg(j);
+      // 改了上游主机又没重填密钥时，后端会拒绝复用已保存的密钥（防止把密钥发到新地址）。
+      // 这不是"测试失败"而是"缺一步操作"，用琥珀色并把光标送到密钥输入框，别让人以为配置坏了。
+      if(msg.indexOf('主机不一致') >= 0){
+        el.textContent = '⚠️ ' + msg;
+        el.style.color = '#f59e0b';
+        const skField = {ak_sk:'m_secretKeySk', azure:'m_azureApiKey'}[$('m_authType').value] || 'm_secretKey';
+        const sk = $(skField);
+        if(sk && sk.offsetParent !== null){ sk.focus(); }
+        return;
+      }
+      el.textContent = `❌ 请求失败(HTTP ${r.status}): ${msg}`;
       el.style.color = '#ef4444';
       return;
     }

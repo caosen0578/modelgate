@@ -250,7 +250,14 @@ public class ModelService {
     }
 
     /** 查不到返回 null 而不是抛异常，供「目标 ID 是否已被占用」这类判断使用 */
-    private ModelInstanceEntity findByModelIdOrNull(String modelId) {
+    /**
+     * 按 modelId 查库，查不到返回 {@code null}（与 {@link #findByModelId} 抛异常相对）。
+     *
+     * <p>公开而不是私有：{@code ModelController.test} 的草稿模式要拿库中原始 upstreamUrl
+     * 做主机一致性校验，且**必须读库不能读缓存**——这是一道安全校验，
+     * 判据要取当前落库的真值。
+     */
+    public ModelInstanceEntity findByModelIdOrNull(String modelId) {
         return modelMapper.selectOne(
                 new LambdaQueryWrapper<ModelInstanceEntity>().eq(ModelInstanceEntity::getModelId, modelId));
     }
