@@ -62,22 +62,23 @@ public class ModelAuthController {
                 .map(Result::success);
     }
 
-    @Operation(summary = "启用单个模型授权")
-    @PatchMapping(UrlConstant.ENABLE)
-    public Mono<Result<Void>> enable(
-            @Parameter(description = "系统 ID") @RequestParam(name = "appId") String appId,
-            @Parameter(description = "模型 ID") @RequestParam(name = "modelId") String modelId) {
-        return Mono.fromRunnable(() -> modelAuthService.enable(appId, modelId))
-                .subscribeOn(Schedulers.boundedElastic())
-                .then(Mono.just(Result.<Void>success(null)));
-    }
-
-    @Operation(summary = "禁用单个模型授权")
-    @PatchMapping(UrlConstant.DISABLE)
-    public Mono<Result<Void>> disable(
+    /**
+     * 启用/禁用单条模型授权。
+     *
+     * <p>与 update 分开是刻意的：列表上的启停是一次点击就该完成的动作，
+     * 走 update 前端必须把 qps/daily/expiresAt 全带上，少带一个就会顺手清掉人家配好的值
+     * （尤其 expiresAt 传 null 的语义是"改为永久"）。服务授权侧同样是独立的 PATCH。
+     */
+    @Operation(summary = "启用/禁用单条模型授权（enabled=false 时禁用）")
+    @PatchMapping(UrlConstant.TOGGLE)
+    public Mono<Result<Void>> toggle(
             @Parameter(description = "系统 ID") @RequestParam("appId") String appId,
-            @Parameter(description = "模型 ID") @RequestParam("modelId") String modelId) {
-        return Mono.fromRunnable(() -> modelAuthService.disable(appId, modelId))
+            @Parameter(description = "模型 ID") @RequestParam("modelId") String modelId,
+            @Parameter(description = "目标状态：true=启用，false=禁用") @RequestParam("enabled") boolean enabled) {
+        return Mono.fromRunnable(() -> {
+                    if (enabled) modelAuthService.enable(appId, modelId);
+                    else modelAuthService.disable(appId, modelId);
+                })
                 .subscribeOn(Schedulers.boundedElastic())
                 .then(Mono.just(Result.<Void>success(null)));
     }

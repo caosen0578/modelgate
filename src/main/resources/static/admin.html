@@ -317,7 +317,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
         </div>
         <div class="toolbar-right">
           <input type="text" id="modelSearch" placeholder="搜索模型 ID / 名称..." style="width:220px" oninput="searchModels()"/>
-          <button class="btn btn-primary" data-api="POST /modelgate/models" onclick="openModelModal()">+ 新增模型</button>
+          <button class="btn btn-primary" data-api="POST /modelgate/models/create" onclick="openModelModal()">+ 新增模型</button>
         </div>
       </div>
       <div class="card" style="padding:0;overflow:hidden">
@@ -359,7 +359,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
         </div>
         <div class="toolbar-right">
           <input type="text" id="serviceSearch" placeholder="搜索服务编码 / 名称..." style="width:220px" oninput="searchServices()"/>
-          <button class="btn btn-primary" data-api="POST /modelgate/services" onclick="openServiceModal()">+ 新增服务</button>
+          <button class="btn btn-primary" data-api="POST /modelgate/services/create" onclick="openServiceModal()">+ 新增服务</button>
         </div>
       </div>
       <div class="card" style="padding:0;overflow:hidden">
@@ -398,7 +398,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
         </div>
         <div class="toolbar-right">
           <input type="text" id="appSearch" placeholder="搜索系统 / 应用 ID / 名称..." style="width:240px" oninput="searchApps()"/>
-          <button class="btn btn-primary" data-api="POST /modelgate/apps" onclick="openAppModal()">+ 新增系统</button>
+          <button class="btn btn-primary" data-api="POST /modelgate/apps/create" onclick="openAppModal()">+ 新增系统</button>
         </div>
       </div>
       <div class="card" style="padding:0;overflow:hidden">
@@ -487,7 +487,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
             </select>
             <input type="text" id="auditTrace" placeholder="TraceID" style="width:160px"/>
           </div>
-          <button class="btn btn-primary" data-api="GET /modelgate/audit" onclick="loadAudit()">查询</button>
+          <button class="btn btn-primary" data-api="GET /modelgate/audit/query" onclick="loadAudit()">查询</button>
         </div>
       </div>
       <div class="card" style="padding:0;overflow:hidden">
@@ -588,7 +588,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
           </div>
           <div class="toolbar-right">
             <button class="btn btn-neutral" onclick="resetPayloadFilters()">重置</button>
-            <button class="btn btn-primary" data-api="GET /modelgate/payload" onclick="loadPayload()">查询</button>
+            <button class="btn btn-primary" data-api="GET /modelgate/payload/query" onclick="loadPayload()">查询</button>
           </div>
         </div>
         <!-- 关键字为何有约束：大文本列上的 LIKE '%x%' 走不了索引，单独使用就是全表扫描。
@@ -2102,7 +2102,7 @@ function debounce(fn, ms=300){
  */
 async function fetchSelectableModels(){
   try{
-    const r = await fetch(apiUrl('/modelgate/models?pageIndex=1&pageSize=200'), {headers:hdrs()});
+    const r = await fetch(apiUrl('/modelgate/models/page?pageIndex=1&pageSize=200'), {headers:hdrs()});
     const j = await r.json();
     if(!isOk(j)) return [];
     return (j.data?.items || []).filter(m => m.enabled !== false);
@@ -2321,7 +2321,7 @@ function navTo(page, skipLoad = false){
 async function loadModels(){
   try{
     const qs = pageQuery('models', {keyword: $('modelSearch')?.value});
-    const r = await fetch(apiUrl(`/modelgate/models?${qs}`), {headers:hdrs()});
+    const r = await fetch(apiUrl(`/modelgate/models/page?${qs}`), {headers:hdrs()});
     if(r.status===401 || r.status===403){ toast(`无权访问模型列表(HTTP ${r.status})，请检查内网鉴权配置`,'error'); return; }
     const j = await r.json();
     if(!isOk(j)){ toast('加载模型列表失败: '+errMsg(j),'error'); return; }
@@ -2394,7 +2394,7 @@ function providerTag(p){
   return `<span class="tag ${map[p]||'tag-gray'}">${escapeHtml(label[p]||p)}</span>`;
 }
 
-// 反查某模型被哪些接入系统授权。列表页只显示数量（随 /modelgate/models 一次性带回，
+// 反查某模型被哪些接入系统授权。列表页只显示数量（随 /modelgate/models/page 一次性带回，
 // 不逐行查询），点数字才拉明细。
 async function viewModelAuthApps(modelId, modelName){
   $('authAppsModelName').textContent = modelName || modelId;
@@ -2666,7 +2666,7 @@ async function submitModel(){
 
   try{
     const method = editingModelId ? 'PUT' : 'POST';
-    const url    = apiUrl(editingModelId ? '/modelgate/models/update' : '/modelgate/models');
+    const url    = apiUrl(editingModelId ? '/modelgate/models/update' : '/modelgate/models/create');
     // 上游 SK 可能是本次新输入的明文，禁止进入浏览器控制台。
     console.info('[ModelGate] 提交模型', method, url, modelConfigForLog(body));
     const r = await fetch(url, {method, headers:hdrs(), body:JSON.stringify(body)});
@@ -2698,9 +2698,10 @@ function modelConfigForLog(config){
 }
 
 async function toggleModel(modelId, currentEnabled){
-  const action = currentEnabled ? 'disable' : 'enable';
+  // 目标状态取反：currentEnabled 是点击前的状态
+  const enabled = !currentEnabled;
   try{
-    const r = await fetch(apiUrl(`/modelgate/models/${action}?modelId=${encodeURIComponent(modelId)}`),
+    const r = await fetch(apiUrl(`/modelgate/models/toggle?modelId=${encodeURIComponent(modelId)}&enabled=${enabled}`),
                           {method:'PATCH', headers:hdrs()});
     const j = await r.json();
     if(!isOk(j)){
@@ -2932,7 +2933,7 @@ function onUpstreamPathContextChange(){
 async function loadApps(){
   try{
     const qs = pageQuery('apps', {keyword: $('appSearch')?.value});
-    const r = await fetch(apiUrl(`/modelgate/apps?${qs}`), {headers:hdrs()});
+    const r = await fetch(apiUrl(`/modelgate/apps/page?${qs}`), {headers:hdrs()});
     const j = await r.json();
     if(!isOk(j)){ toast('加载接入系统失败: '+errMsg(j),'error'); return; }
     allApps = applyPage('apps', j.data || {});   // 同 allModels：只是当前页
@@ -2972,7 +2973,7 @@ function renderApps(data){
       <td>
         <div class="flex gap-8">
           <button class="btn btn-neutral btn-sm" title="GET /modelgate/apps/detail?appId=${a.appId}" onclick="openDrawer('${a.appId}','info')">详情</button>
-          <button class="btn ${a.enabled!==false?'btn-warning':'btn-success'} btn-sm" title="${a.enabled!==false?'PATCH /modelgate/apps/disable':'PATCH /modelgate/apps/enable'}?appId=${a.appId}" onclick="toggleApp('${a.appId}',${a.enabled!==false})">${a.enabled!==false?'禁用':'启用'}</button>
+          <button class="btn ${a.enabled!==false?'btn-warning':'btn-success'} btn-sm" title="${a.enabled!==false?'PATCH /modelgate/apps/toggle?enabled=false':'PATCH /modelgate/apps/toggle?enabled=true'}&appId=${a.appId}" onclick="toggleApp('${a.appId}',${a.enabled!==false})">${a.enabled!==false?'禁用':'启用'}</button>
           <button class="btn btn-danger btn-sm" title="DELETE /modelgate/apps/delete?appId=${a.appId}" onclick="deleteAppById('${a.appId}')">删除</button>
         </div>
       </td>
@@ -2999,7 +3000,7 @@ async function submitApp(){
   };
   if(!body.systemName||!body.appName||!body.sysCode||!body.appId||!body.appCode||!body.owner){ toast('系统名称、系统编码、应用名称、应用 appId、应用编码、负责人均不能为空','error'); return; }
   try{
-    const r = await fetch(apiUrl('/modelgate/apps'), {method:'POST', headers:hdrs(), body:JSON.stringify(body)});
+    const r = await fetch(apiUrl('/modelgate/apps/create'), {method:'POST', headers:hdrs(), body:JSON.stringify(body)});
     const j = await r.json();
     if(isOk(j)){ toast('系统已创建'); closeModal('appModal'); loadApps(); }
     else toast('失败: '+errMsg(j),'error');
@@ -3013,8 +3014,8 @@ async function submitApp(){
 }
 
 async function toggleApp(appId, currentEnabled){
-  const action = currentEnabled?'disable':'enable';
-  try{ await fetch(apiUrl(`/modelgate/apps/${action}?appId=${appId}`), {method:'PATCH', headers:hdrs()}); }catch(e){}
+  const enabled = !currentEnabled;
+  try{ await fetch(apiUrl(`/modelgate/apps/toggle?appId=${appId}&enabled=${enabled}`), {method:'PATCH', headers:hdrs()}); }catch(e){}
   await loadApps();   // 理由同 toggleModel：分页后需重算当前页与 total
   toast(`系统已${currentEnabled?'禁用':'启用'}`);
   if(currentApp&&currentApp.appId===appId){
@@ -3153,7 +3154,7 @@ function renderCreds(data){
           <button class="btn btn-neutral btn-sm" ${c.secretRetrievable===false?'disabled':''}
                   title="${c.secretRetrievable===false?'该凭证创建于「密钥可查看」启用之前，仅存哈希无法找回，需重新生成':'GET /modelgate/credentials/secret?appId='+currentApp?.appId+'&credId='+c.id}"
                   onclick="revealCredSecret(${c.id},'${c.credName}')">🔑 查看密钥</button>
-          <button class="btn ${c.enabled!==false?'btn-warning':'btn-success'} btn-sm" title="${c.enabled!==false?'PATCH /modelgate/credentials/disable':'PATCH /modelgate/credentials/enable'}?appId=${currentApp?.appId}&id=${c.id}" onclick="toggleCred(${c.id},${c.enabled!==false})">${c.enabled!==false?'禁用':'启用'}</button>
+          <button class="btn ${c.enabled!==false?'btn-warning':'btn-success'} btn-sm" title="${c.enabled!==false?'PATCH /modelgate/credentials/toggle?enabled=false':'PATCH /modelgate/credentials/toggle?enabled=true'}&appId=${currentApp?.appId}&id=${c.id}" onclick="toggleCred(${c.id},${c.enabled!==false})">${c.enabled!==false?'禁用':'启用'}</button>
           <button class="btn btn-danger btn-sm" title="DELETE /modelgate/credentials/delete?appId=${currentApp?.appId}&id=${c.id}" onclick="deleteCred(${c.id})">删除</button>
         </div>
       </td>
@@ -3877,8 +3878,8 @@ function showCredResult(data){
 }
 
 async function toggleCred(id, currentEnabled){
-  const action = currentEnabled?'disable':'enable';
-  try{ await fetch(apiUrl(`/modelgate/credentials/${action}?appId=${currentApp.appId}&id=${id}`), {method:'PATCH', headers:hdrs()}); }catch(e){}
+  const enabled = !currentEnabled;
+  try{ await fetch(apiUrl(`/modelgate/credentials/toggle?appId=${currentApp.appId}&id=${id}&enabled=${enabled}`), {method:'PATCH', headers:hdrs()}); }catch(e){}
   toast(`凭证已${currentEnabled?'禁用':'启用'}`);
   loadCreds();
 }
@@ -4050,8 +4051,8 @@ async function submitAuth(){
 }
 
 async function toggleAuth(modelId, currentEnabled){
-  const action = currentEnabled?'disable':'enable';
-  try{ await fetch(apiUrl(`/modelgate/auth/${action}?appId=${encodeURIComponent(currentApp.appId)}&modelId=${encodeURIComponent(modelId)}`), {method:'PATCH', headers:hdrs()}); }catch(e){}
+  const enabled = !currentEnabled;
+  try{ await fetch(apiUrl(`/modelgate/auth/toggle?appId=${encodeURIComponent(currentApp.appId)}&modelId=${encodeURIComponent(modelId)}&enabled=${enabled}`), {method:'PATCH', headers:hdrs()}); }catch(e){}
   toast(`授权已${currentEnabled?'禁用':'启用'}`);
   loadAuths();
 }
@@ -4079,7 +4080,7 @@ let editingSvcAuthServiceId = null;
  */
 async function fetchSelectableServices(){
   try{
-    const r = await fetch(apiUrl('/modelgate/services?pageIndex=1&pageSize=200'), {headers:hdrs()});
+    const r = await fetch(apiUrl('/modelgate/services/list?pageIndex=1&pageSize=200'), {headers:hdrs()});
     const j = await r.json();
     if(!isOk(j)) return [];
     return (j.data?.items || []).filter(x => x.enabled !== false);
@@ -4218,9 +4219,9 @@ async function submitServiceAuth(){
 }
 
 async function toggleServiceAuth(serviceId, currentEnabled){
-  const action = currentEnabled?'disable':'enable';
+  const enabled = !currentEnabled;
   try{
-    const r = await fetch(apiUrl(`/modelgate/service-auth/${action}?appId=${encodeURIComponent(currentApp.appId)}&serviceId=${encodeURIComponent(serviceId)}`),
+    const r = await fetch(apiUrl(`/modelgate/service-auth/toggle?appId=${encodeURIComponent(currentApp.appId)}&serviceId=${encodeURIComponent(serviceId)}&enabled=${enabled}`),
                           {method:'PATCH', headers:hdrs()});
     const j = await r.json();
     if(!isOk(j)){ toast('操作失败: '+errMsg(j),'error'); return; }
@@ -4364,7 +4365,7 @@ async function loadAudit(resetPage = true){
       status:  $('auditStatus').value,
       traceId: $('auditTrace').value,
     });
-    const r = await fetch(apiUrl(`/modelgate/audit?${qs}`), {headers:hdrs()});
+    const r = await fetch(apiUrl(`/modelgate/audit/query?${qs}`), {headers:hdrs()});
     const j = await r.json();
     if(!isOk(j)){ toast('查询审计日志失败: '+errMsg(j),'error'); return; }
     renderAudit(applyPage('audit', j.data || {}));
@@ -4392,7 +4393,7 @@ async function fillAuditFilters(){
   try{
     const [models, appsResp] = await Promise.all([
       fetchSelectableModels(),
-      fetch(apiUrl('/modelgate/apps?pageIndex=1&pageSize=200'), {headers:hdrs()}).then(r=>r.json()),
+      fetch(apiUrl('/modelgate/apps/page?pageIndex=1&pageSize=200'), {headers:hdrs()}).then(r=>r.json()),
     ]);
     const apps = isOk(appsResp) ? (appsResp.data?.items || []) : [];
     $('auditModel').innerHTML = '<option value="">全部模型</option>'
@@ -4608,7 +4609,7 @@ async function loadPayload(resetPage = true){
       requestKeyword: searchHeaders ? '' : $('pl_keyword').value,
       headerKeyword:  searchHeaders ? $('pl_keyword').value : '',
     });
-    const r = await fetch(apiUrl(`/modelgate/payload?${qs}`), {headers:hdrs()});
+    const r = await fetch(apiUrl(`/modelgate/payload/query?${qs}`), {headers:hdrs()});
     const j = await r.json();
     if(!isOk(j)){
       // 关键字缺少收窄条件时后端会拒绝，错误文案本身就是操作指引，原样弹出来
@@ -4648,7 +4649,7 @@ async function fillPayloadFilters(){
   try{
     const [models, appsResp] = await Promise.all([
       fetchSelectableModels(),
-      fetch(apiUrl('/modelgate/apps?pageIndex=1&pageSize=200'), {headers:hdrs()}).then(r=>r.json()),
+      fetch(apiUrl('/modelgate/apps/page?pageIndex=1&pageSize=200'), {headers:hdrs()}).then(r=>r.json()),
     ]);
     const apps = isOk(appsResp) ? (appsResp.data?.items || []) : [];
     $('pl_model').innerHTML = '<option value="">全部模型</option>'
@@ -5439,7 +5440,7 @@ function prettyJson(s){
 // ============================================================
 async function loadConfig(){
   try{
-    const r = await fetch(apiUrl('/modelgate/config'), {headers:hdrs()});
+    const r = await fetch(apiUrl('/modelgate/config/find-all'), {headers:hdrs()});
     const j = await r.json();
     renderConfig(j.data||[]);
     // 填充快捷项
@@ -5524,7 +5525,7 @@ const searchServices = debounce(() => { pageState.services.pageIndex = 1; loadSe
 async function loadServices(){
   try{
     const qs = pageQuery('services', {keyword: $('serviceSearch')?.value});
-    const r = await fetch(apiUrl(`/modelgate/services?${qs}`), {headers:hdrs()});
+    const r = await fetch(apiUrl(`/modelgate/services/list?${qs}`), {headers:hdrs()});
     if(r.status===401 || r.status===403){ toast(`无权访问服务列表(HTTP ${r.status})，请检查内网鉴权配置`,'error'); return; }
     const j = await r.json();
     if(!isOk(j)){ toast('加载服务列表失败: '+errMsg(j),'error'); return; }
@@ -5686,7 +5687,7 @@ async function saveService(){
   if(!body.upstreamUrl){ toast('请填写上游地址','error'); return; }
 
   // 与模型侧同一套 REST 约定：新增 POST 到集合根，修改 PUT /update
-  const url = apiUrl(editingServiceId ? '/modelgate/services/update' : '/modelgate/services');
+  const url = apiUrl(editingServiceId ? '/modelgate/services/update' : '/modelgate/services/create');
   try{
     const r = await fetch(url, {method: editingServiceId ? 'PUT' : 'POST',
                                 headers:hdrs(), body:JSON.stringify(body)});
@@ -5699,9 +5700,9 @@ async function saveService(){
 }
 
 async function toggleService(serviceId, toEnable){
-  const action = toEnable ? 'enable' : 'disable';
+  // 注意：这个函数的入参与其余五个 toggle 相反，传的是**目标状态**而非当前状态
   try{
-    const r = await fetch(apiUrl(`/modelgate/services/${action}?serviceId=${encodeURIComponent(serviceId)}`),
+    const r = await fetch(apiUrl(`/modelgate/services/toggle?serviceId=${encodeURIComponent(serviceId)}&enabled=${toEnable}`),
                           {method:'PATCH', headers:hdrs()});
     const j = await r.json();
     if(!isOk(j)){ toast('操作失败: '+errMsg(j),'error'); return; }

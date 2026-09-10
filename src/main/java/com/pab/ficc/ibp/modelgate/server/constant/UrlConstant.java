@@ -84,16 +84,39 @@ public interface UrlConstant {
     String MG_PAYLOAD     = BASE + "/payload";
 
     // ===== 通用子路径（method-level）=====
-    /** 基础路径本身（等价于省略 value 的 @GetMapping/@PostMapping），用于显式声明"打在类级路径上" */
-    String ROOT         = "";
+    //
+    // 【硬性规则】每个接口都必须显式声明子路径，且<b>子路径与方法名一致</b>
+    //（方法叫 page，路径就是 /page）。
+    //
+    // 禁止两种写法：
+    //   ① 裸注解 @GetMapping —— 路径隐含为类级路径，从方法上完全看不出 URL
+    //   ② 空常量 @GetMapping(ROOT) —— 同上，只是把"省略"包装了一层，同样看不出 URL
+    // 原先有一个 ROOT = "" 专门干这事，2026-09-10 已删除：它让
+    // 「GET /modelgate/models」和「POST /modelgate/models」在方法签名上毫无区别，
+    // 全局搜 URL 搜不到、看方法猜不出，维护成本远高于多写一个词。
     String LIST         = "/list";
+    /** 分页查询（与 LIST 的区别：返回 PageVo，带 pageIndex/pageSize） */
+    String PAGE         = "/page";
+    /** 条件查询（语义上比 LIST 更强调"按条件筛"，如审计日志、报文记录） */
+    String QUERY        = "/query";
+    /** 全量查询（不分页、不筛选，如网关配置项） */
+    String FIND_ALL     = "/find-all";
     String DETAIL       = "/detail";
     String ADD          = "/add";
     String CREATE       = "/create";
     String UPDATE       = "/update";
     String DELETE       = "/delete";
-    String ENABLE       = "/enable";
-    String DISABLE      = "/disable";
+    /**
+     * 启用/禁用二合一。
+     *
+     * <p>2026-09-10 由 {@code /enable} + {@code /disable} 两个接口合并而来：
+     * 这是<b>同一个状态字段的两个取值</b>，拆成两个 URL 只是把参数编进了路径，
+     * 调用方（管理面与 static-framework）本来就得写
+     * {@code `/modelgate/models/${enabled ? 'disable' : 'enable'}`} 这种拼串，
+     * 拼错了还只能等 404。合并后统一为 {@code ?enabled=true|false}，
+     * 前端传布尔值即可，后端也少一半的方法。
+     */
+    String TOGGLE       = "/toggle";
     String REVOKE       = "/revoke";
     /** 查看凭证明文（单条按需解密，禁止用于列表） */
     String SECRET       = "/secret";

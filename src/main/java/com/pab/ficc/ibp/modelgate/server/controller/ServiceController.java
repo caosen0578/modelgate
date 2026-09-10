@@ -71,7 +71,7 @@ public class ServiceController {
      * {@code PageSupport.validate} 与 {@code timeout} 也是管理面列表接口的统一约定。
      */
     @Operation(summary = "服务列表（分页 + 关键字/状态筛选，带授权系统数量）")
-    @GetMapping(UrlConstant.ROOT)
+    @GetMapping(UrlConstant.LIST)
     public Mono<Result<PageVo<ServiceVO>>> list(ServiceQueryBO query) {
         // 分页护栏放在 Mono 外：参数非法应当立刻返回，不必占用管理面线程池的名额
         PageSupport.validate(query, "服务");
@@ -105,7 +105,7 @@ public class ServiceController {
     }
 
     @Operation(summary = "新增服务（含上游凭证，事务写两表）")
-    @PostMapping(UrlConstant.ROOT)
+    @PostMapping(UrlConstant.CREATE)
     public Mono<Result<ServiceVO>> create(@RequestBody @Valid CreateServiceRequestBO req) {
         return Mono.fromCallable(() -> ServiceVO.of(serviceRegistryService.create(req)))
                 .subscribeOn(AdminScheduler.get())
@@ -135,19 +135,15 @@ public class ServiceController {
                 .then(Mono.just(Result.<Void>success(null)));
     }
 
-    @Operation(summary = "启用服务")
-    @PatchMapping(UrlConstant.ENABLE)
-    public Mono<Result<Void>> enable(@RequestParam("serviceId") String serviceId) {
-        return Mono.fromRunnable(() -> serviceRegistryService.enable(serviceId))
-                .subscribeOn(AdminScheduler.get())
-                .timeout(AdminScheduler.REQUEST_TIMEOUT)
-                .then(Mono.just(Result.<Void>success(null)));
-    }
-
-    @Operation(summary = "禁用服务（禁用后请求该服务返回 503）")
-    @PatchMapping(UrlConstant.DISABLE)
-    public Mono<Result<Void>> disable(@RequestParam("serviceId") String serviceId) {
-        return Mono.fromRunnable(() -> serviceRegistryService.disable(serviceId))
+    @Operation(summary = "启用/禁用服务（enabled=false 时禁用，禁用后请求该服务返回 503）")
+    @PatchMapping(UrlConstant.TOGGLE)
+    public Mono<Result<Void>> toggle(
+            @Parameter(description = "服务编码") @RequestParam("serviceId") String serviceId,
+            @Parameter(description = "目标状态：true=启用，false=禁用") @RequestParam("enabled") boolean enabled) {
+        return Mono.fromRunnable(() -> {
+                    if (enabled) serviceRegistryService.enable(serviceId);
+                    else serviceRegistryService.disable(serviceId);
+                })
                 .subscribeOn(AdminScheduler.get())
                 .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .then(Mono.just(Result.<Void>success(null)));

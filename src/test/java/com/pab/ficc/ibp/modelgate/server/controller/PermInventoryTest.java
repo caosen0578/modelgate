@@ -180,7 +180,7 @@ public class PermInventoryTest {
         }
         String l4Block = doc.substring(l4, end < 0 ? doc.length() : end);
         for (String p : new String[]{"/modelgate/credentials/secret", "/modelgate/services/secret",
-                "/modelgate/payload", "/modelgate/payload/detail", "/modelgate/payload/replay"}) {
+                "/modelgate/payload/query", "/modelgate/payload/detail", "/modelgate/payload/replay"}) {
             check(p + " 归在 L4", l4Block.contains("`" + p + "`"));
         }
     }

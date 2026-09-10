@@ -38,7 +38,7 @@ public class GatewayConfigController {
     private final GatewayConfigService configService;
 
     @Operation(summary = "查询所有网关配置项")
-    @GetMapping
+    @GetMapping(UrlConstant.FIND_ALL)
     public Mono<Result<List<GatewayConfigVO>>> findAll() {
         return Mono.fromCallable(() -> configService.findAll()
                         .stream().map(GatewayConfigVO::of).collect(Collectors.toList()))

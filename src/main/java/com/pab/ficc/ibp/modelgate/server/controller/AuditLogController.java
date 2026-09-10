@@ -37,7 +37,7 @@ public class AuditLogController {
     private final AppScopeResolver appScopeResolver;
 
     @Operation(summary = "分页查询审计日志（pageIndex 从 1 开始，pageSize 上限 200；按时间倒序）")
-    @GetMapping
+    @GetMapping(UrlConstant.QUERY)
     public Mono<Result<PageVo<AuditLogVO>>> query(AuditQueryBO query) {
         // mg_audit_log 保留 90 天、是全库增长最快的表，这里的护栏最要紧：
         // 实测未加护栏时 pageSize=100000 会返回整张表（HTTP 200 / 2.8s / 1.7MB）

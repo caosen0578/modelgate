@@ -36,7 +36,7 @@ public class AppController {
     private final CredentialService credentialService;
 
     @Operation(summary = "分页查询接入系统（pageIndex 从 1 开始，pageSize 上限 200；keyword 模糊匹配 appId/systemName/appName/sysCode）")
-    @GetMapping(UrlConstant.ROOT)
+    @GetMapping(UrlConstant.PAGE)
     public Mono<Result<PageVo<AppVO>>> page(AppQueryBO query) {
         PageSupport.validate(query, "接入系统");
         return Mono.fromCallable(() -> {
@@ -65,7 +65,7 @@ public class AppController {
     }
 
     @Operation(summary = "注册接入系统")
-    @PostMapping
+    @PostMapping(UrlConstant.CREATE)
     public Mono<Result<AppVO>> create(@RequestBody @Valid CreateAppRequestBO req) {
         return Mono.fromCallable(() -> AppVO.of(appService.create(req.toEntity())))
                 .subscribeOn(AdminScheduler.get())
@@ -82,19 +82,15 @@ public class AppController {
                 .map(Result::success);
     }
 
-    @Operation(summary = "启用接入系统")
-    @PatchMapping(UrlConstant.ENABLE)
-    public Mono<Result<Void>> enable(@Parameter(description = "系统 ID") @RequestParam("appId") String appId) {
-        return Mono.fromRunnable(() -> appService.enable(appId))
-                .subscribeOn(AdminScheduler.get())
-                .timeout(AdminScheduler.REQUEST_TIMEOUT)
-                .then(Mono.just(Result.<Void>success(null)));
-    }
-
-    @Operation(summary = "禁用接入系统（该系统所有凭证立即失效）")
-    @PatchMapping(UrlConstant.DISABLE)
-    public Mono<Result<Void>> disable(@Parameter(description = "系统 ID") @RequestParam("appId") String appId) {
-        return Mono.fromRunnable(() -> appService.disable(appId))
+    @Operation(summary = "启用/禁用接入系统（enabled=false 时禁用，该系统所有凭证立即失效）")
+    @PatchMapping(UrlConstant.TOGGLE)
+    public Mono<Result<Void>> toggle(
+            @Parameter(description = "系统 ID") @RequestParam("appId") String appId,
+            @Parameter(description = "目标状态：true=启用，false=禁用") @RequestParam("enabled") boolean enabled) {
+        return Mono.fromRunnable(() -> {
+                    if (enabled) appService.enable(appId);
+                    else appService.disable(appId);
+                })
                 .subscribeOn(AdminScheduler.get())
                 .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .then(Mono.just(Result.<Void>success(null)));

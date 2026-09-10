@@ -91,7 +91,7 @@ public class PayloadController {
     private long maxCaptureBytes;
 
     @Operation(summary = "分页查询报文记录（不含正文全文；pageIndex 从 1 开始，按时间倒序）")
-    @GetMapping(UrlConstant.ROOT)
+    @GetMapping(UrlConstant.QUERY)
     public Mono<Result<PageVo<PayloadListVO>>> query(PayloadQueryBO query) {
         PayloadQueryBO q = query != null ? query : new PayloadQueryBO();
         // 校验放在 Mono 外：参数错误应当立刻返回，不必占用 boundedElastic 线程

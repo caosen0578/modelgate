@@ -47,7 +47,7 @@ public class ModelController {
     private final ObjectMapper objectMapper;
 
     @Operation(summary = "分页查询模型（pageIndex 从 1 开始，pageSize 上限 200；keyword 模糊匹配 modelId/modelName）")
-    @GetMapping(UrlConstant.ROOT)
+    @GetMapping(UrlConstant.PAGE)
     public Mono<Result<PageVo<ModelVO>>> page(ModelQueryBO query) {
         // 分页护栏放在 Mono 外：参数非法应当立刻返回，不必占用管理面线程池的名额
         PageSupport.validate(query, "模型");
@@ -79,7 +79,7 @@ public class ModelController {
     }
 
     @Operation(summary = "新增模型")
-    @PostMapping(UrlConstant.ROOT)
+    @PostMapping(UrlConstant.CREATE)
     public Mono<Result<ModelVO>> create(@RequestBody @Valid CreateModelRequestBO req) {
         validateModelParamConfigs(req.getDefaultParams(), req.getForceParams(), req.getParamMapping());
         log.info("[Model][create] 收到新增请求: modelId={}, modelName={}, provider={}, apiSpec={}, upstreamUrl={}, authType={}",
@@ -118,21 +118,16 @@ public class ModelController {
                 .map(Result::success);
     }
 
-    @Operation(summary = "启用模型")
-    @PatchMapping(UrlConstant.ENABLE)
-    public Mono<Result<Void>> enable(@Parameter(description = "模型 ID") @RequestParam("modelId") String modelId) {
-        log.info("[Model][enable] modelId={}", modelId);
-        return Mono.fromRunnable(() -> modelService.enable(modelId))
-                .subscribeOn(AdminScheduler.get())
-                .timeout(AdminScheduler.REQUEST_TIMEOUT)
-                .then(Mono.just(Result.<Void>success(null)));
-    }
-
-    @Operation(summary = "禁用模型（禁用后请求返回 503）")
-    @PatchMapping(UrlConstant.DISABLE)
-    public Mono<Result<Void>> disable(@Parameter(description = "模型 ID") @RequestParam("modelId") String modelId) {
-        log.info("[Model][disable] modelId={}", modelId);
-        return Mono.fromRunnable(() -> modelService.disable(modelId))
+    @Operation(summary = "启用/禁用模型（enabled=false 时禁用，禁用后请求返回 503）")
+    @PatchMapping(UrlConstant.TOGGLE)
+    public Mono<Result<Void>> toggle(
+            @Parameter(description = "模型 ID") @RequestParam("modelId") String modelId,
+            @Parameter(description = "目标状态：true=启用，false=禁用") @RequestParam("enabled") boolean enabled) {
+        log.info("[Model][toggle] modelId={}, enabled={}", modelId, enabled);
+        return Mono.fromRunnable(() -> {
+                    if (enabled) modelService.enable(modelId);
+                    else modelService.disable(modelId);
+                })
                 .subscribeOn(AdminScheduler.get())
                 .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .then(Mono.just(Result.<Void>success(null)));

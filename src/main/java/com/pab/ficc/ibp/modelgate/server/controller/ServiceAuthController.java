@@ -94,30 +94,23 @@ public class ServiceAuthController {
                 .map(Result::success);
     }
 
-    @Operation(summary = "启用单条服务授权")
-    @PatchMapping(UrlConstant.ENABLE)
-    public Mono<Result<Void>> enable(
-            @Parameter(description = "接入系统 ID") @RequestParam("appId") String appId,
-            @Parameter(description = "服务编码") @RequestParam("serviceId") String serviceId) {
-        return Mono.fromRunnable(() -> serviceAuthService.setAuthEnabled(appId, serviceId, true))
-                .subscribeOn(AdminScheduler.get())
-                .timeout(AdminScheduler.REQUEST_TIMEOUT)
-                .then(Mono.just(Result.<Void>success(null)));
-    }
-
     /**
-     * 禁用单条服务授权。
+     * 启用/禁用单条服务授权。
      *
      * <p>与 update 分开是刻意的：列表上的启停是一次点击就该完成的动作，
      * 走 update 前端必须把 qps/daily/expiresAt 全带上，少带一个就会顺手清掉人家配好的值
      * （尤其 expiresAt 传 null 的语义是"改为永久"）。模型侧同样是独立的 PATCH。
+     *
+     * <p>底层 {@code setAuthEnabled} 本来就收一个布尔，此前拆成 enable/disable 两个接口
+     * 只是在 Controller 层把这个布尔编进了 URL，2026-09-10 合并回来。
      */
-    @Operation(summary = "禁用单条服务授权（禁用后该系统访问该服务返回 403）")
-    @PatchMapping(UrlConstant.DISABLE)
-    public Mono<Result<Void>> disable(
+    @Operation(summary = "启用/禁用单条服务授权（enabled=false 时禁用，禁用后该系统访问该服务返回 403）")
+    @PatchMapping(UrlConstant.TOGGLE)
+    public Mono<Result<Void>> toggle(
             @Parameter(description = "接入系统 ID") @RequestParam("appId") String appId,
-            @Parameter(description = "服务编码") @RequestParam("serviceId") String serviceId) {
-        return Mono.fromRunnable(() -> serviceAuthService.setAuthEnabled(appId, serviceId, false))
+            @Parameter(description = "服务编码") @RequestParam("serviceId") String serviceId,
+            @Parameter(description = "目标状态：true=启用，false=禁用") @RequestParam("enabled") boolean enabled) {
+        return Mono.fromRunnable(() -> serviceAuthService.setAuthEnabled(appId, serviceId, enabled))
                 .subscribeOn(AdminScheduler.get())
                 .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .then(Mono.just(Result.<Void>success(null)));

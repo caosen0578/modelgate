@@ -74,22 +74,16 @@ public class CredentialController {
         }).subscribeOn(Schedulers.boundedElastic()).map(Result::success);
     }
 
-    @Operation(summary = "启用凭证")
-    @PatchMapping(UrlConstant.ENABLE)
-    public Mono<Result<Void>> enable(
+    @Operation(summary = "启用/禁用凭证（enabled=false 时禁用，禁用后该凭证下次请求立即 401）")
+    @PatchMapping(UrlConstant.TOGGLE)
+    public Mono<Result<Void>> toggle(
             @Parameter(description = "系统 ID") @RequestParam("appId") String appId,
-            @Parameter(description = "凭证 ID") @RequestParam("id") Long id) {
-        return Mono.fromRunnable(() -> credentialService.enable(appId, id))
-                .subscribeOn(Schedulers.boundedElastic())
-                .then(Mono.just(Result.<Void>success(null)));
-    }
-
-    @Operation(summary = "禁用凭证")
-    @PatchMapping(UrlConstant.DISABLE)
-    public Mono<Result<Void>> disable(
-            @Parameter(description = "系统 ID") @RequestParam("appId") String appId,
-            @Parameter(description = "凭证 ID") @RequestParam("id") Long id) {
-        return Mono.fromRunnable(() -> credentialService.disable(appId, id))
+            @Parameter(description = "凭证 ID") @RequestParam("id") Long id,
+            @Parameter(description = "目标状态：true=启用，false=禁用") @RequestParam("enabled") boolean enabled) {
+        return Mono.fromRunnable(() -> {
+                    if (enabled) credentialService.enable(appId, id);
+                    else credentialService.disable(appId, id);
+                })
                 .subscribeOn(Schedulers.boundedElastic())
                 .then(Mono.just(Result.<Void>success(null)));
     }
