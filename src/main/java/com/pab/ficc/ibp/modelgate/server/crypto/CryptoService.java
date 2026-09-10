@@ -14,13 +14,16 @@ import java.nio.ByteBuffer;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
-import java.util.Base64;
+import java.util.HexFormat;
 import java.util.concurrent.TimeUnit;
 
 /**
  * AES-256-GCM encryption/decryption for upstream secret keys.
- * Master key comes from application.yml's modelgate.crypto.key (32-byte base64,
+ * Master key comes from application.yml's modelgate.crypto.key (32-byte hex = 64 chars,
  * literal value — no environment variable indirection; see spec 10 §2.1).
+ *
+ * <p><b>编码一律 hex（Base16），全项目不使用 base64</b>（内网合规要求，2026-09-10 改）。
+ * 密文、主密钥、AKSK 签名、随机密钥材料四处此前都是 base64，现统一为小写 hex。
  */
 @Slf4j
 @Service
@@ -40,8 +43,17 @@ public class CryptoService {
      */
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 
-    /** 十六进制查表，替代 String.format("%02x")——理由见 {@link #sha256Hex} */
-    private static final char[] HEX = "0123456789abcdef".toCharArray();
+    /**
+     * 全类统一的 hex 编解码器（小写输出）。
+     *
+     * <p>{@code HexFormat} 是 JDK 17 原生实现，内部就是查表，不走 {@code String.format}
+     * 那套解析格式串 + Formatter + 装箱的开销——理由见 {@link #sha256Hex}。
+     *
+     * <p>{@code parseHex} <b>大小写通吃</b>（{@code 0-9a-fA-F} 都认），
+     * 因此 AKSK 调用方用大写 hex 传签名也能正常验过，不必强制它们统一大小写。
+     * 实例无状态、线程安全，全局复用一个。
+     */
+    private static final HexFormat HEX = HexFormat.of();
 
     /**
      * 密文 → 明文 的记忆化缓存。
@@ -64,25 +76,30 @@ public class CryptoService {
             .maximumSize(1_000)
             .build();
 
-    public CryptoService(@Value("${modelgate.crypto.key:}") String base64Key) {
+    public CryptoService(@Value("${modelgate.crypto.key:}") String hexKey) {
         // 单一固定文档，不再有环境变量兜底——application.yml 里这一项永远是字面量，
         // 为空只可能是运维显式把这一行清空（如某套环境暂不需要加密能力）。
-        if (base64Key == null || base64Key.isBlank()) {
+        if (hexKey == null || hexKey.isBlank()) {
             // 未配置密钥：正常启动，但 encrypt/decrypt 调用时会抛异常（即注释所说的"不可用"）
             log.warn("[CryptoService] modelgate.crypto.key 未配置，上游凭证加密功能不可用，生产环境请务必设置");
             this.secretKey = null;
             return;
         }
+        // 先判字符数再解码：hex 下「64 字符 ⟺ 32 字节」是恒等式（base64 因为 padding 做不到），
+        // 所以长度写错时能直接报出"应为 64 位、实际 N 位"，不用等解码完再回头算字节数。
+        String trimmed = hexKey.trim();
+        if (trimmed.length() != 64) {
+            throw new IllegalStateException(
+                    "modelgate.crypto.key 必须是 64 位十六进制字符（对应 32 字节 AES-256 密钥），当前为 "
+                    + trimmed.length() + " 位。生成命令：openssl rand -hex 32");
+        }
         byte[] keyBytes;
         try {
-            keyBytes = Base64.getDecoder().decode(base64Key);
+            keyBytes = HEX.parseHex(trimmed);
         } catch (IllegalArgumentException e) {
-            throw new IllegalStateException("modelgate.crypto.key 不是合法的 Base64 字符串", e);
-        }
-        if (keyBytes.length != 32) {
             throw new IllegalStateException(
-                    "modelgate.crypto.key 解码后必须恰好为 32 字节，当前为 " + keyBytes.length + " 字节。" +
-                    "生成命令：openssl rand -base64 32");
+                    "modelgate.crypto.key 不是合法的十六进制字符串（只允许 0-9a-fA-F）。"
+                    + "生成命令：openssl rand -hex 32", e);
         }
         this.secretKey = new SecretKeySpec(keyBytes, "AES");
     }
@@ -103,7 +120,7 @@ public class CryptoService {
             ByteBuffer buf = ByteBuffer.allocate(iv.length + cipherText.length);
             buf.put(iv);
             buf.put(cipherText);
-            return Base64.getEncoder().encodeToString(buf.array());
+            return HEX.formatHex(buf.array());
         } catch (Exception e) {
             throw new RuntimeException("Encryption failed", e);
         }
@@ -119,15 +136,17 @@ public class CryptoService {
      * 实测就踩过一次：本地联调密钥与库中凭证的加密密钥不匹配，
      * 排查时只能靠翻堆栈才知道是 AEADBadTagException。
      */
-    public String decrypt(String base64Ciphertext) {
-        if (base64Ciphertext == null || base64Ciphertext.isBlank()) return null;
+    public String decrypt(String hexCiphertext) {
+        if (hexCiphertext == null || hexCiphertext.isBlank()) return null;
         if (secretKey == null) throw new IllegalStateException("modelgate.crypto.key 未配置，无法解密凭证");
 
         byte[] decoded;
         try {
-            decoded = Base64.getDecoder().decode(base64Ciphertext);
+            decoded = HEX.parseHex(hexCiphertext);
         } catch (IllegalArgumentException e) {
-            throw new CryptoException("凭证密文不是合法的 Base64，数据已损坏，需重新生成该凭证", e);
+            // 2026-09-10 起密文一律 hex。若这条报错出现在刚升级完的环境上，
+            // 大概率是库里还留着升级前写入的 base64 密文——那批数据解不回来，只能重新生成凭证。
+            throw new CryptoException("凭证密文不是合法的十六进制串，数据已损坏或为 hex 改造前的旧格式，需重新生成该凭证", e);
         }
         if (decoded.length <= GCM_IV_LENGTH) {
             throw new CryptoException("凭证密文长度不足（" + decoded.length + " 字节，至少需要 "
@@ -176,6 +195,8 @@ public class CryptoService {
      * 原实现对 32 个字节各调一次 {@code String.format("%02x", b)}——
      * String.format 要解析格式串、走 Formatter、装箱参数，单次就在微秒级，
      * 32 次叠起来是每请求几十微秒，纯属白烧。改成查表后是几十纳秒的事。
+     * 现在直接用 {@link #HEX}（{@code HexFormat}，JDK 内部同样是查表），
+     * 与本类其余 hex 编解码共用一套，不再自带一份手写码表。
      *
      * <p><b>字符集显式固定为 UTF-8</b>（2026-08-19 改）。此前用的是
      * {@code input.getBytes()} 即平台默认字符集——Linux 通常 UTF-8、Windows 是 GBK，
@@ -184,7 +205,8 @@ public class CryptoService {
      *
      * <p><b>兼容性影响</b>：库中已有的 {@code secret_hash} 是用旧字符集算出来的。
      * 只有当被哈希的字符串含<b>非 ASCII 字符</b>时新旧结果才会不同——
-     * 密钥材料本身是 URL-safe Base64（纯 ASCII），唯一的暴露面是 api_key 里拼接的 appId
+     * 密钥材料本身是 hex（纯 ASCII；2026-09-10 前是 URL-safe Base64，同样纯 ASCII），
+     * 唯一的暴露面是 api_key 里拼接的 appId
      * （{@code "mg-" + appId + "-" + randomHex(24)}）。
      * 因此<b>只有"appId 含非 ASCII 字符"的 api_key 类型凭证会失效</b>，需重新生成。
      * 定位这类凭证的 SQL 见 {@code sql/upgrade_20260819_sha256_utf8_migration.sql}。
@@ -193,13 +215,7 @@ public class CryptoService {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             byte[] hash = digest.digest(input.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            char[] out = new char[hash.length * 2];
-            for (int i = 0; i < hash.length; i++) {
-                int v = hash[i] & 0xFF;
-                out[i * 2] = HEX[v >>> 4];
-                out[i * 2 + 1] = HEX[v & 0x0F];
-            }
-            return new String(out);
+            return HEX.formatHex(hash);
         } catch (NoSuchAlgorithmException e) {
             throw new RuntimeException("SHA-256 not available", e);
         }
@@ -214,10 +230,10 @@ public class CryptoService {
      * <p>管理面的「查看密钥」等低频场景仍应直接用 {@link #decrypt}，
      * 不必也不该把一次性的查看塞进缓存。
      */
-    public String decryptCached(String base64Ciphertext) {
-        if (base64Ciphertext == null || base64Ciphertext.isBlank()) return null;
+    public String decryptCached(String hexCiphertext) {
+        if (hexCiphertext == null || hexCiphertext.isBlank()) return null;
         // 解密失败会抛异常，Caffeine 不会缓存异常，下次仍会重试——正是想要的行为
-        return decryptCache.get(base64Ciphertext, this::decrypt);
+        return decryptCache.get(hexCiphertext, this::decrypt);
     }
 
     public boolean constantTimeEquals(String a, String b) {

@@ -28,7 +28,7 @@ import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
-import java.util.Base64;
+import java.util.HexFormat;
 import java.util.Optional;
 
 /**
@@ -36,7 +36,7 @@ import java.util.Optional;
  *
  * Supports two modes:
  *   - api_key: Authorization: Bearer {api_key}  → SHA-256 → cache lookup
- *   - ak_sk:   Authorization: AKSK {access_key}:{timestamp_ms}:{hmac_sha256_base64}
+ *   - ak_sk:   Authorization: AKSK {access_key}:{timestamp_ms}:{hmac_sha256_hex}
  *              Validates timestamp ±5min (replay prevention) AND verifies
  *              HMAC-SHA256(SK, accessKey + ":" + timestamp) to prove SK possession.
  */
@@ -46,6 +46,14 @@ import java.util.Optional;
 public class CredentialAuthFilter implements GlobalFilter, Ordered {
 
     private static final int ORDER = -190;
+
+    /**
+     * AKSK 签名的 hex 解码器（2026-09-10 由 base64 改为 hex，内网合规要求）。
+     *
+     * <p>{@code parseHex} 大小写通吃，调用方无论用 {@code openssl dgst}（小写）
+     * 还是自己拼大写 hex 都能验过；无状态、线程安全，全局复用一个。
+     */
+    private static final HexFormat HEX = HexFormat.of();
 
     /**
      * 每线程复用的 HmacSHA256 实例。
@@ -171,7 +179,7 @@ public class CredentialAuthFilter implements GlobalFilter, Ordered {
             return credentialService.findBySecretHash(hash);
         }
         if (authorization.startsWith("AKSK ")) {
-            // AK/SK 模式：格式 "AKSK {accessKey}:{timestamp毫秒}:{HMAC-SHA256(SK, accessKey+":"+timestamp) Base64}"
+            // AK/SK 模式：格式 "AKSK {accessKey}:{timestamp毫秒}:{HMAC-SHA256(SK, accessKey+":"+timestamp) hex}"
             String payload = authorization.substring(5).trim();
             String[] parts = payload.split(":", 3);
             if (parts.length != 3) return Optional.empty();
@@ -209,7 +217,7 @@ public class CredentialAuthFilter implements GlobalFilter, Ordered {
     /**
      * 验证 AKSK 签名。
      *
-     * <p>签名算法：{@code HMAC-SHA256(plainSK, accessKey + ":" + timestamp)}，结果 Base64 编码。
+     * <p>签名算法：{@code HMAC-SHA256(plainSK, accessKey + ":" + timestamp)}，结果 hex 编码（64 位小写，大写亦可）。
      * 调用方需要用相同的 accessKey、timestamp 和 SK 计算签名并放入请求头。
      * 使用 {@link MessageDigest#isEqual} 恒时比较，防止时序攻击。
      */
@@ -231,13 +239,13 @@ public class CredentialAuthFilter implements GlobalFilter, Ordered {
             byte[] expected = mac.doFinal((accessKey + ":" + timestamp).getBytes(StandardCharsets.UTF_8));
             byte[] actual;
             try {
-                actual = Base64.getDecoder().decode(signature);
+                actual = HEX.parseHex(signature);
             } catch (IllegalArgumentException e) {
-                return false; // signature is not valid Base64
+                return false; // signature is not valid hex
             }
             return MessageDigest.isEqual(expected, actual);
         } catch (Exception e) {
-            log.warn("[CredentialAuth] AKSK 验签异常（多为 MODELGATE_CRYPTO_KEY 变更导致密文解不开）, accessKey={}: {}", accessKey, e.getMessage());
+            log.warn("[CredentialAuth] AKSK 验签异常（多为 application.yml 的 modelgate.crypto.key 变更导致密文解不开）, accessKey={}: {}", accessKey, e.getMessage());
             return false;
         }
     }

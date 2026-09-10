@@ -27,7 +27,7 @@ mysql -u root -p 你的库名 < sql/modelgate_schema.sql
 #    （不用环境变量，不用 Spring Profile；这是唯一配置文件，改字面量即可生效）：
 #      datasource.local.{url,username,password}   —— 目标数据库
 #      redis.local.{host,port,password}            —— 目标 Redis
-#      modelgate.crypto.key                        —— 生产专用密钥（32 字节 base64，即 44 位字符）
+#      modelgate.crypto.key                        —— 生产专用密钥（64 位十六进制字符 = 32 字节 AES-256）
 #        生成方法（openssl/node/PowerShell/jshell 四选一）见 spec/modelgate/10 §2.1；
 #        生产必须与数据库连接串分离保管，见 spec/modelgate/10 §2.2；
 #        ⚠️ 生成一次存好，勿每次部署重新生成——换密钥则库中全部存量密文解不开；

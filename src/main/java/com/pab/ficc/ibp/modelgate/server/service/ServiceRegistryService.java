@@ -124,7 +124,7 @@ public class ServiceRegistryService {
     /**
      * 转发热路径用：取凭证并<b>解密</b> SK 与 extraHeaders，走 L1（30s）。
      *
-     * <p>缓存的是解密后的对象——解密本身有成本（AES-GCM + Base64），
+     * <p>缓存的是解密后的对象——解密本身有成本（AES-GCM + hex 解码），
      * 每请求解一次在高频下不划算；而缓存密文再逐请求解密等于没缓存。
      * 代价是明文在堆里驻留最多 30 秒，与模型侧 {@code getCredentialDecrypted} 的取舍一致。
      */

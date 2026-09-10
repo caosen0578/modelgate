@@ -3422,7 +3422,7 @@ function usageCurl(p){
         + 'AK="' + (c.accessKey||'<AccessKey>') + '"\n'
         + 'SK="' + (usageCtx.secret||'<在此填入 SecretKey>') + '"\n'
         + 'TS=$(date +%s%3N)          # 毫秒时间戳；macOS 用 $(($(date +%s)*1000))\n'
-        + 'SIGN=$(printf "%s:%s" "$AK" "$TS" | openssl dgst -sha256 -hmac "$SK" -binary | base64)\n\n'
+        + 'SIGN=$(printf "%s:%s" "$AK" "$TS" | openssl dgst -sha256 -hmac "$SK" | awk \'{print $NF}\')\n\n'
       : '';
     // 用数组拼再 join，而不是逐段拼 " \\\n"：服务侧的行是可选的（GET 没有 -d、
     // 非 SSE 没有 -N），逐段拼会在最后一行留下一个悬空的续行符，
@@ -3441,7 +3441,7 @@ function usageCurl(p){
       + 'AK="' + (c.accessKey||'<AccessKey>') + '"\n'
       + 'SK="' + (usageCtx.secret||'<在此填入 SecretKey>') + '"\n'
       + 'TS=$(date +%s%3N)          # 毫秒时间戳；macOS 用 $(($(date +%s)*1000))\n'
-      + 'SIGN=$(printf "%s:%s" "$AK" "$TS" | openssl dgst -sha256 -hmac "$SK" -binary | base64)\n\n'
+      + 'SIGN=$(printf "%s:%s" "$AK" "$TS" | openssl dgst -sha256 -hmac "$SK" | awk \'{print $NF}\')\n\n'
       + 'curl -X POST "' + p.base + p.path + '" \\\n'
       + '  -H "Content-Type: application/json" \\\n'
       + '  -H "Authorization: AKSK $AK:$TS:$SIGN" \\\n'
@@ -3460,7 +3460,7 @@ function usageHttp(p){
   const host = p.base.replace(/^https?:\/\//,'');
   if(p.kind === 'service'){
     const auth = c.credType==='ak_sk'
-      ? 'AKSK ' + (c.accessKey||'<AccessKey>') + ':{13位毫秒时间戳}:{Base64(HMAC-SHA256(SK, AK+":"+时间戳))}'
+      ? 'AKSK ' + (c.accessKey||'<AccessKey>') + ':{13位毫秒时间戳}:{Hex(HMAC-SHA256(SK, AK+":"+时间戳))}'
       : 'Bearer ' + (usageCtx.secret||'<在此填入 API Key>');
     let head = p.method + ' ' + p.path + ' HTTP/1.1\n'
       + 'Host: ' + host + '\n'
@@ -3473,7 +3473,7 @@ function usageHttp(p){
       + oneLine;
   }
   const auth = c.credType==='ak_sk'
-    ? 'AKSK ' + (c.accessKey||'<AccessKey>') + ':{13位毫秒时间戳}:{Base64(HMAC-SHA256(SK, AK+":"+时间戳))}'
+    ? 'AKSK ' + (c.accessKey||'<AccessKey>') + ':{13位毫秒时间戳}:{Hex(HMAC-SHA256(SK, AK+":"+时间戳))}'
     : 'Bearer ' + (usageCtx.secret||'<在此填入 API Key>');
   const oneLine = JSON.stringify(JSON.parse(p.body));
   return 'POST ' + p.path + ' HTTP/1.1\n'
@@ -3501,13 +3501,11 @@ function usagePython(p){
       }
     }
     if(c.credType==='ak_sk'){
-      return 'import base64, hashlib, hmac, time, requests\n\n'
+      return 'import hashlib, hmac, time, requests\n\n'
         + 'AK = "' + (c.accessKey||'<AccessKey>') + '"\n'
         + 'SK = "' + (usageCtx.secret||'<在此填入 SecretKey>') + '"\n'
         + 'ts = str(int(time.time() * 1000))          # 毫秒时间戳，服务端校验 ±5 分钟\n'
-        + 'sign = base64.b64encode(\n'
-        + '    hmac.new(SK.encode(), f"{AK}:{ts}".encode(), hashlib.sha256).digest()\n'
-        + ').decode()\n\n'
+        + 'sign = hmac.new(SK.encode(), f"{AK}:{ts}".encode(), hashlib.sha256).hexdigest()\n\n'
         + 'resp = requests.request(\n'
         + '    "' + p.method + '", "' + p.base + p.path + '",\n'
         + '    headers={"Authorization": f"AKSK {AK}:{ts}:{sign}"},\n'
@@ -3536,13 +3534,11 @@ function usagePython(p){
     // 压成单行：多行 JSON 直接嵌进 json= 会缩进错位，不像能直接跑的代码
     const pyBody = JSON.stringify(JSON.parse(p.body))
         .replace(/\btrue\b/g,'True').replace(/\bfalse\b/g,'False').replace(/\bnull\b/g,'None');
-    return 'import base64, hashlib, hmac, time, requests\n\n'
+    return 'import hashlib, hmac, time, requests\n\n'
       + 'AK = "' + (c.accessKey||'<AccessKey>') + '"\n'
       + 'SK = "' + (usageCtx.secret||'<在此填入 SecretKey>') + '"\n'
       + 'ts = str(int(time.time() * 1000))          # 毫秒时间戳，服务端校验 ±5 分钟\n'
-      + 'sign = base64.b64encode(\n'
-      + '    hmac.new(SK.encode(), f"{AK}:{ts}".encode(), hashlib.sha256).digest()\n'
-      + ').decode()\n\n'
+      + 'sign = hmac.new(SK.encode(), f"{AK}:{ts}".encode(), hashlib.sha256).hexdigest()\n\n'
       + 'resp = requests.post(\n'
       + '    "' + p.base + p.path + '",\n'
       + '    headers={"Content-Type": "application/json",\n'
@@ -3661,7 +3657,13 @@ async function fetchSecretForTest(){
   return j.data;
 }
 
-/** AKSK 签名：Base64(HMAC-SHA256(SK, AK + ":" + 毫秒时间戳))，与 CredentialAuthFilter 逐字节一致。 */
+/**
+ * AKSK 签名：Hex(HMAC-SHA256(SK, AK + ":" + 毫秒时间戳))，与 CredentialAuthFilter 逐字节一致。
+ *
+ * 2026-09-10 由 base64 改为 hex（内网禁用 base64）。顺带甩掉了
+ * btoa(String.fromCharCode(...new Uint8Array(sig)))——那个展开在数组大时会炸调用栈，
+ * 这里只有 32 字节碰不到，但换成逐字节映射后本就不存在这个隐患。
+ */
 async function signAksk(ak, sk, ts){
   if(!window.crypto || !window.crypto.subtle){
     // crypto.subtle 只在安全上下文（https 或 localhost）可用；内网 http 页面拿不到
@@ -3670,7 +3672,7 @@ async function signAksk(ak, sk, ts){
   const enc = new TextEncoder();
   const key = await crypto.subtle.importKey('raw', enc.encode(sk), {name:'HMAC', hash:'SHA-256'}, false, ['sign']);
   const sig = await crypto.subtle.sign('HMAC', key, enc.encode(ak + ':' + ts));
-  return btoa(String.fromCharCode(...new Uint8Array(sig)));
+  return Array.from(new Uint8Array(sig), b => b.toString(16).padStart(2, '0')).join('');
 }
 
 /** 按状态码给出可操作的定位话术——只说"失败了"没有用。 */

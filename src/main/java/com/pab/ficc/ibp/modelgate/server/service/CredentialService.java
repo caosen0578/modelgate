@@ -14,7 +14,7 @@ import org.springframework.stereotype.Service;
 
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
-import java.util.Base64;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -56,6 +56,9 @@ public class CredentialService {
 
     /** 使用 SecureRandom 生成密钥材料，比 Random 具备密码学安全性 */
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
+
+    /** 密钥材料的 hex 编码器（小写）；无状态、线程安全，全局复用一个 */
+    private static final HexFormat HEX = HexFormat.of();
 
     private final AppCredentialMapper credentialMapper;
     private final CryptoService cryptoService;
@@ -226,21 +229,27 @@ public class CredentialService {
         return cred;
     }
 
-    /**
-     * 生成密码学安全的随机字节并编码为 URL-safe Base64（无填充）。
-     *
-     * @param bytes 随机字节数，生成的字符串长度约为 bytes × 4/3
-     */
     /** 取密钥末 4 位用于日志定位；不足 4 位一律打码，避免短串把明文整个漏出去。 */
     private static String tail4(String secret) {
         if (secret == null || secret.length() < 4) return "****";
         return secret.substring(secret.length() - 4);
     }
 
+    /**
+     * 生成密码学安全的随机字节并编码为小写十六进制。
+     *
+     * <p>2026-09-10 由 URL-safe Base64 改为 hex（内网禁用 base64），方法名至此才名副其实。
+     * 随机<b>字节数不变</b>，熵值完全不受影响，只是同样的熵用更长的字符串表示：
+     * 生成的字符串长度由 {@code bytes × 4/3} 变为 {@code bytes × 2}。
+     * 由此 {@code SK_} 前缀的密钥从 46 位变 67 位、{@code api_key} 从约 40 位变约 116 位，
+     * 均在 {@code mg_app_credential} 的列宽内（secret_hash 仍是定长 64 位 SHA-256 hex）。
+     *
+     * @param bytes 随机字节数，生成的字符串长度为 bytes × 2
+     */
     private String randomHex(int bytes) {
         byte[] buf = new byte[bytes];
         SECURE_RANDOM.nextBytes(buf);
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(buf);
+        return HEX.formatHex(buf);
     }
 
     /**
