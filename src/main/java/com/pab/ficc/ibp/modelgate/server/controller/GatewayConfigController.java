@@ -24,10 +24,10 @@ import java.util.stream.Collectors;
 /**
  * 网关动态配置管理接口
  *
- * GET    /modelgate/config              — 查询所有配置
- * GET    /modelgate/config/detail       — 查询单个配置（?key=）
- * PUT    /modelgate/config/save         — 新增或更新配置（body 含 key）
- * DELETE /modelgate/config/delete       — 删除配置（?key=）
+ * GET    /config              — 查询所有配置
+ * GET    /config/detail       — 查询单个配置（?key=）
+ * PUT    /config/save         — 新增或更新配置（body 含 key）
+ * DELETE /config/delete       — 删除配置（?key=）
  */
 @Tag(name = "网关配置", description = "动态管理网关全局配置，变更实时生效")
 @RestController
@@ -85,7 +85,7 @@ public class GatewayConfigController {
                 .then(Mono.just(Result.<Void>success(null)));
     }
 
-    // 注：原 GET/PUT /modelgate/config/upstream/url 两个快捷接口已移除。
+    // 注：原 GET/PUT /config/upstream/url 两个快捷接口已移除。
     // 它们操作的 upstream.url 配置项从未参与路由——真实转发地址由 ModelRouteFilter
     // 按请求体的 model 字段查 mg_model.upstream_url 动态覆盖。原接口的
     // "30s 内热生效" 描述具有误导性：改了不影响任何流量。

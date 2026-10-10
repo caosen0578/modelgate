@@ -25,7 +25,7 @@ import java.util.Map;
 
 /**
  * 审计日志查询接口
- * GET /modelgate/audit — 原始审计明细，分页返回，按 create_time + id 倒序
+ * GET /audit — 原始审计明细，分页返回，按 create_time + id 倒序
  */
 @Tag(name = "审计日志", description = "查询 API 调用明细，支持按 appId、应用编码、模型、状态码、traceId 筛选")
 @RestController

@@ -39,6 +39,7 @@ public class ModelService {
     private final AppModelAuthMapper authMapper;
     private final CryptoService cryptoService;
     private final GatewayCacheManager cacheManager;
+    private final com.pab.ficc.ibp.modelgate.server.adapter.ProviderRequestPipeline providerRequestPipeline;
 
     public List<ModelInstanceEntity> findAll() {
         return modelMapper.selectList(null);
@@ -83,6 +84,7 @@ public class ModelService {
 
     @Transactional(transactionManager = "tdsqlTransactionManager", rollbackFor = Exception.class)
     public ModelInstanceEntity create(ModelInstanceEntity model, ModelCredentialEntity credential) {
+        providerRequestPipeline.validateForSave(model, credential);
         boolean exists = modelMapper.exists(
                 new LambdaQueryWrapper<ModelInstanceEntity>().eq(ModelInstanceEntity::getModelId, model.getModelId()));
         if (exists) {
@@ -157,7 +159,21 @@ public class ModelService {
     @Transactional(transactionManager = "tdsqlTransactionManager", rollbackFor = Exception.class)
     public ModelInstanceEntity update(String modelId, ModelInstanceEntity updates,
                                       ModelCredentialEntity credential, String newModelId) {
-        findByModelId(modelId);
+        ModelInstanceEntity stored = findByModelId(modelId);
+        // 校验更新后的有效配置，缺省字段沿用数据库值；不修改缓存中的对象。
+        var effective = new ModelInstanceEntity();
+        org.springframework.beans.BeanUtils.copyProperties(stored, effective);
+        var source = new org.springframework.beans.BeanWrapperImpl(updates);
+        var target = new org.springframework.beans.BeanWrapperImpl(effective);
+        for (var property : source.getPropertyDescriptors()) {
+            String name = property.getName();
+            if (!"class".equals(name) && source.isReadableProperty(name) && target.isWritableProperty(name)) {
+                Object value = source.getPropertyValue(name);
+                if (value != null) target.setPropertyValue(name, value);
+            }
+        }
+        ModelCredentialEntity effectiveCredential = credential == null ? getCredential(modelId).orElse(null) : credential;
+        providerRequestPipeline.validateForSave(effective, effectiveCredential);
 
         boolean rename = newModelId != null && !newModelId.isBlank() && !newModelId.equals(modelId);
         if (rename) {

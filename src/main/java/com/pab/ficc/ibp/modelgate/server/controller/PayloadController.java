@@ -58,9 +58,9 @@ import java.util.Set;
  * {@code RequestPayloadMapper.selectListPage} 注释），正文只在详情接口按 id 单条返回。
  *
  * <ul>
- *   <li>GET /modelgate/payload        — 分页列表，多条件检索</li>
- *   <li>GET /modelgate/payload/detail — 单条全文</li>
- *   <li>GET /modelgate/payload/meta   — 保留期等配置回显，页面据此提示"只能查最近 N 天"</li>
+ *   <li>GET /payload        — 分页列表，多条件检索</li>
+ *   <li>GET /payload/detail — 单条全文</li>
+ *   <li>GET /payload/meta   — 保留期等配置回显，页面据此提示"只能查最近 N 天"</li>
  * </ul>
  */
 @Tag(name = "报文记录", description = "查询模型调用的请求/响应报文，支持按 appId、应用编码、模型、traceId、时间、正文关键字检索")
@@ -77,6 +77,7 @@ public class PayloadController {
     private final ServiceConnectivityService serviceConnectivityService;
     private final RequestHeaderSnapshotter requestHeaderSnapshotter;
     private final AppScopeResolver appScopeResolver;
+    private final com.pab.ficc.ibp.modelgate.server.common.ApplicationPaths applicationPaths;
 
     @Value("${modelgate.payload-log.enabled:true}")
     private boolean payloadLogEnabled;
@@ -202,7 +203,7 @@ public class PayloadController {
                     "该报文没有 serviceId，无法定位要回放到哪个服务");
         }
         String method = firstNonBlank(body.getMethod(), p.getRequestMethod());
-        String path = firstNonBlank(body.getPath(), stripSvcPrefix(p.getRequestPath(), serviceId));
+        String path = firstNonBlank(body.getPath(), stripSvcPrefix(applicationPaths.applicationPath(p.getRequestPath()), serviceId));
 
         return Mono.fromCallable(() -> {
                     ServiceEntity svc = serviceRegistryService.findByServiceId(serviceId);
@@ -237,7 +238,7 @@ public class PayloadController {
             return null;
         }
         String prefix = "/svc/" + serviceId;
-        if (!requestPath.startsWith(prefix)) {
+        if (!requestPath.equals(prefix) && !requestPath.startsWith(prefix + "/") && !requestPath.startsWith(prefix + "?")) {
             return requestPath;
         }
         String remainder = requestPath.substring(prefix.length());
@@ -274,7 +275,7 @@ public class PayloadController {
         }
         return Mono.fromCallable(() -> payloadMapper
                         .selectRecentRequestPaths(serviceId, RECENT_PATH_LIMIT).stream()
-                        .map(p -> stripSvcPrefix(p, serviceId))
+                        .map(p -> stripSvcPrefix(applicationPaths.applicationPath(p), serviceId))
                         .filter(p -> p != null && !p.isBlank())
                         .distinct()
                         .toList())

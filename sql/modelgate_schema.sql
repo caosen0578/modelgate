@@ -6,7 +6,7 @@
 -- ----------------------------------------------------------------------------
 -- 执行方式：在目标数据库下直接执行（脚本不含 CREATE DATABASE / USE，
 --          请先 `USE 你的库名;` 或用 `mysql -h.. -P.. -u.. -p 库名 < modelgate_schema.sql`）。
---          例：mysql -h47.119.189.29 -P65522 -uroot -p cbdb < sql/modelgate_schema.sql
+--          主机、专用部署账号及库名使用已审批的模型库配置，不使用本地共享库示例。
 -- ----------------------------------------------------------------------------
 -- 内部规范基础字段：
 --   creater      创建人           create_time  创建时间
@@ -34,10 +34,13 @@ CREATE TABLE IF NOT EXISTS mg_model (
     model_name     VARCHAR(128) NOT NULL                          COMMENT '模型展示名称',
     provider       VARCHAR(32)  NOT NULL                          COMMENT '提供商：openai|azure_openai|anthropic|private|custom',
     model_type     VARCHAR(32)  NOT NULL DEFAULT 'chat'           COMMENT '模型类型：chat|embedding|image|audio',
-    api_spec       VARCHAR(32)  NOT NULL DEFAULT 'openai'         COMMENT 'API 规范（参数转换规则）：openai|azure_openai|anthropic|custom',
+    api_spec       VARCHAR(64)  NOT NULL DEFAULT 'openai'         COMMENT '适配器 ID，能力以 provider-adapters 目录为准',
+    response_mode  VARCHAR(32)  NOT NULL DEFAULT 'PASSTHROUGH'    COMMENT 'PASSTHROUGH 原生响应；OPENAI_COMPATIBLE OpenAI 兼容响应',
+    config_version INT          NOT NULL DEFAULT 1               COMMENT '适配器配置版本',
+    adapter_config TEXT                                          COMMENT '非机密协议配置 JSON；当前四适配器只接受空对象',
     upstream_url   VARCHAR(512) NOT NULL                          COMMENT '上游模型服务请求地址（协议+域名+端口，不含接口路径）',
     upstream_path  VARCHAR(256)                                   COMMENT '上游接口路径，如 /v1/chat/completions；留空则按 api_spec 取默认值（openai/custom 透传调用方路径，anthropic 用 /v1/messages，azure 忽略本字段）',
-    timeout_ms     INT          NOT NULL DEFAULT 30000            COMMENT '上游请求超时时间（毫秒）',
+    timeout_ms     INT          NOT NULL DEFAULT 30000            COMMENT '仅管理探测/对话测试超时参考，业务模型转发不使用',
     default_params TEXT                                           COMMENT '默认参数（JSON），业务未传时注入，可被业务覆盖',
     force_params   TEXT                                           COMMENT '强制参数（JSON），强制注入，业务不可覆盖',
     param_mapping  TEXT                                           COMMENT '自定义字段映射规则（JSON），仅 api_spec=custom 时使用',

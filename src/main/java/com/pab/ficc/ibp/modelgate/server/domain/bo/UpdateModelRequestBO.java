@@ -14,6 +14,9 @@ public class UpdateModelRequestBO {
     @NotBlank private String provider;
     private String  modelType;
     private String  apiSpec;
+    private String responseMode;
+    private Integer configVersion;
+    private String adapterConfig;
     @NotBlank private String upstreamUrl;
     /** 上游接口路径，如 /v1/chat/completions；留空按 apiSpec 取默认 */
     private String  upstreamPath;
@@ -48,6 +51,9 @@ public class UpdateModelRequestBO {
         m.setProvider(provider);
         m.setModelType(modelType);
         m.setApiSpec(apiSpec);
+        m.setResponseMode(responseMode);
+        m.setConfigVersion(configVersion);
+        m.setAdapterConfig(adapterConfig);
         m.setUpstreamUrl(upstreamUrl);
         m.setUpstreamPath(upstreamPath);
         m.setTimeoutMs(timeoutMs);

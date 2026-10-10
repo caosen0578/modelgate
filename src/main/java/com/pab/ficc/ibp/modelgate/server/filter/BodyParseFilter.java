@@ -36,7 +36,7 @@ import reactor.core.publisher.Mono;
  * </ul>
  *
  * <p><b>作用范围：</b>仅对 POST /v1/** 且 Content-Type 为 JSON 的请求生效，
- * GET 请求和 /modelgate/** 接口直接放行。
+ * GET 请求和管理资源接口直接放行；判断使用去除部署文根后的应用内路径。
  */
 @Slf4j
 @Component
@@ -92,9 +92,11 @@ public class BodyParseFilter implements GlobalFilter, Ordered {
                             return Flux.just(buf);
                         }
                     };
-                    return chain.filter(exchange.mutate().request(mutatedRequest).build());
+                    // Mono<Void> 成功也不发元素，不能直接接 switchIfEmpty，否则正常请求会转发两次。
+                    return chain.filter(exchange.mutate().request(mutatedRequest).build()).thenReturn(Boolean.TRUE);
                 })
-                .switchIfEmpty(chain.filter(exchange));
+                .switchIfEmpty(Mono.defer(() -> chain.filter(exchange).thenReturn(Boolean.TRUE)))
+                .then();
     }
 
     /**

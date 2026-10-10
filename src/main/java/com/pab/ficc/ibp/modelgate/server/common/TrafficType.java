@@ -17,7 +17,7 @@ import org.springframework.web.server.ServerWebExchange;
  *
  * <p><b>使用约定</b>：过滤器里<b>禁止</b>再出现任何路径字面量或 {@code startsWith} 判断，
  * 一律用 {@link #resolve(ServerWebExchange)} 配合 {@link #isBusiness()} / {@code == MODEL}。
- * 这与 {@code UrlConstant.BASE} 的既有约束同性质：判定规则必须只有一个出处。
+ * 这与 {@code UrlConstant.MANAGE_PATHS} 的既有约束同性质：判定规则必须只有一个出处。
  */
 public enum TrafficType {
 
@@ -28,7 +28,7 @@ public enum TrafficType {
     SERVICE,
 
     /**
-     * 管理面 {@code /modelgate/**} 与运维端点 {@code /actuator/**}：<b>唯一</b>不走业务过滤器的一类。
+     * 显式列举的管理资源与运维端点 {@code /actuator/**}：<b>唯一</b>不走业务过滤器的一类。
      *
      * <p>正常情况下根本不会出现——GlobalFilter 只对匹配到网关路由的请求执行，
      * 而管理面与 actuator 都不匹配任何路由，压根进不到这条链上。
@@ -90,7 +90,7 @@ public enum TrafficType {
         if (cached != null) {
             return cached;
         }
-        TrafficType resolved = of(exchange.getRequest().getURI().getPath());
+        TrafficType resolved = of(ApplicationPaths.path(exchange.getRequest()));
         exchange.getAttributes().put(ATTR, resolved);
         return resolved;
     }
@@ -99,7 +99,7 @@ public enum TrafficType {
      * 按路径判定流量类型。
      *
      * <p><b>判定顺序不可调换</b>：{@link #INTERNAL} 必须最先判——
-     * 管理面前缀是 {@code /modelgate/}、actuator 是 {@code /actuator/}，
+     * 管理面按 {@code UrlConstant.MANAGE_PATHS} 资源段判定，actuator 是 {@code /actuator/}，
      * 与业务前缀不重叠，但把它放最后意味着"新增业务前缀时可能意外覆盖管理路径"，
      * 先判内部是更安全的写法。
      *
@@ -109,8 +109,11 @@ public enum TrafficType {
      * 落到 INTERNAL 会让这些能进链的请求跳过全部鉴权。
      */
     static TrafficType of(String path) {
-        if (path.startsWith(UrlConstant.MANAGE_PREFIX) || path.startsWith(UrlConstant.ACTUATOR_PREFIX)) {
+        if (path.startsWith(UrlConstant.ACTUATOR_PREFIX)) {
             return INTERNAL;
+        }
+        for (String resource : UrlConstant.MANAGE_PATHS) {
+            if (path.equals(resource) || path.startsWith(resource + "/")) return INTERNAL;
         }
         if (path.startsWith(UrlConstant.BUSINESS_PREFIX)) {
             return MODEL;
@@ -130,9 +133,7 @@ public enum TrafficType {
      * 会真的进到过滤器链的路径。写成白名单等于给它们发免鉴权通行证，
      * 详见 {@link #UNKNOWN}。
      *
-     * <p>这个表达式与改造前各过滤器的
-     * {@code !(path.startsWith("/modelgate/") || path.startsWith("/actuator/"))}
-     * <b>逐路径等价</b>，这正是本批次"纯重构、零行为改变"能成立的依据。
+     * <p>文根迁移后管理路径不再拥有公共前缀，必须逐资源段列举，不能将 '/' 视为内部前缀。
      *
      * <p>通用能力过滤器（CredentialAuth / AppAccessControl / Quota / PayloadCapture /
      * CircuitBreaker）用这个判断；模型专属的（BodyParse / ModelAuth / ModelRoute）

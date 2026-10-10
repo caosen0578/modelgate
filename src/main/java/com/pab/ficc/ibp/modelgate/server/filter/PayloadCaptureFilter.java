@@ -119,8 +119,14 @@ public class PayloadCaptureFilter implements GlobalFilter, Ordered {
 
             @Override
             public Mono<Void> writeAndFlushWith(Publisher<? extends Publisher<? extends DataBuffer>> body) {
-                // SSE 走的是这个方法（每帧一个内层 Publisher），不覆写会导致流式响应一个字节都采集不到
-                return writeWith(Flux.from(body).flatMapSequential(p -> p));
+                // 网络块不等于帧；保留上游的 flush 分组，只在各 inner publisher 上旁路采集。
+                return super.writeAndFlushWith(Flux.from(body).map(group -> Flux.from(group).doOnNext(buffer -> {
+                    if (holder[0] == null) {
+                        holder[0] = newCapture(exchange);
+                        exchange.getAttributes().put(ATTR_RESPONSE_BYTES, holder[0]);
+                    }
+                    capture(exchange, holder[0], buffer);
+                })));
             }
         };
     }

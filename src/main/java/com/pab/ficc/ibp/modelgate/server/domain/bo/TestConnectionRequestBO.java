@@ -19,6 +19,9 @@ public class TestConnectionRequestBO {
     private String modelId;
     private String modelType;
     private String apiSpec;
+    private String responseMode;
+    private Integer configVersion;
+    private String adapterConfig;
     private String upstreamUrl;
     private String upstreamPath;
     private Integer timeoutMs;
@@ -40,6 +43,9 @@ public class TestConnectionRequestBO {
         m.setModelId(modelId);
         m.setModelType(modelType != null ? modelType : "chat");
         m.setApiSpec(apiSpec != null ? apiSpec : "openai");
+        m.setResponseMode(responseMode);
+        m.setConfigVersion(configVersion);
+        m.setAdapterConfig(adapterConfig);
         m.setUpstreamUrl(upstreamUrl);
         m.setUpstreamPath(upstreamPath);
         m.setTimeoutMs(timeoutMs);

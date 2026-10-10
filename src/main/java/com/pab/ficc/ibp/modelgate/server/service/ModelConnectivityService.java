@@ -4,6 +4,15 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.pab.ficc.ibp.modelgate.server.adapter.ProviderAdapter;
 import com.pab.ficc.ibp.modelgate.server.adapter.RequestParamMerger;
+import com.pab.ficc.ibp.modelgate.server.adapter.ProviderAdapterRegistry;
+import com.pab.ficc.ibp.modelgate.server.adapter.ProviderRequestPipeline;
+import com.pab.ficc.ibp.modelgate.server.adapter.ProviderModelConfig;
+import com.pab.ficc.ibp.modelgate.server.adapter.AdapterResponseContext;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.io.buffer.DataBuffer;
+import org.springframework.core.io.buffer.DataBufferUtils;
+import org.springframework.core.io.buffer.DefaultDataBufferFactory;
+import org.springframework.http.HttpMethod;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.ModelCredentialEntity;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.ModelInstanceEntity;
 import com.pab.ficc.ibp.modelgate.server.domain.vo.ConnectivityTestVO;
@@ -36,7 +45,6 @@ import java.util.concurrent.TimeoutException;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class ModelConnectivityService {
 
     /** 探测超时上限：模型本身可能配了很长的超时（如 570s），但连通性测试必须尽快给结论 */
@@ -78,7 +86,8 @@ public class ModelConnectivityService {
      */
     private static final int MIN_RESPONSE_BUFFER_BYTES = 256 * 1024;
 
-    private final List<ProviderAdapter> adapters;
+    private final ProviderAdapterRegistry registry;
+    private final ProviderRequestPipeline pipeline;
     private final WebClient.Builder webClientBuilder;
 
     /** 仅用于构造管理面最小探测体，确保可自定义模型 ID 按 JSON 规则正确转义。 */
@@ -88,7 +97,19 @@ public class ModelConnectivityService {
      * 管理面测试复用业务转发的参数语义；它只在管理员手动测试时执行，
      * 不会改变或增加 /v1/** 热路径的每请求开销。
      */
-    private final RequestParamMerger requestParamMerger;
+    @Autowired
+    public ModelConnectivityService(ProviderAdapterRegistry registry, ProviderRequestPipeline pipeline,
+            WebClient.Builder webClientBuilder, ObjectMapper objectMapper) {
+        this.registry = registry; this.pipeline = pipeline;
+        this.webClientBuilder = webClientBuilder; this.objectMapper = objectMapper;
+    }
+
+    /** 兼容旧调用/存量 main 回归测试，运行期只注入 V2 构造器。 */
+    public ModelConnectivityService(List<ProviderAdapter> adapters, WebClient.Builder builder,
+            ObjectMapper mapper, RequestParamMerger merger) {
+        this(new ProviderAdapterRegistry(adapters, mapper),
+            new ProviderRequestPipeline(new ProviderAdapterRegistry(adapters, mapper), merger, mapper), builder, mapper);
+    }
 
     /** 见 {@link #DEFAULT_BODY_LIMIT} 的说明；可配以便应对超长上下文模型 */
     @Value("${modelgate.connectivity-test.max-body-chars:1048576}")
@@ -102,8 +123,11 @@ public class ModelConnectivityService {
      */
     public Mono<ConnectivityTestVO> probe(ModelInstanceEntity model, ModelCredentialEntity credential) {
         // 探测的是供应商真实模型，不是 ModelGate 对外路由别名。
-        byte[] body = probeBody(model.resolveUpstreamModelId(), model.getModelType());
-        return exchange(model, credential, body, probePath(model), false);
+        return Mono.defer(() -> {
+            var plan = registry.resolve(model.getApiSpec()).createProbe(ProviderModelConfig.from(model), objectMapper);
+            return exchange(model, credential, plan.body(), plan.clientUri().toString(), false);
+        }).onErrorResume(e -> Mono.just(ConnectivityTestVO.of(false, 0L,
+            "配置无法生成探测请求: " + e.getMessage(), null, null, null)));
     }
 
     /**
@@ -113,62 +137,37 @@ public class ModelConnectivityService {
      */
     private Mono<ConnectivityTestVO> exchange(ModelInstanceEntity model, ModelCredentialEntity credential,
                                               byte[] requestBody, String path, boolean chatMode) {
-        String apiSpec = model.getApiSpec() != null ? model.getApiSpec() : "openai";
-
-        ProviderAdapter adapter = adapters.stream()
-                .filter(a -> a.supports(apiSpec))
-                .findFirst()
-                .orElse(null);
-        if (adapter == null) {
-            log.warn("[Connectivity] 无匹配适配器: modelId={}, apiSpec={}", model.getModelId(), apiSpec);
-            return Mono.just(ConnectivityTestVO.of(false, 0L,
-                    "不支持的 API 规范: " + apiSpec + "，请检查 apiSpec 配置", null, null, null));
-        }
-
-        if (model.getUpstreamUrl() == null || model.getUpstreamUrl().isBlank()) {
-            return Mono.just(ConnectivityTestVO.of(false, 0L, "上游地址为空，无法发起探测", null, null, null));
-        }
-
-        byte[] finalBody;
-        HttpHeaders headers;
-        URI upstreamUri;
-        try {
-            // 与 ModelRouteFilter 保持同一顺序：先处理默认/强制参数、字段映射和真实模型 ID，
-            // 再做供应商协议转换。此前管理面测试跳过了这一步，会出现“测试报文”和真实转发不一致。
-            byte[] mergedBody = requestParamMerger.merge(requestBody, model);
-            finalBody = adapter.transformRequestBody(mergedBody, model, credential);
-            headers = adapter.buildUpstreamHeaders(model, credential);
-            upstreamUri = adapter.buildUpstreamUri(model, URI.create(path));
-        } catch (Exception e) {
-            // 上游地址非法、paramMapping JSON 语法错误等，在构造阶段就会炸——这本身就是配置错误
-            log.warn("[Connectivity] 构造探测请求失败: modelId={}, apiSpec={}, err={}",
-                    model.getModelId(), apiSpec, e.toString());
-            return Mono.just(ConnectivityTestVO.of(false, 0L,
-                    "配置无法构造上游请求: " + e.getClass().getSimpleName() + ": " + e.getMessage(),
-                    null, null, null));
-        }
-
         Duration timeout = Duration.ofMillis(chatMode
                 ? chatTimeoutMs(model.getTimeoutMs())
                 : probeTimeoutMs(model.getTimeoutMs()));
-        String uriText = upstreamUri.toString();
         long start = System.nanoTime();
-
-        log.info("[Connectivity] 开始{}: modelId={}, apiSpec={}, authType={}, uri={}, timeout={}ms",
-                chatMode ? "对话测试" : "探测", model.getModelId(), apiSpec,
-                credential != null ? credential.getAuthType() : "none", uriText, timeout.toMillis());
-
-        return probeWebClient()
-                .post()
-                .uri(upstreamUri)
-                .headers(h -> h.addAll(headers))
-                .bodyValue(finalBody)
-                // exchangeToMono 不会对 4xx/5xx 抛异常，便于把上游状态码和报错原文一并带回前端
-                .exchangeToMono(resp -> resp.bodyToMono(String.class)
-                        .defaultIfEmpty("")
-                        .map(body -> classify(resp.statusCode().value(), body, elapsedMs(start), uriText)))
+        var inbound = new HttpHeaders(); inbound.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
+        return pipeline.prepare(model, credential, HttpMethod.POST, URI.create(path), inbound, requestBody, -1, -1)
+                .flatMap(call -> {
+                    var request = call.request();
+                    String uriText = request.uri().toString();
+                    return probeWebClient().method(request.method()).uri(request.uri())
+                        .headers(h -> h.addAll(request.headers()))
+                        .body(org.springframework.web.reactive.function.BodyInserters.fromDataBuffers(
+                            request.payload().publisher(DefaultDataBufferFactory.sharedInstance)))
+                        .exchangeToMono(resp -> {
+                            var session = call.adapter().openResponse(new AdapterResponseContext(call.config(), call.operation(),
+                                resp.statusCode().value(), resp.headers().asHttpHeaders()));
+                            return DataBufferUtils.join(session.transform(resp.bodyToFlux(DataBuffer.class), DefaultDataBufferFactory.sharedInstance),
+                                effectiveBodyLimitChars() * 4)
+                                .map(buffer -> {
+                                    try { return buffer.toString(StandardCharsets.UTF_8); }
+                                    finally { DataBufferUtils.release(buffer); }
+                                }).defaultIfEmpty("").flatMap(body -> session.finish().thenReturn(body)).map(body -> {
+                                    if (session.telemetry() != null && session.telemetry().errorCode() != null)
+                                        return ConnectivityTestVO.of(false, elapsedMs(start), "上游协议错误: " + session.telemetry().errorCode(),
+                                            resp.statusCode().value(), uriText, snippet(body));
+                                    return classify(resp.statusCode().value(), body, elapsedMs(start), uriText);
+                                }).doFinally(signal -> session.close());
+                        });
+                })
                 .timeout(timeout)
-                .onErrorResume(e -> Mono.just(classifyError(e, elapsedMs(start), uriText, timeout, chatMode)))
+                .onErrorResume(e -> Mono.just(classifyError(e, elapsedMs(start), null, timeout, chatMode)))
                 .doOnNext(vo -> {
                     if (Boolean.TRUE.equals(vo.getSuccess())) {
                         log.info("[Connectivity] 探测成功: modelId={}, latency={}ms, httpStatus={}",
@@ -272,9 +271,6 @@ public class ModelConnectivityService {
      * {@code buildUpstreamUri} 决定：azure_openai 会忽略它，anthropic 会替换成自己的默认值。
      */
     private String probePath(ModelInstanceEntity model) {
-        if (model.getUpstreamPath() != null && !model.getUpstreamPath().isBlank()) {
-            return model.getUpstreamPath().trim();
-        }
         if ("embedding".equals(model.getModelType())) {
             return "/v1/embeddings";
         }

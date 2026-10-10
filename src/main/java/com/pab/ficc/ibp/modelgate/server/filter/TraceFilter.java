@@ -112,11 +112,16 @@ public class TraceFilter implements GlobalFilter, Ordered {
                         // 服务流量**跳过 usage 解析**：那是 OpenAI 帧格式专用的，
                         // 通用服务的响应里根本没有 usage 字段，解析纯属白跑一遍尾部扫描。
                         // 这也是服务链路比模型链路轻的一环。
-                        UpstreamResponseParser.ParsedResponse parsed =
-                                (responseBytes == null || trafficType == TrafficType.SERVICE)
+                        var telemetry = (com.pab.ficc.ibp.modelgate.server.adapter.ResponseTelemetry)
+                            exchange.getAttribute(com.pab.ficc.ibp.modelgate.server.adapter.ResponseTelemetry.EXCHANGE_ATTRIBUTE);
+                        UpstreamResponseParser.ParsedResponse parsed = telemetry != null && telemetry.hasUsage()
+                                ? new UpstreamResponseParser.ParsedResponse(telemetry.inputTokens(), telemetry.outputTokens(),
+                                    UpstreamResponseParser.SOURCE_USAGE, null, telemetry.finishReason())
+                                : (responseBytes == null || trafficType == TrafficType.SERVICE)
                                 ? UpstreamResponseParser.ParsedResponse.empty()
                                 : responseParser.parseUsageOnly(responseBytes, stream, requestBytes,
                                         totalResponseBytes);
+                        if (telemetry != null && telemetry.errorCode() != null) errorMsg = "Provider error: " + telemetry.errorCode();
 
                         String serviceId = exchange.getAttribute(ServiceAuthFilter.ATTR_SERVICE_ID);
                         String trafficTypeCode = trafficType == TrafficType.SERVICE ? "service" : "model";

@@ -56,6 +56,13 @@ public class ServiceController {
     private final ServiceRegistryService serviceRegistryService;
     private final ServiceAuthService serviceAuthService;
     private final ServiceConnectivityService connectivityService;
+    private final com.pab.ficc.ibp.modelgate.server.common.ApplicationPaths applicationPaths;
+
+    private ServiceVO serviceVO(ServiceEntity entity, ServiceCredentialEntity credential) {
+        ServiceVO vo = ServiceVO.of(entity, credential);
+        vo.setPublicPrefix(applicationPaths.publicPath(vo.getPublicPrefix()));
+        return vo;
+    }
 
     /**
      * 服务列表。
@@ -81,7 +88,7 @@ public class ServiceController {
                     Map<String, ServiceCredentialEntity> credentials = serviceRegistryService.findAllCredentials();
                     Map<String, Long> authCounts = serviceAuthService.countByServiceId();
                     return PageVo.of(serviceRegistryService.page(query), e -> {
-                        ServiceVO vo = ServiceVO.of(e, credentials.get(e.getServiceId()));
+                        ServiceVO vo = serviceVO(e, credentials.get(e.getServiceId()));
                         vo.setAuthorizedAppCount(authCounts.getOrDefault(e.getServiceId(), 0L));
                         return vo;
                     });
@@ -97,7 +104,7 @@ public class ServiceController {
             @Parameter(description = "服务编码") @RequestParam("serviceId") String serviceId) {
         return Mono.fromCallable(() -> {
             ServiceEntity e = serviceRegistryService.findByServiceId(serviceId);
-            return ServiceVO.of(e, serviceRegistryService.getCredential(serviceId).orElse(null));
+            return serviceVO(e, serviceRegistryService.getCredential(serviceId).orElse(null));
         })
                 .subscribeOn(AdminScheduler.get())
                 .timeout(AdminScheduler.REQUEST_TIMEOUT)
@@ -107,7 +114,7 @@ public class ServiceController {
     @Operation(summary = "新增服务（含上游凭证，事务写两表）")
     @PostMapping(UrlConstant.CREATE)
     public Mono<Result<ServiceVO>> create(@RequestBody @Valid CreateServiceRequestBO req) {
-        return Mono.fromCallable(() -> ServiceVO.of(serviceRegistryService.create(req)))
+        return Mono.fromCallable(() -> serviceVO(serviceRegistryService.create(req), null))
                 .subscribeOn(AdminScheduler.get())
                 .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .map(Result::success);
@@ -118,7 +125,7 @@ public class ServiceController {
     public Mono<Result<ServiceVO>> update(@RequestBody @Valid UpdateServiceRequestBO req) {
         return Mono.fromCallable(() -> {
             ServiceEntity e = serviceRegistryService.update(req);
-            return ServiceVO.of(e, serviceRegistryService.getCredential(e.getServiceId()).orElse(null));
+            return serviceVO(e, serviceRegistryService.getCredential(e.getServiceId()).orElse(null));
         })
                 .subscribeOn(AdminScheduler.get())
                 .timeout(AdminScheduler.REQUEST_TIMEOUT)

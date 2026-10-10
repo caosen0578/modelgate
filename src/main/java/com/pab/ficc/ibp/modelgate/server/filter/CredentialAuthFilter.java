@@ -100,7 +100,7 @@ public class CredentialAuthFilter implements GlobalFilter, Ordered {
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
         String path = exchange.getRequest().getURI().getPath();
-        // 管理面（/modelgate/**）走内网逐接口鉴权，不在本进程校验；
+        // 管理资源接口走内网逐接口鉴权，不在本进程校验；
         // /actuator/** 同样不属于业务流量，直接放行。
         // 通用能力：模型流量与服务流量都要走，只跳过管理面/运维端点。
         // 流量类型由 TraceFilter(-200) 算一次存 attribute，这里只读不算。

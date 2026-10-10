@@ -5,6 +5,12 @@ import com.pab.ficc.ibp.modelgate.server.domain.entity.ModelInstanceEntity;
 import org.springframework.http.HttpHeaders;
 
 import java.net.URI;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.pab.ficc.ibp.modelgate.server.domain.vo.ProviderAdapterVO;
+import com.pab.ficc.ibp.modelgate.server.common.BusinessException;
+import com.pab.ficc.ibp.modelgate.server.common.ErrorCode;
+import org.springframework.http.HttpMethod;
+import reactor.core.publisher.Mono;
 
 /**
  * Strategy interface for upstream model provider protocol adaptation.
@@ -31,6 +37,50 @@ public interface ProviderAdapter {
      */
     String getApiSpec();
 
+    default ProviderAdapterVO descriptor() { return BuiltinAdapterDescriptors.descriptor(getApiSpec()); }
+
+    /** V2 默认桥：先生成最终 URI/body/header，再调用异步认证 SPI。 */
+    default Mono<PreparedUpstreamRequest> prepare(AdapterRequestContext context) {
+        return Mono.defer(() -> {
+            var model = context.model().legacyModel();
+            var credential = context.credential().legacyCredential();
+            byte[] body = transformRequestBody(context.body(), model, credential);
+            URI uri = buildUpstreamUri(model, context.originalUri());
+            HttpHeaders headers = ProviderHeaderPolicy.sanitize(context.headers());
+            headers.putAll(buildUpstreamHeaders(model, null));
+            // model-route 保留 PreserveHostHeader；其值必须是最终上游 authority，签名也基于同一值。
+            headers.set(HttpHeaders.HOST, uri.getRawAuthority());
+            headers.setContentLength(body.length);
+            return authProvider(context).authenticate(
+                new PreparedUpstreamRequest(context.method(), uri, headers, body), context.credential());
+        });
+    }
+
+    default AuthProvider authProvider(AdapterRequestContext context) {
+        return (request, credential) -> Mono.fromSupplier(() -> {
+            var headers = new HttpHeaders(); headers.putAll(request.headers());
+            headers.putAll(buildUpstreamHeaders(context.model().legacyModel(), credential.legacyCredential()));
+            return new PreparedUpstreamRequest(request.method(), request.uri(), headers, request.payload());
+        });
+    }
+
+    default void validate(ProviderModelConfig model, ProviderCredential credential) { }
+
+    default ResponseSession openResponse(AdapterResponseContext context) { return ResponseSession.passthrough(); }
+
+    default ProbePlan createProbe(ProviderModelConfig model, ObjectMapper mapper) {
+        var body = mapper.createObjectNode().put("model", model.modelId());
+        if ("embedding".equals(model.modelType())) {
+            body.put("input", "ping");
+            return new ProbePlan(HttpMethod.POST, URI.create("/v1/embeddings"), body.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }
+        if (!"chat".equals(model.modelType()))
+            throw new BusinessException(ErrorCode.PROVIDER_FEATURE_UNSUPPORTED, "该操作没有无副作用的最小探测体");
+        body.putArray("messages").addObject().put("role", "user").put("content", "ping");
+        body.put("max_tokens", 1).put("stream", false);
+        return new ProbePlan(HttpMethod.POST, URI.create("/v1/chat/completions"), body.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    }
+
     default boolean supports(String apiSpec) {
         return getApiSpec().equals(apiSpec);
     }
@@ -39,17 +89,26 @@ public interface ProviderAdapter {
      * Transforms the raw request body bytes before forwarding to upstream.
      * Return the original bytes unchanged if no transformation is needed.
      */
-    byte[] transformRequestBody(byte[] originalBody, ModelInstanceEntity model, ModelCredentialEntity credential);
+    @Deprecated
+    default byte[] transformRequestBody(byte[] originalBody, ModelInstanceEntity model, ModelCredentialEntity credential) {
+        throw new BusinessException(ErrorCode.PROVIDER_FEATURE_UNSUPPORTED, "请使用 V2 prepare 接口");
+    }
 
     /**
      * Builds the upstream authorization and protocol headers.
      */
-    HttpHeaders buildUpstreamHeaders(ModelInstanceEntity model, ModelCredentialEntity credential);
+    @Deprecated
+    default HttpHeaders buildUpstreamHeaders(ModelInstanceEntity model, ModelCredentialEntity credential) {
+        throw new BusinessException(ErrorCode.PROVIDER_FEATURE_UNSUPPORTED, "请使用 V2 prepare 接口");
+    }
 
     /**
      * Constructs the target upstream URI from the model config and original request URI.
      */
-    URI buildUpstreamUri(ModelInstanceEntity model, URI originalUri);
+    @Deprecated
+    default URI buildUpstreamUri(ModelInstanceEntity model, URI originalUri) {
+        throw new BusinessException(ErrorCode.PROVIDER_FEATURE_UNSUPPORTED, "请使用 V2 prepare 接口");
+    }
 
     /**
      * 解析上游接口路径：模型配了 {@code upstream_path} 就用它，否则回落到该规范的默认路径。

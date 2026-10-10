@@ -40,6 +40,13 @@ public class ServiceAuthService {
     private final AppMapper appMapper;
     private final ServiceMapper serviceMapper;
     private final GatewayCacheManager cacheManager;
+    private final com.pab.ficc.ibp.modelgate.server.common.ApplicationPaths applicationPaths;
+
+    private ServiceAuthVO serviceAuthVO(AppServiceAuthEntity auth, ServiceEntity service) {
+        ServiceAuthVO vo = ServiceAuthVO.of(auth, service);
+        if (vo.getPublicPrefix() != null) vo.setPublicPrefix(applicationPaths.publicPath(vo.getPublicPrefix()));
+        return vo;
+    }
 
     // ===================== 查询 =====================
 
@@ -71,7 +78,7 @@ public class ServiceAuthService {
                         new LambdaQueryWrapper<ServiceEntity>().in(ServiceEntity::getServiceId, serviceIds))
                 .stream().collect(Collectors.toMap(ServiceEntity::getServiceId, s -> s, (a, b) -> a));
 
-        return auths.stream().map(a -> ServiceAuthVO.of(a, svcMap.get(a.getServiceId())))
+        return auths.stream().map(a -> serviceAuthVO(a, svcMap.get(a.getServiceId())))
                 .collect(Collectors.toList());
     }
 
@@ -187,7 +194,7 @@ public class ServiceAuthService {
         AppServiceAuthEntity updated = authMapper.selectOne(new LambdaQueryWrapper<AppServiceAuthEntity>()
                 .eq(AppServiceAuthEntity::getAppId, appId)
                 .eq(AppServiceAuthEntity::getServiceId, serviceId));
-        return ServiceAuthVO.of(updated, serviceMapper.selectOne(
+        return serviceAuthVO(updated, serviceMapper.selectOne(
                 new LambdaQueryWrapper<ServiceEntity>().eq(ServiceEntity::getServiceId, serviceId)));
     }
 

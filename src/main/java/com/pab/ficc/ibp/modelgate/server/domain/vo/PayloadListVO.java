@@ -14,7 +14,7 @@ import java.time.LocalDateTime;
  *
  * <p>取而代之给出<b>长度</b>与<b>正文预览</b>（SQL 侧 {@code CHAR_LENGTH} / {@code LEFT} 截取，
  * 不把整列拖出来），足够在列表上判断"是不是我要找的那条"；全文走
- * {@code GET /modelgate/payload/detail} 单条按需拉取。
+ * {@code GET /payload/detail} 单条按需拉取。
  *
  * <p>字段由 {@code RequestPayloadMapper.selectListPage} 的列别名按下划线转驼峰直接映射。
  */

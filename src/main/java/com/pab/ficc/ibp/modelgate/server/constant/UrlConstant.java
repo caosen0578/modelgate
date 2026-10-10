@@ -13,20 +13,7 @@ package com.pab.ficc.ibp.modelgate.server.constant;
 public interface UrlConstant {
 
     // ===== 路径前缀 =====
-    /**
-     * 管理面基础路径。
-     *
-     * <p>这个前缀是**功能性**的，不只是命名：整条过滤器链靠它区分"管理接口"与"业务流量"——
-     * 业务流量走 {@link #BUSINESS_PREFIX}，会经过凭证鉴权、模型授权、配额限流、熔断、路由转发；
-     * 管理接口必须跳过这些。各过滤器一律引用本常量判断，**禁止**再写 {@code "/modelgate/"} 字面量，
-     * 否则改前缀时漏改一处就会造成管理接口被业务过滤器拦截或误放行。
-     */
-    String BASE = "/modelgate";
-
-    /** 管理面前缀（带尾斜杠），用于 {@code path.startsWith(...)} 判断 */
-    String MANAGE_PREFIX = BASE + "/";
-
-    /** 业务流量前缀：OpenAI 兼容路径，形状由 OpenAI SDK 决定，不可加命名空间 */
+    /** 应用内业务路径；部署文根由 spring.webflux.base-path 提供，不写进注解。 */
     String BUSINESS_PREFIX = "/v1/";
 
     /**
@@ -52,7 +39,8 @@ public interface UrlConstant {
     /**
      * 容器平台探测基础路径。
      *
-     * <p>路径由<b>行内容器平台约定</b>，不可更改：平台在不同场景下分别调用
+     * <p>应用内路径由<b>行内容器平台约定</b>。部署文根由框架统一添加，平台探针需同步：
+     * 当前外部入口为 {@code /modelgate/actuator/detection/**}。平台分别调用
      * {@link #DETECTION_RUNNING} / {@link #DETECTION_AVAILABLE} / {@link #DETECTION_SHUTDOWN}
      * 判断应用状态，拿不到 200 就认为应用没起来并反复重启容器。
      *
@@ -69,19 +57,25 @@ public interface UrlConstant {
     String DETECTION_SHUTDOWN = "/shutdown";
 
     // ===== Controller 基础路径（class-level @RequestMapping）=====
-    String MG_MODELS      = BASE + "/models";
+    String MG_MODELS      = "/models";
+    String PROVIDER_ADAPTERS = "/provider-adapters";
     /** 服务管理（通用服务注册），与 MG_MODELS 平级 */
-    String MG_SERVICES    = BASE + "/services";
+    String MG_SERVICES    = "/services";
     /** 服务授权（接入系统 × 服务），与 MG_AUTH 平级 */
-    String MG_SERVICE_AUTH = BASE + "/service-auth";
-    String MG_APPS        = BASE + "/apps";
-    String MG_CREDENTIALS = BASE + "/credentials";
-    String MG_AUTH        = BASE + "/auth";
-    String MG_ACCESS      = BASE + "/access";
-    String MG_CONFIG      = BASE + "/config";
-    String MG_STATS       = BASE + "/stats";
-    String MG_AUDIT       = BASE + "/audit";
-    String MG_PAYLOAD     = BASE + "/payload";
+    String MG_SERVICE_AUTH = "/service-auth";
+    String MG_APPS        = "/apps";
+    String MG_CREDENTIALS = "/credentials";
+    String MG_AUTH        = "/auth";
+    String MG_ACCESS      = "/access";
+    String MG_CONFIG      = "/config";
+    String MG_STATS       = "/stats";
+    String MG_AUDIT       = "/audit";
+    String MG_PAYLOAD     = "/payload";
+
+    /** 明确列举内部资源；绝不能用空 BASE + '/'，否则全部业务路径会被免鉴权。 */
+    java.util.List<String> MANAGE_PATHS = java.util.List.of(MG_MODELS, MG_SERVICES,
+        MG_SERVICE_AUTH, MG_APPS, MG_CREDENTIALS, MG_AUTH, MG_ACCESS, MG_CONFIG,
+        MG_STATS, MG_AUDIT, MG_PAYLOAD);
 
     // ===== 通用子路径（method-level）=====
     //
@@ -112,7 +106,7 @@ public interface UrlConstant {
      * <p>2026-09-10 由 {@code /enable} + {@code /disable} 两个接口合并而来：
      * 这是<b>同一个状态字段的两个取值</b>，拆成两个 URL 只是把参数编进了路径，
      * 调用方（管理面与 static-framework）本来就得写
-     * {@code `/modelgate/models/${enabled ? 'disable' : 'enable'}`} 这种拼串，
+     * {@code `/models/${enabled ? 'disable' : 'enable'}`} 这种拼串，
      * 拼错了还只能等 404。合并后统一为 {@code ?enabled=true|false}，
      * 前端传布尔值即可，后端也少一半的方法。
      */

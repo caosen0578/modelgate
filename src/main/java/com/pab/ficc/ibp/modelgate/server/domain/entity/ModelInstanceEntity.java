@@ -31,6 +31,9 @@ public class ModelInstanceEntity {
     private String provider;
     private String modelType;
     private String apiSpec;
+    private String responseMode;
+    private Integer configVersion;
+    private String adapterConfig;
     private String upstreamUrl;
     /** 上游接口路径；留空则按 apiSpec 取默认（见 ProviderAdapter 各实现） */
     private String upstreamPath;

@@ -14,6 +14,9 @@ public class CreateModelRequestBO {
     @NotBlank private String provider;
     private String  modelType    = "chat";
     private String  apiSpec      = "openai";
+    private String responseMode = "PASSTHROUGH";
+    private Integer configVersion = 1;
+    private String adapterConfig;
     @NotBlank private String upstreamUrl;
     /** 上游接口路径，如 /v1/chat/completions；留空按 apiSpec 取默认 */
     private String  upstreamPath;
@@ -34,6 +37,9 @@ public class CreateModelRequestBO {
         m.setProvider(provider);
         m.setModelType(modelType != null ? modelType : "chat");
         m.setApiSpec(apiSpec != null ? apiSpec : "openai");
+        m.setResponseMode(responseMode);
+        m.setConfigVersion(configVersion);
+        m.setAdapterConfig(adapterConfig);
         m.setUpstreamUrl(upstreamUrl);
         m.setUpstreamPath(upstreamPath);
         m.setTimeoutMs(timeoutMs != null ? timeoutMs : 30000);

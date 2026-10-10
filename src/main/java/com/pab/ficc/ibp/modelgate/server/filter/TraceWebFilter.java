@@ -15,7 +15,7 @@ import reactor.util.context.Context;
  *
  * <p><b>为什么是 WebFilter 而不是 GlobalFilter</b>：Spring Cloud Gateway 的
  * {@code GlobalFilter} 只对**匹配到路由**的请求生效，即只有 {@code /v1/**}。
- * 管理面 {@code /modelgate/**} 由 Controller 处理、不匹配任何路由，
+ * 管理资源接口由 Controller 处理、不匹配任何路由，
  * 因此此前完全拿不到 traceId——表现为管理接口响应里的
  * {@code requestId} / {@code logTraceId} 恒为 {@code null}，
  * 前端「失败提示带 logTraceId 便于对照后端日志」形同虚设。

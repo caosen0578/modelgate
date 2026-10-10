@@ -75,6 +75,8 @@ public class PayloadReplayPathTest {
                 "/api/v2/query".equals(PayloadController.stripSvcPrefix("/api/v2/query", "crm")));
         check("编码不同 → 原样返回",
                 "/svc/kb/search".equals(PayloadController.stripSvcPrefix("/svc/kb/search", "crm")));
+        check("相似编码不能按字符串前缀误剥",
+                "/svc/crm2/search".equals(PayloadController.stripSvcPrefix("/svc/crm2/search", "crm")));
     }
 
     private static void handlesMissingInput() {

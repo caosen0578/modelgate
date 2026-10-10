@@ -8,7 +8,7 @@ import java.time.format.DateTimeFormatter;
 import org.slf4j.MDC;
 
 /**
- * 统一返回数据（管理面 {@code /modelgate/**} 的响应结构）。
+ * 统一返回数据（管理资源接口的响应结构）。
  *
  * <p><b>本地副本说明</b>：与行内 SDK 的 {@code com.pab.ficc.ibp.web.result.Result} 同构
  * （方法签名已逐一比对一致）。本项目 pom 中 {@code ibp-web} 依赖处于注释状态，

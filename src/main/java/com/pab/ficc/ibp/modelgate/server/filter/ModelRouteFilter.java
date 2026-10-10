@@ -4,8 +4,8 @@ import com.pab.ficc.ibp.modelgate.server.common.TrafficType;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.pab.ficc.ibp.modelgate.server.adapter.ProviderAdapter;
-import com.pab.ficc.ibp.modelgate.server.adapter.RequestParamMerger;
+import com.pab.ficc.ibp.modelgate.server.adapter.ProviderRequestPipeline;
+import com.pab.ficc.ibp.modelgate.server.common.BusinessException;
 import com.pab.ficc.ibp.modelgate.server.common.ErrorCode;
 import com.pab.ficc.ibp.modelgate.server.common.Result;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.ModelCredentialEntity;
@@ -57,10 +57,9 @@ public class ModelRouteFilter implements GlobalFilter, Ordered {
     private static final int ORDER = -140;
 
     private final ModelService modelService;
-    private final List<ProviderAdapter> adapters;
     private final ObjectMapper objectMapper;
     /** 模型级 default_params / force_params / param_mapping 的合并器 */
-    private final RequestParamMerger paramMerger;
+    private final ProviderRequestPipeline requestPipeline;
 
     @Override
     public int getOrder() {
@@ -90,12 +89,12 @@ public class ModelRouteFilter implements GlobalFilter, Ordered {
                     byte[] bodyBytes = new byte[dataBuffer.readableByteCount()];
                     dataBuffer.read(bodyBytes);
                     DataBufferUtils.release(dataBuffer);
-                    return processRequest(exchange, chain, bodyBytes);
+                    return processRequest(exchange, chain, bodyBytes).thenReturn(Boolean.TRUE);
                 })
                 .switchIfEmpty(Mono.defer(() -> {
                     log.info("[ModelRoute] 拒绝: 请求体为空, path={}", path);
-                    return reject(exchange, HttpStatus.BAD_REQUEST, ErrorCode.MODEL_FIELD_MISSING);
-                }));
+                    return reject(exchange, HttpStatus.BAD_REQUEST, ErrorCode.MODEL_FIELD_MISSING).thenReturn(Boolean.TRUE);
+                })).then();
     }
 
     private Mono<Void> processRequest(ServerWebExchange exchange, GatewayFilterChain chain, byte[] bodyBytes) {
@@ -125,14 +124,25 @@ public class ModelRouteFilter implements GlobalFilter, Ordered {
 
         // 同 ModelAuthFilter：用 Optional 包一层，避免 Callable 返回 null 时 Mono 变 empty、
         // flatMap 不执行导致链路断掉（此处 null 表示"模型不存在或无适配器"，本该走 reject）
-        return Mono.fromCallable(() -> Optional.ofNullable(buildRouteInfo(exchange, bodyBytes, modelId)))
+        return Mono.fromCallable(() -> modelService.getModelCached(modelId))
         .subscribeOn(Schedulers.boundedElastic())
         .flatMap(result -> {
-            RouteInfo info = result.orElse(null);
-            if (info == null) {
+            if (result.isEmpty()) {
                 return reject(exchange, HttpStatus.NOT_FOUND, ErrorCode.MODEL_NOT_FOUND);
             }
-            return applyRoute(exchange, chain, info, modelId);
+            return Mono.fromCallable(() -> Optional.ofNullable(modelService.getCredentialDecrypted(modelId)))
+                .subscribeOn(Schedulers.boundedElastic()).flatMap(credential -> {
+                    Integer start = exchange.getAttribute(BodyParseFilter.ATTR_MODEL_VALUE_START);
+                    Integer end = exchange.getAttribute(BodyParseFilter.ATTR_MODEL_VALUE_END);
+                    return requestPipeline.prepare(result.get(), credential.orElse(null), exchange.getRequest().getMethod(),
+                        com.pab.ficc.ibp.modelgate.server.common.ApplicationPaths.uri(exchange.getRequest()), exchange.getRequest().getHeaders(), bodyBytes,
+                        start == null ? -1 : start, end == null ? -1 : end)
+                        .flatMap(call -> applyRoute(exchange, chain, call, modelId));
+                });
+        }).onErrorResume(BusinessException.class, e -> {
+            if (exchange.getResponse().isCommitted()) return Mono.error(e);
+            exchange.getAttributes().put("mg.errorMsg", e.getErrorCode().getMessage());
+            return reject(exchange, HttpStatus.valueOf(e.getErrorCode().getCode()), e.getErrorCode());
         });
     }
 
@@ -163,58 +173,11 @@ public class ModelRouteFilter implements GlobalFilter, Ordered {
         }
     }
 
-    /** 装载模型+凭证、选适配器、构造上游请求；不可用时返回 null（调用方转 404）。 */
-    private RouteInfo buildRouteInfo(ServerWebExchange exchange, byte[] bodyBytes, String modelId) {
-        {
-            Optional<ModelInstanceEntity> modelOpt = modelService.getModelCached(modelId);
-            if (modelOpt.isEmpty()) {
-                log.info("[ModelRoute] 拒绝: 模型不存在, modelId={}", modelId);
-                return null;
-            }
-            ModelInstanceEntity model = modelOpt.get();
-
-            // 从缓存读取上游鉴权凭证并解密 SK
-            ModelCredentialEntity credential = modelService.getCredentialDecrypted(modelId);
-
-            // 按 apiSpec 选择适配器（Strategy 模式）：openai/azure_openai/anthropic/custom
-            ProviderAdapter adapter = adapters.stream()
-                    .filter(a -> a.supports(model.getApiSpec()))
-                    .findFirst()
-                    .orElse(null);
-
-            if (adapter == null) {
-                // 与"模型不存在"同为 404，但成因完全不同：这是库里 api_spec 填了没人实现的值，
-                // 属配置错误而非调用方问题，必须能从日志区分，否则排查会一直往调用方身上找
-                log.warn("[ModelRoute] 无可用适配器: modelId={}, apiSpec={}, 已注册={}",
-                        modelId, model.getApiSpec(),
-                        adapters.stream().map(ProviderAdapter::getApiSpec).toList());
-                return null;
-            }
-
-            // 适配器负责：请求体参数转换、上游鉴权 Header 构造、上游 URL 构建
-            // 先应用模型级参数配置（default_params / force_params / param_mapping），
-            // 再交给适配器做 api_spec 特有的改写。顺序不能反：适配器可能会删掉某些字段
-            // （如 Azure 会 remove("model")），先跑适配器的话这些配置就落在了会被删掉的字段上。
-            // 三项都没配且上游 ID 无需改写时，merge 直接原样返回、不解析不分配；
-            // 只配置上游 ID 时则优先走下面的字节偏移定点替换。
-            // 把 BodyParseFilter 顺带记下的 model 值偏移传下去：
-            // 「只需改上游模型 ID」这种情况能靠它走定点替换，省掉一次完整解析+序列化。
-            Integer mvStart = exchange.getAttribute(BodyParseFilter.ATTR_MODEL_VALUE_START);
-            Integer mvEnd = exchange.getAttribute(BodyParseFilter.ATTR_MODEL_VALUE_END);
-            byte[] mergedBody = paramMerger.merge(bodyBytes, model,
-                    mvStart == null ? -1 : mvStart, mvEnd == null ? -1 : mvEnd);
-            byte[] transformedBody = adapter.transformRequestBody(mergedBody, model, credential);
-            HttpHeaders transformedHeaders = adapter.buildUpstreamHeaders(model, credential);
-            URI upstreamUri = adapter.buildUpstreamUri(model, exchange.getRequest().getURI());
-
-            return new RouteInfo(transformedBody, transformedHeaders, upstreamUri);
-        }
-    }
-
     private Mono<Void> applyRoute(ServerWebExchange exchange, GatewayFilterChain chain,
-                                  RouteInfo info, String modelId) {
+                                  ProviderRequestPipeline.PreparedCall call, String modelId) {
         {
-            URI upstreamUri = info.upstreamUri();
+            var info = call.request();
+            URI upstreamUri = info.uri();
 
             // ⚠️ 只设 GATEWAY_REQUEST_URL_ATTR 是不够的：
             // Gateway 内置的 RouteToRequestUrlFilter（order=10000，排在本过滤器 -140 之后）
@@ -250,8 +213,11 @@ public class ModelRouteFilter implements GlobalFilter, Ordered {
                 @Override
                 public HttpHeaders getHeaders() {
                     // 模型侧请求体被适配器改写过，必须同步修正 Content-Length（带长度参数的那个重载）
-                    return UpstreamHeaderBuilder.build(super.getHeaders(), info.headers(), info.body().length);
+                    return info.headers();
                 }
+
+                @Override
+                public org.springframework.http.HttpMethod getMethod() { return info.method(); }
 
                 /**
                  * ⚠️ {@code DataBuffer} 必须在这里**每次新建**，不能提到方法外只 wrap 一次。
@@ -272,11 +238,12 @@ public class ModelRouteFilter implements GlobalFilter, Ordered {
                  */
                 @Override
                 public Flux<DataBuffer> getBody() {
-                    return Flux.just(exchange.getResponse().bufferFactory().wrap(info.body()));
+                    return info.payload().publisher(exchange.getResponse().bufferFactory());
                 }
             };
 
-            return chain.filter(exchange.mutate().request(mutatedRequest).build());
+            return chain.filter(exchange.mutate().request(mutatedRequest)
+                .response(new ProviderResponseDecorator(exchange, call)).build());
         }
     }
 
@@ -284,6 +251,8 @@ public class ModelRouteFilter implements GlobalFilter, Ordered {
     private Mono<Void> reject(ServerWebExchange exchange, HttpStatus status, ErrorCode errorCode) {
         var response = exchange.getResponse();
         response.setStatusCode(status);
+        response.getHeaders().remove(HttpHeaders.CONTENT_ENCODING);
+        response.getHeaders().remove(HttpHeaders.CONTENT_LENGTH);
         response.getHeaders().setContentType(MediaType.APPLICATION_JSON);
         byte[] bytes;
         try {
@@ -295,5 +264,4 @@ public class ModelRouteFilter implements GlobalFilter, Ordered {
         return response.writeWith(Mono.just(buffer));
     }
 
-    private record RouteInfo(byte[] body, HttpHeaders headers, URI upstreamUri) {}
 }

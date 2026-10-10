@@ -145,10 +145,14 @@ public class ModelConnectivityServiceTest {
                 .getBytes(StandardCharsets.UTF_8);
 
         capturedBody.set(null);
+        ConnectivityTestVO invalid = service.chat(model, null, body).block(Duration.ofSeconds(10));
+        check("V2 拒绝 force_params.model 脏配置且不调用上游",
+                invalid != null && !Boolean.TRUE.equals(invalid.getSuccess()) && capturedBody.get() == null);
+        model.setForceParams("{\"temperature\":0.2}");
         ConnectivityTestVO result = service.chat(model, null, body).block(Duration.ofSeconds(10));
         JsonNode sent = MAPPER.readTree(capturedBody.get());
         check("管理面对话测试成功", result != null && Boolean.TRUE.equals(result.getSuccess()));
-        check("对话测试 upstreamModelId 优先于 force_params.model",
+        check("对话测试仍由 upstreamModelId 决定路由身份",
                 "provider/model-v1".equals(sent.path("model").asText()));
         check("对话测试应用 default_params", sent.path("top_p").asDouble() == 0.8d);
         check("对话测试应用 force_params", sent.path("temperature").asDouble() == 0.2d);

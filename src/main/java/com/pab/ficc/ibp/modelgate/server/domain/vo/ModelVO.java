@@ -14,6 +14,9 @@ public class ModelVO {
     private String        provider;
     private String        modelType;
     private String        apiSpec;
+    private String        responseMode;
+    private Integer       configVersion;
+    private String        adapterConfig;
     private String        upstreamUrl;
     /** 上游接口路径；留空表示按 apiSpec 取默认，前端据此展示占位提示 */
     private String        upstreamPath;
@@ -31,7 +34,7 @@ public class ModelVO {
 
     /**
      * 授权了本模型的接入系统数量（授权记录数，不区分是否实际生效）。
-     * 列表页展示用；具体是哪些系统、是否生效见 {@code GET /modelgate/auth/apps}。
+     * 列表页展示用；具体是哪些系统、是否生效见 {@code GET /auth/apps}。
      */
     private Long          authorizedAppCount;
 
@@ -49,6 +52,9 @@ public class ModelVO {
         vo.provider     = e.getProvider();
         vo.modelType    = e.getModelType();
         vo.apiSpec      = e.getApiSpec();
+        vo.responseMode = e.getResponseMode() == null ? "PASSTHROUGH" : e.getResponseMode();
+        vo.configVersion = e.getConfigVersion() == null ? 1 : e.getConfigVersion();
+        vo.adapterConfig = e.getAdapterConfig();
         vo.upstreamUrl  = e.getUpstreamUrl();
         vo.upstreamPath = e.getUpstreamPath();
         vo.timeoutMs    = e.getTimeoutMs();

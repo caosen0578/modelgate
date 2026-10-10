@@ -1,6 +1,10 @@
 # ModelGate
 
-企业内网 AI 模型流量网关：统一注册和管理多个 AI 模型（自建/外部 API），为内部系统颁发凭证并控制模型访问范围，对外暴露 **OpenAI 兼容接口**（`/v1/chat/completions`），将请求鉴权、限流、路由并转发至对应上游。
+企业内网 AI 模型流量网关：统一注册和管理多个 AI 模型（自建/外部 API），为内部系统颁发凭证并控制模型访问范围，对外暴露 **OpenAI 兼容接口**（`/modelgate/v1/chat/completions`），将请求鉴权、限流、路由并转发至对应上游。
+
+统一文根为 `/modelgate`（WebFlux base-path），管理 API 为 `/modelgate/models/page` 等，
+Controller 不再带公共 `/modelgate` 前缀。SLB 必须保留应用文根，容器探针、权限表、调用方需同步切换。
+详见 [统一文根与路径迁移](spec/modelgate/15-统一文根与路径迁移.md)。
 
 ## 技术栈
 
@@ -33,16 +37,16 @@ mysql -u root -p 你的库名 < sql/modelgate_schema.sql
 #        ⚠️ 生成一次存好，勿每次部署重新生成——换密钥则库中全部存量密文解不开；
 #        ⚠️ 仓库默认值是本地联调测试密钥，部署前必须替换，否则等于用公开密钥加密全部凭证。
 # 注：ADMIN_TOKEN_OPS / ADMIN_USERNAME / ADMIN_PASSWORD 已随 AdminAuthFilter 移除，
-#     管理面 /modelgate/** 的鉴权由内网体系承担，本进程不再校验。
+#     管理面 管理资源接口 的鉴权由内网体系承担，本进程不再校验。
 
 # 3. 构建与启动
 mvn clean package
 java -jar target/modelgate-1.0.0-SNAPSHOT.jar
 ```
 
-- 管理后台：`http://localhost:10811/admin.html`（静态页，全功能 CRUD + 调用预览）
-- 行内容器探针：`/actuator/detection/running`、`/actuator/detection/available`、
-  `/actuator/detection/shutdown`（均按平台约定返回 200；状态语义见 spec/10）；标准健康页仍为 `/actuator/health`。
+- 管理后台：`http://localhost:10811/modelgate/admin.html`（静态页，全功能 CRUD + 调用预览）
+- 行内容器探针：`/modelgate/actuator/detection/running`、`/modelgate/actuator/detection/available`、
+  `/modelgate/actuator/detection/shutdown`（均按平台约定返回 200；状态语义见 spec/10）；标准健康页仍为 `/modelgate/actuator/health`。
   **无指标端点**，告警走日志关键字，见 spec/10 §5
 
 > 无在线 Swagger UI：内网仓库无 webflux 版 springdoc，且 webmvc 版会带入 spring-webmvc
@@ -71,14 +75,14 @@ mysql -uroot -p 你的库名 < sql/modelgate_schema.sql          # 已有 MySQL
 mvn clean package -DskipTests
 java -jar target/modelgate-1.0.0-SNAPSHOT.jar
 
-# 4. 浏览器打开 http://localhost:10811/admin.html
+# 4. 浏览器打开 http://localhost:10811/modelgate/admin.html
 #    页面无需填任何令牌：AdminAuthFilter 已移除，管理面鉴权由内网体系承担
 ```
 
 ## 业务调用（OpenAI SDK 兼容）
 
 ```
-POST /v1/chat/completions
+POST /modelgate/v1/chat/completions
 Authorization: Bearer {api_key}          # 或 AKSK {ak}:{timestamp}:{signature}
 
 {"model": "{model_id}", "messages": [...], "stream": true}

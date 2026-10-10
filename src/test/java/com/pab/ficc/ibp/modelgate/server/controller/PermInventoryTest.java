@@ -44,7 +44,7 @@ public class PermInventoryTest {
     private static final Class<?>[] CONTROLLERS = {
             AccessRuleController.class, AppController.class, AuditLogController.class,
             CredentialController.class, GatewayConfigController.class, ModelAuthController.class,
-            ModelController.class, PayloadController.class, ServiceAuthController.class,
+            ModelController.class, ProviderAdapterController.class, PayloadController.class, ServiceAuthController.class,
             ServiceController.class, UsageStatsController.class,
     };
 
@@ -107,7 +107,7 @@ public class PermInventoryTest {
                 value = new String[0];
             }
             String sub = value.length > 0 ? value[0] : "";
-            out.add(k.verb() + " " + prefix + sub);
+            out.add(k.verb() + " /modelgate" + prefix + sub);
         }
     }
 
@@ -116,7 +116,7 @@ public class PermInventoryTest {
         Set<String> out = new TreeSet<>();
         Matcher m = Pattern.compile("\\|\\s*`([A-Z,]+)`\\s*\\|\\s*`(/[^`]+)`\\s*\\|").matcher(doc);
         while (m.find()) {
-            if (m.group(2).startsWith("/actuator/")) {
+            if (m.group(2).startsWith("/modelgate/actuator/")) {
                 continue;   // L0 不进 perm，单列
             }
             out.add(m.group(1) + " " + m.group(2));

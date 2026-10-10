@@ -102,7 +102,7 @@ public class ServiceRouteFilter implements GlobalFilter, Ordered {
         ServiceEntity svc = svcOpt.get();
         ServiceCredentialEntity cred = serviceRegistryService.getCredentialDecrypted(serviceId);
 
-        URI original = exchange.getRequest().getURI();
+        URI original = com.pab.ficc.ibp.modelgate.server.common.ApplicationPaths.uri(exchange.getRequest());
         String upstreamUri = svc.joinUpstream(
                         resolveRemainder(original.getPath(), serviceId, svc.shouldStripPrefix()))
                 + (original.getRawQuery() != null ? "?" + original.getRawQuery() : "");

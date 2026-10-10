@@ -50,6 +50,11 @@ public enum ErrorCode {
     // ===== 模型路由 =====
     MODEL_NOT_FOUND(404, "Model not found"),
     MODEL_FIELD_MISSING(400, "Request body missing 'model' field"),
+    PROVIDER_UNSUPPORTED(500, "Provider adapter not installed"),
+    PROVIDER_CONFIG_INVALID(500, "Invalid provider configuration"),
+    PROVIDER_REQUEST_INVALID(400, "Invalid provider request"),
+    PROVIDER_FEATURE_UNSUPPORTED(400, "Provider feature not supported"),
+    PROVIDER_RESPONSE_INVALID(500, "Invalid upstream protocol response"),
 
     // ===== 通用服务（/svc/** 流量）=====
     // 与模型侧一一对应但**分开定义**：两条链路的拒绝原因语义不同，

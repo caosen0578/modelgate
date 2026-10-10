@@ -18,7 +18,7 @@ public class TrafficTypeTest {
         internalTraffic();
         unknownFallsBackToBusiness();
         routedButNotPrefixed();
-        equivalentToBaseline();
+        explicitPolicyComparison();
         prefixBoundaries();
         isBusinessSemantics();
 
@@ -44,8 +44,8 @@ public class TrafficTypeTest {
     }
 
     private static void internalTraffic() {
-        check("/modelgate/models → INTERNAL",
-                TrafficType.of("/modelgate/models") == TrafficType.INTERNAL);
+        check("/models → INTERNAL",
+                TrafficType.of("/models") == TrafficType.INTERNAL);
         check("/actuator/health → INTERNAL",
                 TrafficType.of("/actuator/health") == TrafficType.INTERNAL);
         check("/actuator/detection/running → INTERNAL",
@@ -91,27 +91,26 @@ public class TrafficTypeTest {
     }
 
     /**
-     * 与改造前<b>逐路径等价</b>的机械对照 —— 本批次"纯重构、零行为改变"的直接证据。
-     *
-     * <p>改造前两类守卫：
+     * 与明确资源白名单策略逐路径对照；部署文根由 ApplicationPathsTest 单独覆盖。
+     * <p>当前两类守卫：
      * <ul>
-     *   <li>通用能力过滤器：{@code !(startsWith("/modelgate/") || startsWith("/actuator/"))} 才执行</li>
+     *   <li>通用能力过滤器：仅明确管理资源与 actuator 不执行</li>
      *   <li>模型专属过滤器：{@code startsWith("/v1/")} 才执行</li>
      * </ul>
-     * 改造后分别对应 {@code isBusiness()} 与 {@code == MODEL}。这里逐条比对两边结果，
-     * 任何一条不一致都说明重构改变了行为。加新前缀时把新形状加进这个数组即可。
+     * 分别对应 {@code isBusiness()} 与 {@code == MODEL}。
      */
-    private static void equivalentToBaseline() {
+    private static void explicitPolicyComparison() {
         String[] paths = {
                 "/v1/chat/completions", "/v1/embeddings", "/v1/", "/v1", "/v1;a=b",
                 "/v1;a=b/chat/completions", "/v1abc/x", "/v2/chat",
                 "/svc/crm/api", "/svc", "/svcabc/x",
-                "/modelgate/models", "/modelgate/", "/actuator/health",
+                "/models", "/models/page", "/services/list", "/apps/detail", "/credentials/secret", "/modelgate/", "/actuator/health",
                 "/actuator/detection/running", "/", "/favicon.ico", "/foo/bar",
         };
         boolean allOk = true;
         for (String p : paths) {
-            boolean oldBusiness = !(p.startsWith("/modelgate/") || p.startsWith("/actuator/"));
+            boolean oldBusiness = !(com.pab.ficc.ibp.modelgate.server.constant.UrlConstant.MANAGE_PATHS.stream()
+                    .anyMatch(root -> p.equals(root) || p.startsWith(root + "/")) || p.startsWith("/actuator/"));
             boolean oldModel = p.startsWith("/v1/");
             TrafficType t = TrafficType.of(p);
             if (t.isBusiness() != oldBusiness || (t == TrafficType.MODEL) != oldModel) {
@@ -120,7 +119,7 @@ public class TrafficTypeTest {
                         + ",model=" + oldModel + ") new(" + t + ")");
             }
         }
-        check("与改造前逐路径等价（" + paths.length + " 条路径 × 2 类守卫）", allOk);
+        check("符合显式资源边界策略（" + paths.length + " 条路径 × 2 类守卫）", allOk);
     }
 
     /**

@@ -58,7 +58,7 @@ public class ServiceAuthController {
      * 反查：某个服务被哪些接入系统授权。
      *
      * <p><b>放在授权 Controller 上而不是 ServiceController</b>：模型侧的同名反查就是
-     * {@code GET /modelgate/auth/apps?modelId=}，挂在 ModelAuthController 上。
+     * {@code GET /auth/apps?modelId=}，挂在 ModelAuthController 上。
      * 这个动作查的是授权表、不是服务表，放这里语义也更顺。
      * 第一版曾放在 {@code /services/apps}，与模型侧不对称，已由
      * {@code ServiceMirrorsModelTest} 钉住。

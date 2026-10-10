@@ -14,6 +14,14 @@ import java.net.URI;
  */
 @Component
 public class OpenAIAdapter implements ProviderAdapter {
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+    public OpenAIAdapter() { this(new com.fasterxml.jackson.databind.ObjectMapper()); }
+    @org.springframework.beans.factory.annotation.Autowired
+    public OpenAIAdapter(com.fasterxml.jackson.databind.ObjectMapper objectMapper) { this.objectMapper = objectMapper; }
+
+    @Override public ResponseSession openResponse(AdapterResponseContext context) {
+        return ResponseSessions.inspect(context, new OpenAIResponseInspector(objectMapper));
+    }
 
     @Override
     public String getApiSpec() {
@@ -37,11 +45,9 @@ public class OpenAIAdapter implements ProviderAdapter {
 
     @Override
     public URI buildUpstreamUri(ModelInstanceEntity model, URI originalUri) {
-        String base = model.getUpstreamUrl().replaceAll("/$", "");
         // 配了 upstream_path 用它；留空则沿用原行为——透传调用方路径（/v1/chat/completions 等）
         String path = resolvePath(model.getUpstreamPath(), originalUri.getPath());
         String query = originalUri.getRawQuery();
-        String full = base + path + (query != null ? "?" + query : "");
-        return URI.create(full);
+        return ProviderEndpointResolver.resolve(model.getUpstreamUrl(), path, query);
     }
 }

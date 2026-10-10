@@ -28,6 +28,7 @@ import java.net.InetAddress;
 public class StartupBannerPrinter {
 
     private final Environment environment;
+    private final com.pab.ficc.ibp.modelgate.server.common.ApplicationPaths applicationPaths;
 
     private volatile int port = -1;
 
@@ -44,7 +45,7 @@ public class StartupBannerPrinter {
         } catch (Exception e) {
             ip = "127.0.0.1";
         }
-        String baseUrl = "http://" + ip + ":" + port;
+        String baseUrl = "http://" + ip + ":" + port + applicationPaths.publicPath("");
         String profile = environment.getActiveProfiles().length > 0
                 ? String.join(",", environment.getActiveProfiles())
                 : "default";

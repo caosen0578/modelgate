@@ -114,7 +114,9 @@ public class CircuitBreakerFilter implements GlobalFilter, Ordered {
                 .doOnSuccess(v -> {
                     int status = exchange.getResponse().getStatusCode() != null
                             ? exchange.getResponse().getStatusCode().value() : 200;
-                    if (status >= 500) {
+                    var telemetry = (com.pab.ficc.ibp.modelgate.server.adapter.ResponseTelemetry)
+                        exchange.getAttribute(com.pab.ficc.ibp.modelgate.server.adapter.ResponseTelemetry.EXCHANGE_ATTRIBUTE);
+                    if (status >= 500 || telemetry != null && telemetry.errorCode() != null) {
                         // 上游 5xx 视为调用失败，通知熔断器累计错误率
                         circuitBreaker.onError(System.nanoTime() - startNano,
                                 TimeUnit.NANOSECONDS,

@@ -86,7 +86,7 @@ public class AdminPageStructureTest {
      * 新增这类函数时把名字加进来——加进来才有人替你守着它别被复制到模块里。
      */
     private static final List<String> COMMON_FUNCTIONS = List.of(
-            "apiUrl", "defaultGatewayBase", "isOk", "errMsg",
+            "apiUrl", "defaultGatewayBase", "applicationPath", "publicPath", "isOk", "errMsg",
             "applyPage", "renderPager", "fmt", "fmtTime", "toast", "setStatus",
             "escapeHtml", "escHtml", "jsArg", "statusTag", "copyText",
             "openModal", "closeModal",

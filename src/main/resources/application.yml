@@ -4,11 +4,16 @@
 # 不再有内网中间件（Venus/内网 Redis 集群 SDK）分支。部署到不同环境需要不同参数（数据库地址、
 # 密钥等）时，直接改这份文件里对应的值即可。
 # ============================================================
+
+
 server:
+  # main 读取环境变量 PORT_NO；非空时直接设置监听端口，不改写 server.port 配置。
+  # PORT_NO 未设置/空白时沿用正常配置（内网由 Apollo 提供，本地使用下面的值）。
+  # PORT_NO 必须为 1~65535 的整数；非法值会阻止启动，避免监听到与平台不一致的端口。
   port: 10811
   # 优雅停机：收到 SIGTERM 后先停止接收新连接，等在途请求处理完再关闭。
   # 对本网关尤其重要——LLM 请求正常就要跑 30~180 秒，直接切断等于让调用方白等一场，
-  # 而且上游可能已经产生了计费。配合 /actuator/detection/shutdown 的摘流量动作使用：
+  # 而且上游可能已经产生了计费。配合 /modelgate/actuator/detection/shutdown 的摘流量动作使用：
   # 平台先调该端点（流量检查转 503、平台摘流量），再发 SIGTERM，此时在途请求已所剩无几。
   shutdown: graceful
 
@@ -35,6 +40,9 @@ datasource:
       remove-abandoned-timeout-millis: 300000
 
 spring:
+  webflux:
+    # 应用统一文根；SLB/容器平台保留此段，Controller 和 Gateway Path 不重复拼接。
+    base-path: /modelgate
   # ⚠️ 必须留在 application.yml，不能只写在 bootstrap.yml：
   #    spring-cloud-starter-bootstrap 已随 Apollo/Consul 一并移除，Spring Cloud 2020+ 起
   #    没有这个依赖就**根本不读 bootstrap.yml**（该文件目前整体是死配置）。

@@ -124,7 +124,8 @@ public class PayloadAndAppQueryTest {
                 null,   // ServiceRegistryService
                 null,   // ServiceConnectivityService
                 new RequestHeaderSnapshotter(8192, 16384),
-                null);  // AppScopeResolver
+                null,   // AppScopeResolver
+                new com.pab.ficc.ibp.modelgate.server.common.ApplicationPaths("/modelgate"));
         Method validate = PayloadController.class.getDeclaredMethod("validate", PayloadQueryBO.class);
         validate.setAccessible(true);
         try {

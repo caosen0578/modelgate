@@ -8,7 +8,7 @@ import com.pab.ficc.ibp.domain.base.bo.BaseBo;
  * <p><b>为什么必须有</b>：行内 {@code BaseBo.setPageSize} 是一个<b>裸 setter</b>，
  * 框架层不做任何收敛（已反编译确认：方法体只有 {@code putfield}）。
  * 也就是说所有走 {@code BaseBo} 的列表接口，只要没人在 Controller 里拦，
- * 调用方传多大就是多大。实测 {@code GET /modelgate/audit?pageSize=100000}
+ * 调用方传多大就是多大。实测 {@code GET /audit?pageSize=100000}
  * 返回 HTTP 200、2.8 秒、1.7MB，把当时整张审计表都吐了出来。
  *
  * <p>危害不止于"返回慢"：这类查询会长时间占住一条 Druid 连接（池上限 100）

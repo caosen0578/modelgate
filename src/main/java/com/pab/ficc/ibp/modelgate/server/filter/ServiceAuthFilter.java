@@ -61,7 +61,7 @@ public class ServiceAuthFilter implements GlobalFilter, Ordered {
             return chain.filter(exchange);
         }
 
-        String path = exchange.getRequest().getURI().getPath();
+        String path = com.pab.ficc.ibp.modelgate.server.common.ApplicationPaths.path(exchange.getRequest());
         String serviceId = extractServiceId(path);
         if (serviceId == null) {
             // 形如 /svc/ 或 /svc —— 路由能匹配到，但没有服务编码可用
