@@ -1,5 +1,7 @@
 # ModelGate
 
+数据库部署统一从 [deploy/database/README.md](deploy/database/README.md) 开始：独立模型库，仅12张mg_*表；首次全量与历史增量分开，禁止批量执行所有SQL。
+
 企业内网 AI 模型流量网关：统一注册和管理多个 AI 模型（自建/外部 API），为内部系统颁发凭证并控制模型访问范围，对外暴露 **OpenAI 兼容接口**（`/modelgate/v1/chat/completions`），将请求鉴权、限流、路由并转发至对应上游。
 
 统一文根为 `/modelgate`（WebFlux base-path），管理 API 为 `/modelgate/models/page` 等，

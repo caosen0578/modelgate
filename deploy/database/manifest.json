@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "project": "modelgate",
+  "schema": "sql/modelgate_schema.sql",
+  "tables": [
+    "mg_model",
+    "mg_model_credential",
+    "mg_app",
+    "mg_app_credential",
+    "mg_app_model_auth",
+    "mg_access_rule",
+    "mg_gateway_config",
+    "mg_request_payload",
+    "mg_audit_log",
+    "mg_service",
+    "mg_service_credential",
+    "mg_app_service_auth"
+  ],
+  "fullInstall": [
+    "sql/modelgate_schema.sql"
+  ],
+  "manualBootstrap": [],
+  "upgradeCandidates": [
+    "sql/repair_20260813_null_base_fields.sql",
+    "sql/upgrade_20260809_gateway_config_physical_delete.sql",
+    "sql/upgrade_20260809_model_upstream_path.sql",
+    "sql/upgrade_20260809_unique_key_include_is_del.sql",
+    "sql/upgrade_20260813_remove_dead_gateway_config.sql",
+    "sql/upgrade_20260813_request_payload_log.sql",
+    "sql/upgrade_20260819_fix_null_base_time.sql",
+    "sql/upgrade_20260819_force_params_review.sql",
+    "sql/upgrade_20260819_model_id_cascade.sql",
+    "sql/upgrade_20260819_sha256_utf8_migration.sql",
+    "sql/upgrade_20260819_upstream_model_id.sql",
+    "sql/upgrade_20260820_app_system_name.sql",
+    "sql/upgrade_20260821_payload_request_headers.sql",
+    "sql/upgrade_20260827_service_gateway.sql",
+    "sql/upgrade_20260828_service_probe.sql",
+    "sql/upgrade_20260829_payload_replay.sql",
+    "sql/upgrade_20260910_hex_encoding.sql",
+    "sql/upgrade_20261007_provider_adapter_v2.sql"
+  ],
+  "readOnlyExternal": null,
+  "sourceRoot": "src/main/java",
+  "archive": null,
+  "note": "Inventory only, NOT an automatic migration runner. Select upgrades after schema review; no automatic account or administrator grants."
+}

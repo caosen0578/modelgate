@@ -20,7 +20,7 @@ server:
 # ===== 数据源（Druid 直连，见 ServiceConfiguration）=====
 datasource:
   local:
-    url: jdbc:mysql://47.119.189.29:65522/cbdb?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    url: jdbc:mysql://47.119.189.29:65522/ibpmlgatedb?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
     username: root
     password: no1knowS
     # Druid 连接池参数，生产环境按需直接改这几行，无需改代码重新编译（2026-08-18 压测优化后externalize）。
@@ -349,7 +349,7 @@ modelgate:
     buffer-size: 20000             # 内存队列条数。报文体积远大于审计记录，取审计的 1/10 控制堆占用；满时丢弃并打 WARN（绝不阻塞业务）
     batch-size: 200                # 单批落库条数。报文含 LONGTEXT，批次过大会撑爆 max_allowed_packet
     flush-interval-ms: 2000        # 消费端刷盘间隔（毫秒）；SSE 拼接与 JSON 解析都在这个线程做，与业务链路隔离
-    retention-days: 7              # 保留天数。刻意远短于审计的 90 天——报文单行体积是审计的几十到上千倍
+    retention-days: 90              # 保留天数。刻意远短于审计的 90 天——报文单行体积是审计的几十到上千倍
     cleanup-cron: "0 30 2 * * ?"  # 清理 cron，错开审计清理（2:00）避免同时抢 IO
     # 内存保护阈值（字节，默认 64MB）。按决策不限制存储大小，但内存缓冲必须有保险丝：
     # 上游异常吐出超大响应时若无上限会吃光堆内存触发 OOM，那是全部请求一起挂。
