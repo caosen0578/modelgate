@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="以三张简易流程图介绍 ModelGate 的统一接入、报文留档与问题回放。">
+<title>ModelGate · 网关与录制回放简图</title>
+<style>
+  :root{color-scheme:light;--ink:#19314b;--muted:#596e83;--blue:#275ec6;--pale-blue:#edf4ff;--green:#27735f;--pale-green:#edf8f3;--gold:#a06b17;--pale-gold:#fff7e7;--line:#dce5ee;--page:#f2f6fa}
+  *{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:28px}
+  body{margin:0;background:var(--page);color:var(--ink);font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif}
+  a{color:var(--blue);text-underline-offset:4px}a:focus-visible,button:focus-visible{outline:3px solid var(--blue);outline-offset:4px}
+  .shell{max-width:1320px;margin:0 auto;padding:0 38px}.hero{padding:40px 0 30px;background:#16314d;color:#fff}
+  .topline{display:flex;justify-content:space-between;align-items:center;gap:20px;margin-bottom:22px}.brand{font-weight:650;letter-spacing:.08em;font-size:13px}
+  .topline a{color:#dce8f6;font-size:13px}.eyebrow{margin:0 0 10px;color:#b9d1ee;font-size:13px}
+  h1{margin:0;font-size:clamp(28px,3.1vw,40px);line-height:1.4;letter-spacing:.02em;font-weight:650}
+  .hero p{margin:10px 0 0;color:#d4e1ef;font-size:16px}.toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px 26px;padding-top:20px;padding-bottom:20px}
+  .toolbar a{text-decoration:none;color:var(--muted);font-size:14px}.toolbar a:hover{color:var(--blue)}
+  button{margin-left:auto;padding:8px 15px;border:1px solid #c9d6e4;border-radius:6px;background:#fff;color:var(--ink);font:inherit;font-size:13px;cursor:pointer}
+  section{background:#fff;border:1px solid var(--line);border-radius:14px;padding:28px 30px 20px;margin-bottom:24px;overflow:hidden}
+  .heading{display:flex;align-items:baseline;gap:15px}.number{color:var(--blue);font:500 23px/1 Consolas,monospace}h2{margin:0;font-size:25px;line-height:1.45;font-weight:650}
+  .lead{margin:8px 0 5px 47px;color:var(--muted);font-size:15px}.diagram{display:block;width:100%;height:auto;margin:4px 0 0}
+  .diagram text{font-family:"Microsoft YaHei","Segoe UI",sans-serif;fill:var(--ink)}.diagram .label{font-size:23px;font-weight:600}.diagram .small{font-size:18px;fill:var(--muted)}.diagram .tiny{font-size:16px;fill:var(--muted)}
+  .diagram .blue-text{fill:var(--blue)}.diagram .gold-text{fill:var(--gold)}.diagram .green-text{fill:var(--green)}
+  .diagram .node{fill:#fff;stroke:var(--line);stroke-width:1.6}.diagram .gateway{fill:var(--pale-blue);stroke:#abc6ef;stroke-width:1.6}
+  .diagram .target{fill:var(--pale-green);stroke:#badacb;stroke-width:1.6}.diagram .archive{fill:var(--pale-gold);stroke:#dfc793;stroke-width:1.6}
+  .diagram .wire{fill:none;stroke:var(--blue);stroke-width:2.5;stroke-linejoin:round}.diagram .record-wire{fill:none;stroke:var(--gold);stroke-width:2.5;stroke-dasharray:7 6;stroke-linejoin:round}
+  .diagram .return-wire{fill:none;stroke:var(--green);stroke-width:2.5;stroke-linejoin:round}.diagram .icon{fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;color:var(--blue)}
+  .diagram .green-icon{color:var(--green)}.diagram .gold-icon{color:var(--gold)}.diagram .pill{fill:#fff;stroke:#cfddf3;stroke-width:1}
+  .caption{margin:0;padding:12px 15px;background:#f5f8fc;border-radius:6px;color:var(--muted);font-size:14px;text-align:center}
+  .caption strong{color:var(--ink);font-weight:600}.caption.warning{background:var(--pale-gold);color:#805811}.note{margin:10px 0 0;color:var(--muted);font-size:12px;text-align:center}
+  .mobile-flow{display:none}.foot{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px 20px;color:var(--muted);padding:0 0 28px;font-size:12px}.foot p{margin:0}
+  .symbol-library{position:absolute;width:0;height:0;overflow:hidden}
+  @media(max-width:1000px){
+    .shell{padding-left:16px;padding-right:16px}.hero{padding:26px 0}.topline{margin-bottom:18px}.hero p{font-size:14px}.toolbar{gap:10px 18px}button{margin-left:0}
+    section{padding:22px 17px 17px}.heading{gap:10px}h2{font-size:20px}.number{font-size:19px}.lead{margin-left:0;font-size:14px;margin-bottom:18px}
+    .diagram{display:none}.mobile-flow{display:flex;flex-direction:column;align-items:center;margin:15px 0 20px;gap:9px}
+    .mobile-node{padding:16px;width:100%;max-width:420px;border:1px solid var(--line);border-radius:9px;text-align:center;background:#fff}
+    .mobile-node strong{display:block;font-size:17px;font-weight:600}.mobile-node p{margin:4px 0 0;color:var(--muted);font-size:13px}.mobile-node.primary{background:var(--pale-blue)}.mobile-node.store{background:var(--pale-gold)}.mobile-node.upstream{background:var(--pale-green)}
+    .mobile-arrow{color:var(--blue);font-size:23px;line-height:1.3}.mobile-arrow span{font-size:12px;vertical-align:middle;margin-right:9px}.mobile-arrow.record{color:var(--gold)}
+    .caption{font-size:13px;text-align:left}.note{text-align:left}.topline a{font-size:12px}
+  }
+  @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+  @media print{
+    @page{size:A4 landscape;margin:12mm}body{background:#fff;print-color-adjust:exact;-webkit-print-color-adjust:exact}.shell{max-width:none;padding:0}
+    .hero,.toolbar,.foot{display:none}section{break-before:page;break-inside:avoid;border:0;border-radius:0;padding:0;margin:0}section:first-of-type{break-before:auto}
+    .diagram{display:block}.mobile-flow{display:none}h2{font-size:25px}.lead{margin-left:47px;font-size:15px}.caption{font-size:14px}.note{font-size:12px}
+  }
+</style>
+</head>
+<body>
+<svg class="symbol-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs>
+  <symbol id="icon-building" viewBox="0 0 32 32"><path d="M5 28V8h14v20M19 14h8v14M2 28h28M10 13h4M10 18h4M10 23h4M23 19h1M23 23h1M10 8V3h10v11"/></symbol>
+  <symbol id="icon-shield" viewBox="0 0 32 32"><path d="M16 2 28 7v9c0 7-7 12-12 14C11 28 4 23 4 16V7Z"/><path d="m10 16 4 4 8-9"/></symbol>
+  <symbol id="icon-model" viewBox="0 0 32 32"><rect x="5" y="7" width="22" height="21" rx="6"/><path d="M16 3v4M10 15h1M21 15h1M11 22h10M2 14v8M30 14v8"/></symbol>
+  <symbol id="icon-service" viewBox="0 0 32 32"><rect x="3" y="5" width="26" height="22" rx="4"/><path d="M3 12h26m-19 5-3 3 3 3m12-6 3 3-3 3m-4-7-4 9"/></symbol>
+  <symbol id="icon-folder" viewBox="0 0 32 32"><path d="M3 27V6h10l4 4h12v17Z"/><path d="M9 16h14M9 21h10"/></symbol>
+  <symbol id="icon-edit" viewBox="0 0 32 32"><path d="M16 5H5v23h23V17M12 20l2-7L25 2l5 5-11 11Z"/></symbol>
+  <symbol id="icon-send" viewBox="0 0 32 32"><path d="m2 14 28-12-9 28-7-12Zm12 4L30 2"/></symbol>
+  <symbol id="icon-search" viewBox="0 0 32 32"><circle cx="13" cy="13" r="10"/><path d="m20 20 10 10M8 13h10M13 8v10"/></symbol>
+  <symbol id="icon-result" viewBox="0 0 32 32"><path d="M7 3h18v26H7ZM12 9h8M12 14h8m-8 8 3 3 6-7"/></symbol>
+  <marker id="arrow-blue" markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M1 1 7 4 1 7" fill="none" stroke="#275ec6" stroke-width="2"/></marker>
+  <marker id="arrow-gold" markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M1 1 7 4 1 7" fill="none" stroke="#a06b17" stroke-width="2"/></marker>
+  <marker id="arrow-green" markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M1 1 7 4 1 7" fill="none" stroke="#27735f" stroke-width="2"/></marker>
+</defs></svg>
+<header class="hero"><div class="shell">
+  <div class="topline"><span class="brand">MODELGATE</span><a href="architecture.html">查看技术详细版 ↗</a></div>
+  <div class="eyebrow">网关与报文录制回放 · 汇报简版</div>
+  <h1>统一接入，留痕可查，问题可复现</h1>
+  <p>把分散的模型与服务，变成一个可统一管理的访问入口。</p>
+</div></header>
+<main class="shell">
+  <nav class="toolbar" aria-label="简图导航"><a href="#overview">网关做什么</a><a href="#recording">怎样录制</a><a href="#replay">怎样回放</a><button id="print-overview" type="button">打印 / 保存 PDF</button></nav>
+
+  <section id="overview" aria-labelledby="overview-heading">
+    <div class="heading"><span class="number">01</span><h2 id="overview-heading">一个入口，连接多种模型与服务</h2></div>
+    <p class="lead">系统向网关发起调用，由网关统一检查权限、控制用量、转发请求。</p>
+    <svg class="diagram" viewBox="0 0 1200 410" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="overview-svg-title overview-svg-desc">
+      <title id="overview-svg-title">多个业务系统通过统一网关访问大模型和通用业务接口</title>
+      <desc id="overview-svg-desc">左侧业务系统汇入中间 ModelGate 网关，网关检查权限和用量后分发到右侧各类大模型或通用业务接口，请求和响应均通过网关。</desc>
+      <text x="142" y="38" class="small" text-anchor="middle">现有业务系统</text>
+      <rect class="node" x="20" y="65" width="245" height="70" rx="12"/><use href="#icon-building" class="icon" x="40" y="82" width="36" height="36"/><text class="label" x="94" y="108">客户管理</text>
+      <rect class="node" x="20" y="165" width="245" height="70" rx="12"/><use href="#icon-building" class="icon" x="40" y="182" width="36" height="36"/><text class="label" x="94" y="208">数据分析</text>
+      <rect class="node" x="20" y="265" width="245" height="70" rx="12"/><use href="#icon-building" class="icon" x="40" y="282" width="36" height="36"/><text class="label" x="94" y="308">其他业务</text>
+      <path class="wire" d="M265 100H294V300H265M265 200H405" marker-end="url(#arrow-blue)"/>
+      <text x="350" y="180" class="tiny" text-anchor="middle">请求 / 响应</text>
+      <rect class="gateway" x="410" y="74" width="365" height="252" rx="24"/>
+      <use href="#icon-shield" class="icon" x="564" y="98" width="58" height="58"/>
+      <text x="592" y="204" class="label blue-text" text-anchor="middle" style="font-size:31px">ModelGate 网关</text>
+      <text x="592" y="239" class="small" text-anchor="middle">统一管理接入与调用</text>
+      <rect class="pill" x="431" y="266" width="98" height="36" rx="18"/><text x="480" y="290" class="tiny" text-anchor="middle">权限校验</text>
+      <rect class="pill" x="543" y="266" width="98" height="36" rx="18"/><text x="592" y="290" class="tiny" text-anchor="middle">用量控制</text>
+      <rect class="pill" x="655" y="266" width="98" height="36" rx="18"/><text x="704" y="290" class="tiny" text-anchor="middle">请求转发</text>
+      <path class="wire" d="M775 200H840V120H904M840 200V280H904" marker-end="url(#arrow-blue)"/>
+      <path class="wire" d="M840 200V120H904" marker-end="url(#arrow-blue)"/>
+      <rect class="target" x="910" y="60" width="270" height="120" rx="16"/><use href="#icon-model" class="icon green-icon" x="932" y="80" width="42" height="42"/>
+      <text class="label" x="993" y="108">各类大模型</text><text class="small" x="934" y="150">不同模型，统一接入管理</text>
+      <rect class="target" x="910" y="220" width="270" height="120" rx="16"/><use href="#icon-service" class="icon green-icon" x="932" y="240" width="42" height="42"/>
+      <text class="label" x="993" y="268">通用业务接口</text><text class="small" x="934" y="310">普通调用，也支持实时推送</text>
+      <text class="tiny" x="600" y="384" text-anchor="middle">业务系统不直接持有上游密钥，由网关统一保管和使用</text>
+    </svg>
+    <div class="mobile-flow" aria-label="统一接入简易流程">
+      <div class="mobile-node"><strong>现有业务系统</strong><p>客户管理、数据分析及其他业务</p></div><div class="mobile-arrow" aria-hidden="true">↓</div>
+      <div class="mobile-node primary"><strong>ModelGate 网关</strong><p>权限校验 · 用量控制 · 请求转发</p></div><div class="mobile-arrow" aria-hidden="true">↓</div>
+      <div class="mobile-node upstream"><strong>各类大模型 / 通用业务接口</strong><p>支持普通调用与实时推送，响应经网关返回</p></div>
+    </div>
+    <p class="caption"><strong>核心作用：</strong>接入有统一入口，权限与用量可集中管理。</p>
+  </section>
+
+  <section id="recording" aria-labelledby="recording-heading">
+    <div class="heading"><span class="number">02</span><h2 id="recording-heading">调用照常进行，报文旁路留档</h2></div>
+    <p class="lead">正常调用不等待写库；按需保存调用内容，方便事后查询与排查。</p>
+    <svg class="diagram" viewBox="0 0 1200 470" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="recording-svg-title recording-svg-desc">
+      <title id="recording-svg-title">正常调用的旁路副本异步保存，并供管理人员查询</title>
+      <desc id="recording-svg-desc">上方是业务系统、网关、模型或接口之间的双向正常调用。网关向下旁路复制报文，调用结束后异步留档；管理员从留档记录查询调用内容，主通道不等待落库。</desc>
+      <rect class="node" x="25" y="40" width="240" height="130" rx="16"/><use href="#icon-building" class="icon" x="124" y="57" width="42" height="42"/><text class="label" x="145" y="139" text-anchor="middle">业务系统</text>
+      <rect class="gateway" x="450" y="40" width="300" height="130" rx="16"/><use href="#icon-shield" class="icon" x="579" y="57" width="42" height="42"/><text class="label blue-text" x="600" y="139" text-anchor="middle">网关正常转发</text>
+      <rect class="target" x="935" y="40" width="240" height="130" rx="16"/><use href="#icon-service" class="icon green-icon" x="1034" y="57" width="42" height="42"/><text class="label" x="1055" y="139" text-anchor="middle">模型 / 业务接口</text>
+      <path class="wire" d="M275 105H440" marker-start="url(#arrow-blue)" marker-end="url(#arrow-blue)"/><text class="tiny" x="357" y="83" text-anchor="middle">请求 / 响应</text>
+      <path class="wire" d="M760 105H925" marker-start="url(#arrow-blue)" marker-end="url(#arrow-blue)"/><text class="tiny" x="842" y="83" text-anchor="middle">请求 / 响应</text>
+      <path class="record-wire" d="M600 178V300" marker-end="url(#arrow-gold)"/>
+      <text class="small gold-text" x="625" y="226">旁路复制</text><text class="tiny" x="625" y="257">调用结束后，异步保存</text>
+      <path class="archive" d="M455 330V402C455 429 745 429 745 402V330Z"/><ellipse class="archive" cx="600" cy="330" rx="145" ry="22"/>
+      <text class="label gold-text" x="600" y="377" text-anchor="middle">报文留档</text><text class="small" x="600" y="405" text-anchor="middle">按需保存调用内容</text>
+      <path class="record-wire" d="M755 373H925" marker-end="url(#arrow-gold)"/><text class="tiny" x="840" y="351" text-anchor="middle">事后查询</text>
+      <rect class="node" x="935" y="308" width="240" height="130" rx="16"/><use href="#icon-search" class="icon gold-icon" x="1034" y="324" width="40" height="40"/>
+      <text class="label" x="1055" y="398" text-anchor="middle">定位问题</text><text class="tiny" x="1055" y="423" text-anchor="middle">查看当时的调用内容</text>
+      <text class="small blue-text" x="145" y="340" text-anchor="middle">主通道照常返回</text><text class="tiny" x="145" y="372" text-anchor="middle">不等待留档落库</text>
+    </svg>
+    <div class="mobile-flow" aria-label="报文旁路录制简易流程">
+      <div class="mobile-node primary"><strong>业务系统 ⇄ 网关 ⇄ 上游</strong><p>正常转发与响应，不等待留档落库</p></div>
+      <div class="mobile-arrow record"><span>旁路复制，调用结束后异步保存</span><span aria-hidden="true">↓</span></div>
+      <div class="mobile-node store"><strong>报文留档</strong><p>按需保存调用内容</p></div><div class="mobile-arrow record" aria-hidden="true">↓</div>
+      <div class="mobile-node"><strong>事后查询，定位问题</strong><p>查看当时发了什么、返回了什么</p></div>
+    </div>
+    <p class="caption"><strong>核心作用：</strong>问题发生后有据可查，减少仅靠日志猜测的排查过程。</p>
+    <p class="note">留档范围取决于配置与实际采集结果，部分请求内容或响应可能未完整记录；记录需受权限和保留期管理。</p>
+  </section>
+
+  <section id="replay" aria-labelledby="replay-heading">
+    <div class="heading"><span class="number">03</span><h2 id="replay-heading">选择历史请求，重新调用上游排查</h2></div>
+    <p class="lead">授权管理员选取一条记录，核对或补充内容，再次请求上游并查看本次结果。</p>
+    <svg class="diagram" viewBox="0 0 1200 440" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="replay-svg-title replay-svg-desc">
+      <title id="replay-svg-title">管理员选择记录、核对内容、重新请求真实上游，再查看新的返回结果</title>
+      <desc id="replay-svg-desc">四个步骤依次为选择历史记录、核对或补充请求、管理端重新发送、真实模型或业务接口处理；下方返回线连接到查看本次返回。不是播放旧响应，会真实调用上游，可能产生成本或重复业务操作。</desc>
+      <rect class="node" x="20" y="30" width="240" height="160" rx="16"/><use href="#icon-folder" class="icon" x="117" y="52" width="46" height="46"/>
+      <text class="label" x="140" y="135" text-anchor="middle">选择历史记录</text><text class="small" x="140" y="166" text-anchor="middle">找到需要排查的那次调用</text>
+      <path class="wire" d="M270 110H310" marker-end="url(#arrow-blue)"/>
+      <rect class="node" x="320" y="30" width="240" height="160" rx="16"/><use href="#icon-edit" class="icon" x="417" y="52" width="46" height="46"/>
+      <text class="label" x="440" y="135" text-anchor="middle">核对 / 补充请求</text><text class="small" x="440" y="166" text-anchor="middle">确认内容和目标环境</text>
+      <path class="wire" d="M570 110H610" marker-end="url(#arrow-blue)"/>
+      <rect class="gateway" x="620" y="30" width="240" height="160" rx="16"/><use href="#icon-send" class="icon" x="717" y="52" width="46" height="46"/>
+      <text class="label blue-text" x="740" y="135" text-anchor="middle">管理端重新发送</text><text class="small" x="740" y="166" text-anchor="middle">按当前配置直接调用上游</text>
+      <path class="wire" d="M870 110H910" marker-end="url(#arrow-blue)"/>
+      <rect class="target" x="920" y="30" width="260" height="160" rx="16"/><use href="#icon-service" class="icon green-icon" x="1027" y="52" width="46" height="46"/>
+      <text class="label" x="1050" y="135" text-anchor="middle">真实模型 / 业务接口</text><text class="small" x="1050" y="166" text-anchor="middle">执行一次新的请求</text>
+      <path class="return-wire" d="M1050 200V265H600V295" marker-end="url(#arrow-green)"/><text class="small green-text" x="835" y="248" text-anchor="middle">返回本次处理结果</text>
+      <rect class="target" x="420" y="305" width="360" height="100" rx="16"/><use href="#icon-result" class="icon green-icon" x="444" y="331" width="45" height="45"/>
+      <text class="label" x="626" y="346" text-anchor="middle">查看本次返回</text><text class="small" x="626" y="380" text-anchor="middle">辅助分析上游处理问题</text>
+      <text class="small" x="145" y="336" text-anchor="middle">不是播放旧响应</text><text class="tiny" x="145" y="368" text-anchor="middle">而是重新发起一次调用</text>
+    </svg>
+    <div class="mobile-flow" aria-label="管理端回放简易流程">
+      <div class="mobile-node"><strong>选择历史记录</strong><p>找到需要排查的那次调用</p></div><div class="mobile-arrow" aria-hidden="true">↓</div>
+      <div class="mobile-node"><strong>核对 / 补充请求</strong><p>确认内容和目标环境</p></div><div class="mobile-arrow" aria-hidden="true">↓</div>
+      <div class="mobile-node primary"><strong>管理端重新发送</strong><p>按当前配置直接调用真实上游</p></div><div class="mobile-arrow" aria-hidden="true">↓</div>
+      <div class="mobile-node upstream"><strong>查看本次返回</strong><p>上游处理一次新的请求，并返回结果</p></div>
+    </div>
+    <p class="caption warning"><strong>操作提醒：</strong>回放会真实调用上游，可能产生成本或重复业务操作，仅限授权管理员使用。</p>
+    <p class="note">回放用于排查上游处理问题，不是完整业务接入链路的重演；实时推送的结果也会汇总后展示。</p>
+  </section>
+</main>
+<footer class="shell foot"><p>此页为当前能力的汇报简图；技术细节与已知边界见<a href="architecture.html">保留的详细架构版</a>。</p><p>离线可用 · 支持打印 · <time datetime="2026-10-30">2026-10-30</time></p></footer>
+<script>document.getElementById('print-overview').addEventListener('click',function(){window.print();});</script>
+</body>
+</html>

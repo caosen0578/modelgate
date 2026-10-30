@@ -43,6 +43,7 @@ class ApplicationBasePathIntegrationTest {
             .expectBody().jsonPath("$.data[0].adapterId").isEqualTo("openai");
         client().get().uri("/modelgate/admin.html").exchange().expectStatus().isOk();
         client().get().uri("/modelgate/architecture.html").exchange().expectStatus().isOk();
+        client().get().uri("/modelgate/architecture-overview.html").exchange().expectStatus().isOk();
         client().get().uri("/modelgate/actuator/health").exchange().expectStatus().isOk();
         for (String endpoint : List.of("running", "available", "shutdown")) {
             client().get().uri("/modelgate/actuator/detection/" + endpoint).exchange().expectStatus().isOk();
