@@ -1,387 +1,278 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="UTF-8"/>
-<title>ModelGate · 架构图</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="ModelGate 当前网络拓扑、过滤器链、报文旁路录制和管理端回放架构。">
+<title>ModelGate · 网络与报文录制回放架构</title>
 <style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;background:#f0f2f5;color:#1f2937;padding:32px}
-h1{font-size:22px;font-weight:700;color:#1e1b4b;margin-bottom:6px}
-.subtitle{font-size:13px;color:#64748b;margin-bottom:36px}
-.diagram-title{font-size:16px;font-weight:700;color:#1e1b4b;margin-bottom:20px;padding-bottom:10px;border-bottom:2px solid #6366f1;display:inline-block}
-.diagram-wrap{background:#fff;border-radius:16px;box-shadow:0 2px 12px rgba(0,0,0,.08);padding:32px;margin-bottom:40px}
-svg{display:block}
+:root{color-scheme:light;--ink:#192b40;--muted:#52657b;--line:#d6e0eb;--paper:#fff;--background:#f3f6fa;--blue:#245cc5;--blue-soft:#eef4ff;--purple:#7050a5;--purple-soft:#f5f0fc;--amber:#966114;--amber-soft:#fff8e9;--green-soft:#edf8f3;--red:#a43c30;--red-soft:#fff2ef;--flow-color:var(--blue)}
+*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:85px}
+body{margin:0;color:var(--ink);background:var(--background);font:14px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif}
+a{color:var(--blue);text-underline-offset:3px}a:focus-visible,button:focus-visible{outline:3px solid var(--blue);outline-offset:4px}
+code{font:.9em/1.6 Consolas,"SFMono-Regular",monospace;overflow-wrap:anywhere}
+.shell{width:min(1340px,100%);margin:0 auto;padding:0 40px}
+.masthead{padding:40px 0 32px;background:#142b46;color:#fff}.eyebrow{margin:0 0 10px;font-size:12px;letter-spacing:.12em;font-weight:600}
+h1{margin:0 0 12px;font-size:clamp(25px,3vw,36px);line-height:1.35;font-weight:650}.masthead p{max-width:900px;margin:0;color:#d5e2f0}
+.metadata{margin-top:20px;display:flex;flex-wrap:wrap;gap:8px 24px;font-size:12px}.metadata strong{color:#fff;font-weight:600}
+.navigation{position:sticky;top:0;z-index:5;border-bottom:1px solid var(--line);background:var(--paper)}
+.navigation .shell{display:flex;flex-wrap:wrap;align-items:center;gap:4px 24px;padding-top:8px;padding-bottom:8px}
+.navigation a{padding:8px 0;color:var(--ink);text-decoration:none;font-weight:600}.navigation a:hover{color:var(--blue)}
+button{margin-left:auto;padding:7px 13px;border:1px solid var(--line);border-radius:6px;background:var(--paper);color:var(--ink);font:inherit;cursor:pointer}
+main{padding-top:26px;padding-bottom:32px}.legend{display:flex;flex-wrap:wrap;gap:12px 28px;margin:0 0 24px;color:var(--muted);font-size:12px}
+.legend span{display:inline-flex;align-items:center;gap:9px}.legend i{width:28px;border-top:2px solid var(--blue)}
+.legend .async-line{border-top-style:dashed;border-color:var(--amber)}.legend .admin-line{border-color:var(--purple)}
+section{padding:28px;margin-bottom:26px;border:1px solid var(--line);border-radius:12px;background:var(--paper)}
+.section-header{display:flex;align-items:baseline;gap:14px;margin-bottom:6px}.section-number{font:500 24px/1 Consolas,monospace;color:var(--muted)}
+h2{margin:0;font-size:21px;line-height:1.4}.description{margin:8px 0 24px;color:var(--muted)}h3{margin:0 0 10px;font-size:14px}p{margin:0}
+.lane{--flow-color:var(--blue);padding:18px;border:1px solid var(--line);border-radius:9px}.lane+.lane{margin-top:16px}
+.lane-label{margin-bottom:13px;display:flex;flex-wrap:wrap;gap:5px 14px;align-items:baseline}.lane-label strong{color:var(--flow-color)}.lane-label span{color:var(--muted);font-size:12px}
+.flow{display:grid;grid-template-columns:minmax(0,1fr) 30px minmax(0,1fr) 30px minmax(0,1fr) 30px minmax(0,1fr);align-items:stretch}
+.flow.three{grid-template-columns:minmax(0,1fr) 30px minmax(0,1fr) 30px minmax(0,1fr)}.flow.two{grid-template-columns:minmax(0,1fr) 30px minmax(0,1fr)}
+.node{min-width:0;padding:16px;border:1px solid var(--line);border-radius:7px;background:var(--paper);overflow-wrap:anywhere}
+.node .tag{display:block;margin-bottom:6px;color:var(--muted);font-size:11px;font-weight:600;letter-spacing:.04em}.node h3{line-height:1.5}.node p{color:var(--muted);font-size:12px}.node code{font-size:12px}
+.node.primary{background:var(--blue-soft);border-color:#aac3ed}.node.database{background:var(--green-soft);border-color:#b4d7c8}
+.node.capture{background:var(--amber-soft);border-color:#e2cda4}.node.control{background:var(--purple-soft);border-color:#d0c1e5}
+.connector{position:relative;align-self:center;height:1px;margin:0 4px;border-top:2px solid var(--flow-color)}
+.connector::after{content:"";position:absolute;right:-2px;top:-5px;width:7px;height:7px;border-right:2px solid var(--flow-color);border-top:2px solid var(--flow-color);transform:rotate(45deg)}
+.async{--flow-color:var(--amber)}.async .connector{border-top-style:dashed}.admin{--flow-color:var(--purple)}
+.down{display:flex;flex-direction:column;align-items:center;margin:9px 0;color:var(--muted);font-size:12px;text-align:center}.down::after{content:"↓";color:var(--blue);font-size:23px;line-height:1.3}.async-down::after{color:var(--amber)}
+.branches{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.branches>.lane{margin:0}.branches .node{padding:13px}
+.detail-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:22px;margin-top:21px}.detail-grid>div{min-width:0}.detail-grid p{color:var(--muted);font-size:12px}
+.dependency-hub{width:max-content;max-width:100%;margin:0 auto;padding:9px 25px;border:1px solid var(--line);border-radius:6px;background:var(--blue-soft);font-weight:600;text-align:center}
+.dependencies{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:22px;margin-top:25px;border-top:1px solid var(--line);position:relative}
+.dependencies::before{content:"";position:absolute;top:-26px;left:50%;height:25px;border-left:1px solid var(--line)}
+.dependency{min-width:0;position:relative;padding-top:14px}.dependency::before{content:"";position:absolute;top:0;left:50%;height:14px;border-left:1px solid var(--line)}
+.notice{padding:13px 16px;margin-top:18px;background:var(--blue-soft);border-left:3px solid var(--blue);font-size:12px}
+.notice.warning{background:var(--amber-soft);border-color:var(--amber)}.notice.danger{background:var(--red-soft);border-color:var(--red)}.notice strong{font-weight:650}
+.order{display:inline-block;margin-right:7px;color:var(--blue);font:600 12px/1.5 Consolas,monospace}
+.boundary{margin-top:20px;padding-top:16px;border-top:1px dashed var(--line)}.boundary p{color:var(--muted);font-size:12px}
+.table-wrap{overflow-x:auto;margin-top:20px}table{width:100%;border-collapse:collapse;font-size:12px;text-align:left}
+th,td{padding:11px 12px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--muted);font-weight:600;background:#f7f9fc}td:first-child{width:17%;font-weight:600}
+details{margin-top:20px;border-top:1px solid var(--line);padding-top:14px}summary{cursor:pointer;font-weight:600;font-size:13px}
+.sources{margin:12px 0 0;padding-left:20px;color:var(--muted);font-size:12px}.sources li+li{margin-top:5px}footer{padding:0 0 30px;color:var(--muted);font-size:12px}
+@media(max-width:1000px){.shell{padding-left:22px;padding-right:22px}section{padding:22px}.branches{grid-template-columns:1fr}.detail-grid{grid-template-columns:1fr;gap:15px}.node{padding:12px}}
+@media(max-width:700px){
+html{scroll-padding-top:132px}.shell{padding-left:14px;padding-right:14px}.masthead{padding:28px 0}.navigation .shell{column-gap:17px}.navigation a,button{font-size:12px}button{margin-left:0}
+section{padding:18px 14px}h2{font-size:18px}.section-number{font-size:20px}.lane{padding:13px}
+.flow,.flow.three,.flow.two{grid-template-columns:minmax(0,1fr)}
+.connector{justify-self:center;width:1px;height:22px;margin:5px 0;border-top:0;border-left:2px solid var(--flow-color)}
+.connector::after{right:-3px;top:auto;bottom:-1px;transform:rotate(135deg)}.async .connector{border-left-style:dashed}th,td{padding:9px 7px}
+.dependencies{grid-template-columns:1fr;gap:0}.dependency::before{height:14px}.dependency:not(:first-child)::before{content:"↓";top:-5px;border:0;font-size:20px;left:calc(50% - 5px)}
+}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+@media print{
+@page{size:A3 landscape;margin:12mm}body{background:#fff;font-size:12px;print-color-adjust:exact;-webkit-print-color-adjust:exact}.shell{width:100%;padding:0}
+.masthead{color:var(--ink);background:#fff;padding:0 0 15px}.masthead p,.metadata,.metadata strong{color:var(--muted)}
+.navigation,.legend,details,footer{display:none}main{padding:0}section{break-before:page;padding:18px;margin:0;border-radius:0}section:first-of-type{break-before:auto}
+.lane,.node,.notice,tr{break-inside:avoid}.branches{grid-template-columns:repeat(2,minmax(0,1fr))}.detail-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+.flow{grid-template-columns:minmax(0,1fr) 30px minmax(0,1fr) 30px minmax(0,1fr) 30px minmax(0,1fr)}.flow.three{grid-template-columns:minmax(0,1fr) 30px minmax(0,1fr) 30px minmax(0,1fr)}.flow.two{grid-template-columns:minmax(0,1fr) 30px minmax(0,1fr)}
+.connector{justify-self:stretch;width:auto;height:1px;margin:0 4px;border-left:0;border-top:2px solid var(--flow-color)}.connector::after{right:-2px;top:-5px;bottom:auto;transform:rotate(45deg)}.async .connector{border-top-style:dashed}.table-wrap{overflow:visible}
+}
 </style>
 </head>
 <body>
-<h1>ModelGate · 架构图</h1>
-<div class="subtitle">AI 模型流量网关 · 网络架构 &amp; 应用架构</div>
-
-<!-- ============================================================ -->
-<!-- 网络架构图                                                    -->
-<!-- ============================================================ -->
-<div class="diagram-wrap">
-<div class="diagram-title">① 网络架构图</div>
-<svg width="1000" height="620" viewBox="0 0 1000 620" xmlns="http://www.w3.org/2000/svg">
-<defs>
-  <marker id="arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
-    <path d="M0,0 L0,6 L8,3 z" fill="#6366f1"/>
-  </marker>
-  <marker id="arr-gray" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
-    <path d="M0,0 L0,6 L8,3 z" fill="#94a3b8"/>
-  </marker>
-  <marker id="arr-green" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
-    <path d="M0,0 L0,6 L8,3 z" fill="#10b981"/>
-  </marker>
-  <marker id="arr-orange" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
-    <path d="M0,0 L0,6 L8,3 z" fill="#f59e0b"/>
-  </marker>
-  <filter id="shadow" x="-5%" y="-5%" width="110%" height="110%">
-    <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="rgba(0,0,0,0.1)"/>
-  </filter>
-</defs>
-
-<!-- 内网大框 -->
-<rect x="10" y="10" width="740" height="600" rx="16" fill="#f8faff" stroke="#c7d2fe" stroke-width="2" stroke-dasharray="8,4"/>
-<text x="30" y="38" font-size="13" fill="#6366f1" font-weight="600">公司内网</text>
-
-<!-- 外网区域 -->
-<rect x="770" y="10" width="220" height="600" rx="16" fill="#fff7ed" stroke="#fed7aa" stroke-width="2" stroke-dasharray="8,4"/>
-<text x="790" y="38" font-size="13" fill="#ea580c" font-weight="600">外部 API / 上游模型</text>
-
-<!-- ===== 左侧：内部接入系统 ===== -->
-<rect x="30" y="55" width="160" height="310" rx="12" fill="#ede9fe" stroke="#a78bfa" stroke-width="1.5" filter="url(#shadow)"/>
-<text x="110" y="80" font-size="12" fill="#5b21b6" font-weight="700" text-anchor="middle">内部接入系统</text>
-
-<!-- CRM -->
-<rect x="45" y="92" width="130" height="46" rx="8" fill="#fff" stroke="#c4b5fd" stroke-width="1"/>
-<text x="110" y="112" font-size="12" fill="#1f2937" font-weight="600" text-anchor="middle">CRM 系统</text>
-<text x="110" y="128" font-size="10" fill="#64748b" text-anchor="middle">crm-service</text>
-
-<!-- BI -->
-<rect x="45" y="148" width="130" height="46" rx="8" fill="#fff" stroke="#c4b5fd" stroke-width="1"/>
-<text x="110" y="168" font-size="12" fill="#1f2937" font-weight="600" text-anchor="middle">BI 数据平台</text>
-<text x="110" y="184" font-size="10" fill="#64748b" text-anchor="middle">bi-platform</text>
-
-<!-- 风控 -->
-<rect x="45" y="204" width="130" height="46" rx="8" fill="#fff" stroke="#c4b5fd" stroke-width="1"/>
-<text x="110" y="224" font-size="12" fill="#1f2937" font-weight="600" text-anchor="middle">风控引擎</text>
-<text x="110" y="240" font-size="10" fill="#64748b" text-anchor="middle">risk-engine</text>
-
-<!-- 其他 -->
-<rect x="45" y="260" width="130" height="46" rx="8" fill="#fff" stroke="#c4b5fd" stroke-width="1" stroke-dasharray="5,3"/>
-<text x="110" y="284" font-size="11" fill="#94a3b8" text-anchor="middle">其他业务系统 ···</text>
-
-<!-- API Key / AK·SK 标注 -->
-<rect x="30" y="322" width="160" height="36" rx="8" fill="#dbeafe" stroke="#93c5fd" stroke-width="1"/>
-<text x="110" y="338" font-size="10" fill="#1e40af" text-anchor="middle" font-weight="600">凭证：API Key / AK·SK</text>
-<text x="110" y="351" font-size="9" fill="#3b82f6" text-anchor="middle">Authorization: Bearer {key}</text>
-
-<!-- 箭头：接入系统 → 网关 -->
-<line x1="191" y1="200" x2="268" y2="200" stroke="#6366f1" stroke-width="2" marker-end="url(#arr)"/>
-<text x="230" y="193" font-size="9" fill="#6366f1" text-anchor="middle">/v1/chat/completions</text>
-
-<!-- ===== 中央：ModelGate 网关 ===== -->
-<rect x="270" y="55" width="300" height="540" rx="14" fill="#eef2ff" stroke="#818cf8" stroke-width="2" filter="url(#shadow)"/>
-<text x="420" y="80" font-size="13" fill="#4338ca" font-weight="700" text-anchor="middle">ModelGate 网关集群</text>
-
-<!-- LB -->
-<rect x="295" y="92" width="250" height="38" rx="8" fill="#6366f1"/>
-<text x="420" y="108" font-size="11" fill="#fff" font-weight="700" text-anchor="middle">负载均衡 / Nginx</text>
-<text x="420" y="122" font-size="9" fill="#c7d2fe" text-anchor="middle">轮询 / 最少连接</text>
-
-<!-- 实例群 -->
-<rect x="290" y="144" width="285" height="130" rx="10" fill="#fff" stroke="#c7d2fe" stroke-width="1"/>
-<text x="432" y="163" font-size="11" fill="#4338ca" font-weight="600" text-anchor="middle">Spring Cloud Gateway 实例</text>
-
-<rect x="300" y="171" width="78" height="90" rx="8" fill="#f0f9ff" stroke="#bae6fd" stroke-width="1"/>
-<text x="339" y="191" font-size="10" fill="#0369a1" font-weight="600" text-anchor="middle">实例 1</text>
-<text x="339" y="207" font-size="9" fill="#64748b" text-anchor="middle">Filter 链</text>
-<text x="339" y="220" font-size="9" fill="#64748b" text-anchor="middle">WebFlux</text>
-<text x="339" y="233" font-size="9" fill="#64748b" text-anchor="middle">Netty</text>
-<text x="339" y="252" font-size="9" fill="#94a3b8" text-anchor="middle">:8080</text>
-
-<rect x="386" y="171" width="78" height="90" rx="8" fill="#f0f9ff" stroke="#bae6fd" stroke-width="1"/>
-<text x="425" y="191" font-size="10" fill="#0369a1" font-weight="600" text-anchor="middle">实例 2</text>
-<text x="425" y="207" font-size="9" fill="#64748b" text-anchor="middle">Filter 链</text>
-<text x="425" y="220" font-size="9" fill="#64748b" text-anchor="middle">WebFlux</text>
-<text x="425" y="233" font-size="9" fill="#64748b" text-anchor="middle">Netty</text>
-<text x="425" y="252" font-size="9" fill="#94a3b8" text-anchor="middle">:8080</text>
-
-<rect x="472" y="171" width="78" height="90" rx="8" fill="#f0f9ff" stroke="#bae6fd" stroke-width="1"/>
-<text x="511" y="191" font-size="10" fill="#0369a1" font-weight="600" text-anchor="middle">实例 3</text>
-<text x="511" y="207" font-size="9" fill="#64748b" text-anchor="middle">Filter 链</text>
-<text x="511" y="220" font-size="9" fill="#64748b" text-anchor="middle">WebFlux</text>
-<text x="511" y="233" font-size="9" fill="#64748b" text-anchor="middle">Netty</text>
-<text x="511" y="252" font-size="9" fill="#94a3b8" text-anchor="middle">:8080</text>
-
-<!-- 基础设施层 -->
-<rect x="285" y="290" width="295" height="290" rx="10" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5"/>
-<text x="432" y="312" font-size="11" fill="#15803d" font-weight="700" text-anchor="middle">基础设施层</text>
-
-<!-- MySQL -->
-<rect x="295" y="322" width="128" height="50" rx="8" fill="#fff" stroke="#bbf7d0" stroke-width="1"/>
-<text x="310" y="342" font-size="18">🗄️</text>
-<text x="355" y="342" font-size="11" fill="#1f2937" font-weight="600">MySQL 8</text>
-<text x="355" y="358" font-size="9" fill="#64748b">模型/App/凭证/配置</text>
-
-<!-- Redis -->
-<rect x="435" y="322" width="128" height="50" rx="8" fill="#fff" stroke="#bbf7d0" stroke-width="1"/>
-<text x="450" y="342" font-size="18">⚡</text>
-<text x="492" y="342" font-size="11" fill="#1f2937" font-weight="600">Redis</text>
-<text x="492" y="358" font-size="9" fill="#64748b">INCR配额计数（非L2）</text>
-
-<!-- 审计异步落库（无 Kafka） -->
-<rect x="295" y="384" width="128" height="50" rx="8" fill="#fff" stroke="#bbf7d0" stroke-width="1"/>
-<text x="310" y="404" font-size="18">📨</text>
-<text x="355" y="404" font-size="11" fill="#1f2937" font-weight="600">AuditService</text>
-<text x="355" y="420" font-size="9" fill="#64748b">内存队列→MySQL批量写</text>
-
-<!-- 静态上游路由（无 Consul） -->
-<rect x="435" y="384" width="128" height="50" rx="8" fill="#fff" stroke="#bbf7d0" stroke-width="1"/>
-<text x="450" y="404" font-size="18">🔍</text>
-<text x="492" y="404" font-size="11" fill="#1f2937" font-weight="600">静态上游路由</text>
-<text x="492" y="420" font-size="9" fill="#64748b">mg_model.upstream_url</text>
-
-<!-- 配置文件（原 Apollo，apollo-client 已移除） -->
-<rect x="295" y="446" width="128" height="50" rx="8" fill="#fff" stroke="#bbf7d0" stroke-width="1"/>
-<text x="310" y="466" font-size="18">⚙️</text>
-<text x="355" y="466" font-size="11" fill="#1f2937" font-weight="600">配置文件</text>
-<text x="355" y="482" font-size="9" fill="#64748b">开关改后需重启</text>
-
-<!-- 日志采集（原 Prometheus/Grafana，已移除） -->
-<rect x="435" y="446" width="128" height="50" rx="8" fill="#fff" stroke="#bbf7d0" stroke-width="1"/>
-<text x="450" y="466" font-size="18">📄</text>
-<text x="492" y="466" font-size="11" fill="#1f2937" font-weight="600">日志采集</text>
-<text x="492" y="482" font-size="9" fill="#64748b">Logback JSON → ELK</text>
-
-<!-- Admin -->
-<rect x="295" y="508" width="268" height="50" rx="8" fill="#fef3c7" stroke="#fcd34d" stroke-width="1"/>
-<text x="429" y="528" font-size="11" fill="#92400e" font-weight="600" text-anchor="middle">管理资源（文根 /modelgate）</text>
-<text x="429" y="545" font-size="9" fill="#78350f" text-anchor="middle">ModelController / AppController / CredentialController ···</text>
-
-<!-- ===== 右侧：上游模型 ===== -->
-<!-- OpenAI -->
-<rect x="785" y="55" width="190" height="52" rx="10" fill="#d1fae5" stroke="#6ee7b7" stroke-width="1.5" filter="url(#shadow)"/>
-<text x="800" y="76" font-size="14">🌐</text>
-<text x="825" y="76" font-size="12" fill="#065f46" font-weight="700">OpenAI API</text>
-<text x="825" y="93" font-size="10" fill="#047857">api.openai.com</text>
-
-<!-- Azure -->
-<rect x="785" y="123" width="190" height="52" rx="10" fill="#dbeafe" stroke="#93c5fd" stroke-width="1.5" filter="url(#shadow)"/>
-<text x="800" y="144" font-size="14">☁️</text>
-<text x="825" y="144" font-size="12" fill="#1e40af" font-weight="700">Azure OpenAI</text>
-<text x="825" y="161" font-size="10" fill="#1d4ed8">{resource}.openai.azure.com</text>
-
-<!-- Anthropic -->
-<rect x="785" y="191" width="190" height="52" rx="10" fill="#ede9fe" stroke="#c4b5fd" stroke-width="1.5" filter="url(#shadow)"/>
-<text x="800" y="212" font-size="14">🤖</text>
-<text x="825" y="212" font-size="12" fill="#5b21b6" font-weight="700">Anthropic API</text>
-<text x="825" y="229" font-size="10" fill="#6d28d9">api.anthropic.com</text>
-
-<!-- 私有化 -->
-<rect x="785" y="259" width="190" height="52" rx="10" fill="#fef3c7" stroke="#fcd34d" stroke-width="1.5" filter="url(#shadow)"/>
-<text x="800" y="280" font-size="14">🏠</text>
-<text x="825" y="280" font-size="12" fill="#92400e" font-weight="700">私有化部署</text>
-<text x="825" y="297" font-size="10" fill="#78350f">内网 GPU 服务器</text>
-
-<!-- 自定义 -->
-<rect x="785" y="327" width="190" height="52" rx="10" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5" filter="url(#shadow)"/>
-<text x="800" y="348" font-size="14">🔧</text>
-<text x="825" y="348" font-size="12" fill="#334155" font-weight="700">Custom 上游</text>
-<text x="825" y="365" font-size="10" fill="#64748b">自定义适配协议</text>
-
-<!-- ===== 箭头：网关 → 上游 ===== -->
-<line x1="570" y1="81" x2="783" y2="81" stroke="#10b981" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#arr-green)"/>
-<line x1="570" y1="149" x2="783" y2="149" stroke="#10b981" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#arr-green)"/>
-<line x1="570" y1="217" x2="783" y2="217" stroke="#10b981" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#arr-green)"/>
-<line x1="570" y1="285" x2="783" y2="285" stroke="#10b981" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#arr-green)"/>
-<line x1="570" y1="353" x2="783" y2="353" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#arr-gray)"/>
-<text x="672" y="72" font-size="9" fill="#10b981" text-anchor="middle">HTTPS / SSE 流式</text>
-
-<!-- 协议标注 -->
-<rect x="785" y="400" width="190" height="60" rx="8" fill="#fff" stroke="#e5e7eb" stroke-width="1"/>
-<text x="880" y="420" font-size="10" fill="#64748b" font-weight="600" text-anchor="middle">适配器层</text>
-<text x="880" y="436" font-size="9" fill="#94a3b8" text-anchor="middle">OpenAI / AzureOpenAI</text>
-<text x="880" y="450" font-size="9" fill="#94a3b8" text-anchor="middle">Anthropic / Custom</text>
-
-<!-- Caffeine 标注 -->
-<rect x="30" y="400" width="160" height="50" rx="8" fill="#fef3c7" stroke="#fcd34d" stroke-width="1"/>
-<text x="110" y="418" font-size="10" fill="#92400e" font-weight="700" text-anchor="middle">L1 缓存 Caffeine</text>
-<text x="110" y="433" font-size="9" fill="#78350f" text-anchor="middle">进程内，TTL 30~60s</text>
-<text x="110" y="446" font-size="9" fill="#78350f" text-anchor="middle">凭证 / 授权 / 路由</text>
-
-<line x1="191" y1="425" x2="268" y2="340" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arr-orange)"/>
-</svg>
-</div>
-
-<!-- ============================================================ -->
-<!-- 应用架构图                                                    -->
-<!-- ============================================================ -->
-<div class="diagram-wrap">
-<div class="diagram-title">② 应用架构图</div>
-<svg width="1000" height="740" viewBox="0 0 1000 740" xmlns="http://www.w3.org/2000/svg">
-<defs>
-  <marker id="arr2" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
-    <path d="M0,0 L0,6 L8,3 z" fill="#6366f1"/>
-  </marker>
-  <marker id="arr2r" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
-    <path d="M0,0 L0,6 L8,3 z" fill="#10b981"/>
-  </marker>
-  <marker id="arr2g" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
-    <path d="M0,0 L0,6 L8,3 z" fill="#94a3b8"/>
-  </marker>
-  <filter id="sh2" x="-5%" y="-5%" width="110%" height="110%">
-    <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="rgba(0,0,0,0.08)"/>
-  </filter>
-</defs>
-
-<!-- ===== 请求入口 ===== -->
-<rect x="340" y="10" width="320" height="44" rx="10" fill="#1e1b4b" filter="url(#sh2)"/>
-<text x="500" y="30" font-size="12" fill="#a5b4fc" font-weight="600" text-anchor="middle">POST /v1/chat/completions</text>
-<text x="500" y="46" font-size="10" fill="#6366f1" text-anchor="middle">Authorization: Bearer {api_key} | AKSK {ak}:{ts}:{sig}</text>
-
-<!-- 主箭头向下 -->
-<line x1="500" y1="55" x2="500" y2="72" stroke="#6366f1" stroke-width="2" marker-end="url(#arr2)"/>
-
-<!-- ===== Filter 链 ===== -->
-<!-- 标题背景 -->
-<rect x="200" y="74" width="600" height="500" rx="14" fill="#f8faff" stroke="#c7d2fe" stroke-width="1.5"/>
-<text x="500" y="96" font-size="12" fill="#4338ca" font-weight="700" text-anchor="middle">GlobalFilter 过滤器链（Spring Cloud Gateway · WebFlux · Reactor Netty）</text>
-
-<!-- F1: 管理面旁路说明（原 AdminAuthFilter -200 已移除） -->
-<rect x="220" y="106" width="560" height="48" rx="9" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="5 3" filter="url(#sh2)"/>
-<text x="280" y="127" font-size="10" fill="#64748b" font-weight="700">（已移除）</text>
-<text x="360" y="127" font-size="12" fill="#475569" font-weight="700">管理资源接口不入本链路</text>
-<text x="360" y="143" font-size="10" fill="#94a3b8">原 AdminAuthFilter(-200) 已删除，改由内网逐接口鉴权体系承担</text>
-
-<line x1="500" y1="155" x2="500" y2="170" stroke="#6366f1" stroke-width="1.5" marker-end="url(#arr2)"/>
-
-<!-- F2: CredentialAuthFilter -->
-<rect x="220" y="172" width="560" height="48" rx="9" fill="#fff7ed" stroke="#fed7aa" stroke-width="1.5" filter="url(#sh2)"/>
-<text x="280" y="193" font-size="10" fill="#92400e" font-weight="700">order=-190</text>
-<text x="360" y="193" font-size="12" fill="#1f2937" font-weight="700">CredentialAuthFilter</text>
-<text x="360" y="209" font-size="10" fill="#64748b">API Key→SHA256→Caffeine→DB（miss原子回源）；AK/SK→HMAC重签→时间戳防重放(±5min)</text>
-<text x="735" y="196" font-size="10" fill="#92400e" text-anchor="end">→ 401</text>
-
-<line x1="500" y1="221" x2="500" y2="236" stroke="#6366f1" stroke-width="1.5" marker-end="url(#arr2)"/>
-
-<!-- F3: AppAccessControlFilter -->
-<rect x="220" y="238" width="560" height="48" rx="9" fill="#fffbeb" stroke="#fde68a" stroke-width="1.5" filter="url(#sh2)"/>
-<text x="280" y="259" font-size="10" fill="#78350f" font-weight="700">order=-180</text>
-<text x="360" y="259" font-size="12" fill="#1f2937" font-weight="700">AppAccessControlFilter</text>
-<text x="360" y="275" font-size="10" fill="#64748b">加载访问规则（Caffeine），校验客户端IP是否在CIDR/IP白名单，规则为空则放行</text>
-<text x="735" y="262" font-size="10" fill="#78350f" text-anchor="end">→ 403</text>
-
-<line x1="500" y1="287" x2="500" y2="302" stroke="#6366f1" stroke-width="1.5" marker-end="url(#arr2)"/>
-
-<!-- F4: ModelAuthFilter -->
-<rect x="220" y="304" width="560" height="48" rx="9" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5" filter="url(#sh2)"/>
-<text x="280" y="325" font-size="10" fill="#14532d" font-weight="700">order=-170</text>
-<text x="360" y="325" font-size="12" fill="#1f2937" font-weight="700">ModelAuthFilter</text>
-<text x="360" y="341" font-size="10" fill="#64748b">解析请求体 model 字段，查询mg_app_model_auth（Caffeine），校验授权开关/到期/模型状态</text>
-<text x="735" y="328" font-size="10" fill="#14532d" text-anchor="end">→ 403/503</text>
-
-<line x1="500" y1="353" x2="500" y2="368" stroke="#6366f1" stroke-width="1.5" marker-end="url(#arr2)"/>
-
-<!-- F5: RateLimitFilter -->
-<rect x="220" y="370" width="560" height="48" rx="9" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.5" filter="url(#sh2)"/>
-<text x="280" y="391" font-size="10" fill="#1e3a8a" font-weight="700">order=-160</text>
-<text x="360" y="391" font-size="12" fill="#1f2937" font-weight="700">RateLimitFilter</text>
-<text x="360" y="407" font-size="10" fill="#64748b">Redis INCR 秒级滑动窗口（禁用 Lua），key=app_id，QPS 来自授权配置或全局默认</text>
-<text x="735" y="394" font-size="10" fill="#1e3a8a" text-anchor="end">→ 429</text>
-
-<line x1="500" y1="419" x2="500" y2="434" stroke="#6366f1" stroke-width="1.5" marker-end="url(#arr2)"/>
-
-<!-- F6: TraceFilter -->
-<rect x="220" y="436" width="560" height="48" rx="9" fill="#faf5ff" stroke="#d8b4fe" stroke-width="1.5" filter="url(#sh2)"/>
-<text x="280" y="457" font-size="10" fill="#581c87" font-weight="700">order=-150</text>
-<text x="360" y="457" font-size="12" fill="#1f2937" font-weight="700">TraceFilter</text>
-<text x="360" y="473" font-size="10" fill="#64748b">生成 traceId（UUID前16位），写入 MDC 和响应头 X-Trace-Id / X-Mg-App / X-Mg-Model</text>
-
-<line x1="500" y1="485" x2="500" y2="500" stroke="#6366f1" stroke-width="1.5" marker-end="url(#arr2)"/>
-
-<!-- F7: ModelRouteFilter -->
-<rect x="220" y="502" width="560" height="48" rx="9" fill="#ecfdf5" stroke="#6ee7b7" stroke-width="1.5" filter="url(#sh2)"/>
-<text x="280" y="523" font-size="10" fill="#065f46" font-weight="700">order=-140</text>
-<text x="360" y="523" font-size="12" fill="#1f2937" font-weight="700">ModelRouteFilter</text>
-<text x="360" y="539" font-size="10" fill="#64748b">加载ModelInstance+Credential（Caffeine 30s），调用ProviderAdapter转换参数，设置上游URL</text>
-
-<line x1="500" y1="551" x2="500" y2="566" stroke="#6366f1" stroke-width="1.5" marker-end="url(#arr2)"/>
-
-<!-- F8: CircuitBreakerFilter -->
-<rect x="220" y="568" width="560" height="48" rx="9" fill="#fff1f2" stroke="#fda4af" stroke-width="1.5" filter="url(#sh2)"/>
-<text x="280" y="589" font-size="10" fill="#881337" font-weight="700">order=-50</text>
-<text x="360" y="589" font-size="12" fill="#1f2937" font-weight="700">CircuitBreakerFilter（Resilience4j）</text>
-<text x="360" y="605" font-size="10" fill="#64748b">按 model_id 独立熔断器实例，失败率超阈值触发 OPEN，等待后自动半恢复</text>
-<text x="735" y="592" font-size="10" fill="#881337" text-anchor="end">→ 503</text>
-
-<line x1="500" y1="617" x2="500" y2="630" stroke="#6366f1" stroke-width="1.5" marker-end="url(#arr2)"/>
-
-<!-- ===== 路由转发 ===== -->
-<rect x="340" y="632" width="320" height="40" rx="9" fill="#6366f1" filter="url(#sh2)"/>
-<text x="500" y="648" font-size="11" fill="#fff" font-weight="700" text-anchor="middle">Spring Cloud Gateway 路由转发</text>
-<text x="500" y="663" font-size="9" fill="#c7d2fe" text-anchor="middle">GATEWAY_REQUEST_URL_ATTR → 上游模型 URL</text>
-
-<!-- 右侧：适配器 -->
-<rect x="830" y="500" width="160" height="170" rx="12" fill="#f8faff" stroke="#c7d2fe" stroke-width="1.5" filter="url(#sh2)"/>
-<text x="910" y="520" font-size="11" fill="#4338ca" font-weight="700" text-anchor="middle">ProviderAdapter</text>
-<rect x="842" y="530" width="136" height="28" rx="6" fill="#d1fae5" stroke="#6ee7b7" stroke-width="1"/>
-<text x="910" y="549" font-size="10" fill="#065f46" font-weight="600" text-anchor="middle">OpenAIAdapter（直透）</text>
-<rect x="842" y="564" width="136" height="28" rx="6" fill="#dbeafe" stroke="#93c5fd" stroke-width="1"/>
-<text x="910" y="583" font-size="10" fill="#1e40af" font-weight="600" text-anchor="middle">AzureOpenAIAdapter</text>
-<rect x="842" y="598" width="136" height="28" rx="6" fill="#ede9fe" stroke="#c4b5fd" stroke-width="1"/>
-<text x="910" y="617" font-size="10" fill="#5b21b6" font-weight="600" text-anchor="middle">AnthropicAdapter</text>
-<rect x="842" y="632" width="136" height="28" rx="6" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1"/>
-<text x="910" y="651" font-size="10" fill="#334155" font-weight="600" text-anchor="middle">CustomAdapter</text>
-
-<line x1="780" y1="570" x2="828" y2="570" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arr2g)"/>
-
-<!-- 左侧：doFinally AuditService -->
-<rect x="10" y="580" width="195" height="100" rx="12" fill="#fffbeb" stroke="#fde68a" stroke-width="1.5" filter="url(#sh2)"/>
-<text x="107" y="600" font-size="11" fill="#92400e" font-weight="700" text-anchor="middle">doFinally（响应后）</text>
-<text x="107" y="618" font-size="10" fill="#78350f" font-weight="600" text-anchor="middle">AuditService</text>
-<text x="107" y="634" font-size="9" fill="#92400e" text-anchor="middle">内存队列批量写 MySQL</text>
-<text x="107" y="648" font-size="9" fill="#92400e" text-anchor="middle">inputTokens / outputTokens</text>
-<text x="107" y="662" font-size="9" fill="#92400e" text-anchor="middle">httpStatus / latencyMs</text>
-<text x="107" y="676" font-size="9" fill="#92400e" text-anchor="middle">traceId / appId / modelId</text>
-
-<line x1="338" y1="650" x2="207" y2="640" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arr2g)"/>
-
-<!-- 左侧：Cache层 -->
-<rect x="10" y="350" width="195" height="200" rx="12" fill="#fefce8" stroke="#fde68a" stroke-width="1.5" filter="url(#sh2)"/>
-<text x="107" y="373" font-size="11" fill="#78350f" font-weight="700" text-anchor="middle">缓存 / 配额</text>
-<rect x="20" y="382" width="175" height="50" rx="7" fill="#fef3c7" stroke="#fcd34d" stroke-width="1"/>
-<text x="107" y="401" font-size="10" fill="#92400e" font-weight="700" text-anchor="middle">L1 Caffeine（进程内）</text>
-<text x="107" y="417" font-size="9" fill="#78350f" text-anchor="middle">凭证60s · 授权60s · 路由30s</text>
-<text x="107" y="430" font-size="9" fill="#78350f" text-anchor="middle">访问规则60s</text>
-
-<rect x="20" y="438" width="175" height="50" rx="7" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1"/>
-<text x="107" y="458" font-size="10" fill="#1e40af" font-weight="700" text-anchor="middle">Redis 配额状态（非L2）</text>
-<text x="107" y="474" font-size="9" fill="#1d4ed8" text-anchor="middle">QPS · 日调用 · 月Token</text>
-<text x="107" y="487" font-size="9" fill="#1d4ed8" text-anchor="middle">故障时配额fail-open</text>
-
-<rect x="20" y="494" width="175" height="46" rx="7" fill="#f0fdf4" stroke="#86efac" stroke-width="1"/>
-<text x="107" y="513" font-size="10" fill="#065f46" font-weight="700" text-anchor="middle">主动失效策略</text>
-<text x="107" y="529" font-size="9" fill="#15803d" text-anchor="middle">本实例立即；其它实例按TTL</text>
-
-<line x1="206" y1="440" x2="218" y2="400" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arr2g)"/>
-
-<!-- 图例 -->
-<rect x="10" y="10" width="185" height="130" rx="10" fill="#fff" stroke="#e5e7eb" stroke-width="1"/>
-<text x="103" y="30" font-size="11" fill="#374151" font-weight="700" text-anchor="middle">图例</text>
-<rect x="20" y="40" width="14" height="14" rx="3" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.5"/>
-<text x="42" y="53" font-size="9" fill="#374151">鉴权/安全过滤器</text>
-<rect x="20" y="62" width="14" height="14" rx="3" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5"/>
-<text x="42" y="75" font-size="9" fill="#374151">业务逻辑过滤器</text>
-<rect x="20" y="84" width="14" height="14" rx="3" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.5"/>
-<text x="42" y="97" font-size="9" fill="#374151">限流/熔断过滤器</text>
-<line x1="20" y1="111" x2="34" y2="111" stroke="#6366f1" stroke-width="2" marker-end="url(#arr2)"/>
-<text x="42" y="115" font-size="9" fill="#374151">请求主流向</text>
-<line x1="20" y1="130" x2="34" y2="130" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arr2g)"/>
-<text x="42" y="134" font-size="9" fill="#374151">异步/旁路调用</text>
-</svg>
-</div>
-
+<header class="masthead"><div class="shell">
+  <div class="eyebrow">MODELGATE / ARCHITECTURE</div>
+  <h1>网络与报文录制回放架构</h1>
+  <p>业务流量、管理操作和录制旁路分开呈现。以下描述当前仓库实现，不将规划中的个人接入、消息中间件或历史响应模拟画成已有能力。</p>
+  <div class="metadata"><span>代码核对：<strong><time datetime="2026-10-30">2026-10-30</time></strong></span><span>部署文根：<strong><code>/modelgate</code></strong></span><span>技术底座：<strong>Spring Cloud Gateway · WebFlux · Reactor Netty</strong></span></div>
+</div></header>
+<nav class="navigation" aria-label="架构图导航"><div class="shell">
+  <a href="#network">01 网络拓扑</a><a href="#pipeline">02 业务链路</a><a href="#recording">03 报文录制</a><a href="#replay">04 报文回放</a>
+  <button type="button" id="print-diagrams">打印 / 保存 PDF</button>
+</div></nav>
+<main class="shell">
+<div class="legend" aria-label="连线图例"><span><i aria-hidden="true"></i>业务请求 / 响应</span><span><i class="admin-line" aria-hidden="true"></i>管理请求 / 直连调试</span><span><i class="async-line" aria-hidden="true"></i>旁路采集 / 异步落库</span></div>
+
+<section id="network" aria-labelledby="network-title">
+  <div class="section-header"><span class="section-number">01</span><h2 id="network-title">网络拓扑与访问边界</h2></div>
+  <p class="description">同一域名按路径复用；SLB / 容器入口转发后必须保留应用文根。下图为逻辑拓扑，实例数、域名和外部挂载路径以部署配置为准。</p>
+  <div class="lane">
+    <div class="lane-label"><strong>业务数据面</strong><span>模型流式 / 非流式，以及通用 SSE / 普通 HTTP</span></div>
+    <div class="flow" role="group" aria-label="接入系统经 SLB 访问 ModelGate，网关转发至配置的上游">
+      <article class="node"><span class="tag">CALLER</span><h3>内部接入系统</h3><p>API Key 或 AK/SK<br>凭证归属接入账户 <code>appId</code></p></article>
+      <div class="connector" aria-hidden="true"></div>
+      <article class="node"><span class="tag">INGRESS</span><h3>行内域名 · SLB</h3><p><code>/modelgate/v1/**</code><br><code>/modelgate/svc/{服务编码}/**</code><br>流式链路需端到端支持及时 flush</p></article>
+      <div class="connector" aria-hidden="true"></div>
+      <article class="node primary"><span class="tag">NOVA / CONTAINER</span><h3>ModelGate 实例 × N</h3><p>鉴权 → 授权 → 配额 → 动态路由<br>WebFlux / Netty<br><code>PORT_NO</code> 有值优先，否则使用 <code>server.port</code></p></article>
+      <div class="connector" aria-hidden="true"></div>
+      <article class="node"><span class="tag">UPSTREAM</span><h3>模型与通用服务</h3><p>内网 / 私有化模型、经批准的外部 API<br>OpenAI · Azure OpenAI<br>Anthropic · Custom<br>通用 HTTP / SSE 服务</p></article>
+    </div>
+  </div>
+  <div class="lane admin">
+    <div class="lane-label"><strong>管理控制面</strong><span>外部逐接口鉴权；不进入业务 GlobalFilter 链</span></div>
+    <div class="flow">
+      <article class="node"><span class="tag">TWO FRONTENDS</span><h3>管理员浏览器</h3><p>内置 <code>admin.html</code><br>独立 <code>static-framework</code><br>模块 <code>src/modules/modelgate</code></p></article>
+      <div class="connector" aria-hidden="true"></div>
+      <article class="node control"><span class="tag">TRUST BOUNDARY</span><h3>行内管理访问入口</h3><p>登录态 + 逐接口 RBAC<br>管理页与 API 都需保护<br>不能把整个文根设为免鉴权</p></article>
+      <div class="connector" aria-hidden="true"></div>
+      <article class="node control"><span class="tag">CONTROLLER</span><h3>管理 API / 静态资源</h3><p><code>/modelgate/models/…</code><br><code>/modelgate/payload/…</code><br>本进程不校验管理身份；依赖外部入口和网络隔离</p></article>
+      <div class="connector" aria-hidden="true"></div>
+      <article class="node database"><span class="tag">CONTROL DATA</span><h3>配置查询与维护</h3><p>TDSQL / MySQL 兼容库<br>模型 / 服务 / 接入账户 / 凭证 / 授权<br>报文查询和管理端上游回放</p></article>
+    </div>
+  </div>
+  <div class="lane">
+    <div class="lane-label"><strong>运行时依赖</strong><span>由各实例访问；三项为并列依赖，不是串行调用</span></div>
+    <div class="dependency-hub">ModelGate 每个实例</div>
+    <div class="dependencies">
+      <div class="dependency"><article class="node database"><span class="tag">CONFIG READ / ASYNC WRITE</span><h3>TDSQL / MySQL 兼容库</h3><p>配置读取与管理写入<br>审计、报文异步批量落库<br>多实例共享已持久化数据</p></article></div>
+      <div class="dependency"><article class="node"><span class="tag">SHARED QUOTA COUNTERS</span><h3>Redis 配额状态</h3><p>QPS / 日请求 / 月 Token<br>不是凭证与授权读取的 L2<br>配额故障按既有策略放行</p></article></div>
+      <div class="dependency"><article class="node"><span class="tag">LOCAL TO EACH PROCESS</span><h3>Caffeine + 内存队列</h3><p>配置、凭证、授权缓存 TTL 30–60 秒<br>审计与报文各自有界队列<br>不跨实例共享，进程退出可能丢未刷盘数据</p></article></div>
+    </div>
+  </div>
+  <div class="detail-grid">
+    <div><h3>实例依赖</h3><p>Caffeine 是实例内缓存（配置 / 凭证 / 授权，TTL 30–60 秒）；读取回源数据库。Redis 用于配额计数，不是已接入的凭证 L2。当前没有跨实例缓存失效广播。</p></div>
+    <div><h3>平台探测</h3><p>Nova 按平台配置访问实际监听端口和 <code>/modelgate/actuator/detection/running</code>、<code>available</code>、<code>shutdown</code>。探测接口有日志；由平台决定调用时机，应用不主动触发探测。<code>shutdown</code> 只允许平台来源访问。</p></div>
+    <div><h3>配置与可观测性</h3><p>本地配置使用 <code>application.yml</code>，行内配置中心由行内框架接入；不把 Apollo 画成本仓库内置组件。审计和报文使用各实例内存队列落库，无 MQ。Logback 输出控制台与滚动 JSON 文件。</p></div>
+  </div>
+  <div class="notice"><strong>路径约定：</strong><code>/modelgate</code> 由 <code>spring.webflux.base-path</code> 统一提供，Controller 只保留资源路径。SLB 如另有外部挂载前缀，应只处理自己的挂载部分，不能再次剥掉或重复追加应用文根。</div>
+</section>
+
+<section id="pipeline" aria-labelledby="pipeline-title">
+  <div class="section-header"><span class="section-number">02</span><h2 id="pipeline-title">当前业务过滤器链</h2></div>
+  <p class="description">图中顺序为自定义 GlobalFilter 的请求进入顺序；响应向外回传。TraceWebFilter 位于更外层，覆盖业务、管理接口和静态资源。</p>
+  <div class="lane">
+    <div class="lane-label"><strong>公共入口</strong><span><code>TraceWebFilter</code> 先生成 traceId / Reactor Context / MDC</span></div>
+    <div class="flow three">
+      <article class="node primary" data-filter="TraceFilter" data-order="-200"><span class="tag">AUDIT ENVELOPE</span><h3><span class="order">-200</span>TraceFilter</h3><p>确定 <code>TrafficType</code><br>在 <code>doFinally</code> 收尾审计<br>覆盖鉴权拒绝、失败、取消</p></article>
+      <div class="connector" aria-hidden="true"></div>
+      <article class="node" data-filter="CredentialAuthFilter" data-order="-190"><span class="tag">AUTHENTICATION</span><h3><span class="order">-190</span>CredentialAuthFilter</h3><p>Bearer Key 哈希查询 / AKSK 验签<br>检查凭证与接入账户状态<br>生成可信内部账户上下文</p></article>
+      <div class="connector" aria-hidden="true"></div>
+      <article class="node" data-filter="AppAccessControlFilter" data-order="-180"><span class="tag">SOURCE RULES</span><h3><span class="order">-180</span>AppAccessControlFilter</h3><p>IP / CIDR / 域名访问规则<br>没有规则时不限制来源</p></article>
+    </div>
+  </div>
+  <div class="down">按 TrafficType 进入互斥分支</div>
+  <div class="branches">
+    <div class="lane"><div class="lane-label"><strong>模型分支</strong><span><code>/modelgate/v1/**</code></span></div>
+      <div class="flow two">
+        <article class="node" data-filter="BodyParseFilter" data-order="-175"><h3><span class="order">-175</span>BodyParseFilter</h3><p>读取 POST JSON 原始 body<br>提取 model，缓存字节并重建请求流</p></article>
+        <div class="connector" aria-hidden="true"></div>
+        <article class="node" data-filter="ModelAuthFilter" data-order="-170"><h3><span class="order">-170</span>ModelAuthFilter</h3><p>校验模型状态和<br><code>appId × modelId</code> 授权</p></article>
+      </div>
+    </div>
+    <div class="lane"><div class="lane-label"><strong>通用服务分支</strong><span><code>/modelgate/svc/{服务编码}/**</code></span></div>
+      <article class="node" data-filter="ServiceAuthFilter" data-order="-170"><h3><span class="order">-170</span>ServiceAuthFilter</h3><p>从 URL 提取服务编码；校验服务状态和 <code>appId × serviceId</code> 授权。<strong>不读取、不缓存请求 body。</strong></p></article>
+    </div>
+  </div>
+  <div class="down">两条业务链路共用</div>
+  <div class="flow two">
+    <article class="node" data-filter="QuotaFilter" data-order="-160"><h3><span class="order">-160</span>QuotaFilter</h3><p>模型：QPS / 日请求 / 月 Token；服务：QPS / 日请求。Redis 原生命令计数，故障时 fail-open；月 Token 在响应后异步累计，属于软额度。</p></article>
+    <div class="connector" aria-hidden="true"></div>
+    <article class="node capture" data-filter="PayloadCaptureFilter" data-order="-145"><h3><span class="order">-145</span>PayloadCaptureFilter</h3><p>装饰响应，逐块旁路复制，保留 SSE flush。FULL / TAIL 采集，详见录制图；录制不等待数据库。</p></article>
+  </div>
+  <div class="down">按流量类型选择路由</div>
+  <div class="branches">
+    <article class="node primary" data-filter="ModelRouteFilter" data-order="-140"><h3><span class="order">-140</span>ModelRouteFilter</h3><p>ProviderRequestPipeline → ProviderAdapter V2（OpenAI / Azure OpenAI / Anthropic / Custom）。按模型配置使用原生响应或 OpenAI 兼容响应；ProviderResponseDecorator 负责响应转换与 usage 遥测。</p></article>
+    <article class="node primary" data-filter="ServiceRouteFilter" data-order="-140"><h3><span class="order">-140</span>ServiceRouteFilter</h3><p>拼接已登记上游 URL，按配置剥路径，注入服务凭证。原请求体流式透传，不做模型协议转换。两条路由均剔除入站网关 Authorization / 内部 X-Mg 账户头，再注入上游凭证。</p></article>
+  </div>
+  <div class="down">设置上游地址 → 熔断检查 → 框架转发</div>
+  <div class="flow three">
+    <article class="node" data-filter="CircuitBreakerFilter" data-order="-50"><h3><span class="order">-50</span>CircuitBreakerFilter</h3><p>模型共用 <code>modelUpstream</code><br>服务按 <code>svc:{serviceId}</code> 隔离<br>由配置开关决定是否启用</p></article>
+    <div class="connector" aria-hidden="true"></div>
+    <article class="node"><h3>Gateway / Reactor Netty</h3><p>连接当前配置的上游<br>接收 HTTP 或 SSE 响应</p></article>
+    <div class="connector" aria-hidden="true"></div>
+    <article class="node database"><h3>响应返回与收尾</h3><p>模型响应适配 → 旁路采集 → 客户端<br><code>doFinally</code> 提交审计 / 报文<br>不等待写库结果</p></article>
+  </div>
+  <div class="notice warning"><strong>审计 ≠ 报文留档：</strong>鉴权失败也会尝试写审计，但在录制过滤器之前被拒、没有响应字节、未开启录制或队列溢出的请求，不保证存在报文记录。两类表通过 <code>traceId</code> 关联，不是一对一强一致写入。</div>
+</section>
+
+<section id="recording" aria-labelledby="recording-title">
+  <div class="section-header"><span class="section-number">03</span><h2 id="recording-title">报文录制：在线旁路，异步解析落库</h2></div>
+  <p class="description">录制以一次 HTTP 调用为单位，不是逐帧写库；SSE 结束、异常或取消后才进入收尾路径，可能只录到已收到的部分内容。</p>
+  <div class="lane">
+    <div class="lane-label"><strong>响应主通道</strong><span>数据逐块向客户端输出，不等待录制完成</span></div>
+    <div class="flow">
+      <article class="node"><h3>上游响应</h3><p>普通 HTTP / SSE<br>网络块不等于完整 SSE 帧</p></article>
+      <div class="connector" aria-hidden="true"></div>
+      <article class="node primary"><h3>模型响应适配</h3><p>仅模型链路：按响应模式转换<br>通用服务链路原样通过</p></article>
+      <div class="connector" aria-hidden="true"></div>
+      <article class="node capture"><h3>PayloadCaptureFilter</h3><p>只读视图复制字节<br>不消费原 DataBuffer 读指针<br>保留流式 flush 分组</p></article>
+      <div class="connector" aria-hidden="true"></div>
+      <article class="node"><h3>调用方即时接收</h3><p>录制异常不应中断正常响应<br>采集的是客户端侧响应形态，不是完整的上游线级镜像</p></article>
+    </div>
+  </div>
+  <div class="down async-down">采集副本 + 请求上下文 → TraceFilter.doFinally → PayloadService.submit</div>
+  <div class="lane async">
+    <div class="lane-label"><strong>异步留档通道</strong><span>本实例有界内存队列，无 Kafka / MQ，不反压业务</span></div>
+    <div class="flow">
+      <article class="node capture"><h3>录制条件与元数据</h3><p>全局开关 + 资源开关<br>模型：<code>app × model</code> 授权开关<br>服务 SSE：服务自身开关<br>非流式服务有例外，见下方边界</p></article>
+      <div class="connector" aria-hidden="true"></div>
+      <article class="node capture"><h3>非阻塞 offer 入队</h3><p>请求字节 / 采集响应字节 / traceId<br>请求头仅有界复制<br>队列满则丢弃并记录告警计数，不等待空位</p></article>
+      <div class="connector" aria-hidden="true"></div>
+      <article class="node capture"><h3>定时消费与重试</h3><p>默认每 2 秒，批量 200 条<br>消费线程解析正文、序列化 Header<br>失败转 PendingWriteBuffer：退避 / 拆批 / 坏记录隔离</p></article>
+      <div class="connector" aria-hidden="true"></div>
+      <article class="node database"><h3>mg_request_payload</h3><p>请求头 / 请求正文（如已采集）<br>响应原文 / 解析正文 / 截断标志<br>流量类型 / 服务编码 / 状态 / 时间<br><code>trace_id</code> 关联审计表</p></article>
+    </div>
+  </div>
+  <div class="detail-grid">
+    <div><h3>FULL 与 TAIL</h3><p>需要留档的响应走 FULL；非流式响应也走 FULL 以解析 usage。未开启留档的 SSE 只保留尾部 64 KiB 做用量解析，不把尾巴当完整报文入库。全局关闭时 PayloadService 不入队。</p></div>
+    <div><h3>采集与持久化保护</h3><p>FULL 默认保护阈值 64 MiB（可配置，按块判断），达到后停止后续采集但继续转发，标记 <code>truncated=response</code>。主队列和重试缓冲均有上限，进程异常退出仍可能丢失未落库数据，不是持久消息队列。</p></div>
+    <div><h3>独立的审计与清理</h3><p>AuditService 独立批量写 <code>mg_audit_log</code>，保存状态、耗时、Token 和来源口径，并异步累加月 Token。PayloadCleanupService 按配置保留期分批删除报文，实际配置可查 <code>/modelgate/payload/meta</code>。</p></div>
+  </div>
+  <div class="notice warning"><strong>请求正文的现有边界：</strong>模型 POST JSON 由 BodyParseFilter 缓存原始正文。通用 HTTP/SSE 服务链路刻意不读取 body，因此目前通常只留档方法、路径、请求头和响应，<code>request_body</code> 为空；这不是通用服务的完整请求镜像。</div>
+  <div class="notice warning"><strong>非流式服务开关的现有例外：</strong>非流式响应直接选择 FULL，而服务留档分支只检查 FULL 模式；因此全局录制开启时，即使该服务的录制开关关闭，非流式响应仍可能入库。图中如实标注该现状，本次未修改此行为。</div>
+  <div class="notice danger"><strong>敏感数据：</strong>当前请求头快照包含 Authorization / Cookie / Token，正文可能包含用户输入与模型输出，尚未脱敏。报文查询、详情、数据库访问及保留期必须受控；页面可查看不代表可以向所有员工开放。</div>
+</section>
+
+<section id="replay" aria-labelledby="replay-title">
+  <div class="section-header"><span class="section-number">04</span><h2 id="replay-title">报文回放：管理端直连上游重新发送</h2></div>
+  <p class="description">这里的“回放”是重新发起真实上游请求，不是读取旧响应返回给调用方，也不是按历史 SSE 时间间隔播放。</p>
+  <div class="lane admin">
+    <div class="lane-label"><strong>管理入口</strong><span>先查详情、按需编辑、明确确认副作用，再提交回放</span></div>
+    <div class="flow three">
+      <article class="node control"><h3>报文记录页面</h3><p>内置管理页 / 独立管理前端<br>选择历史报文 id<br>可覆盖 requestBody；服务可覆盖 method / path</p></article>
+      <div class="connector" aria-hidden="true"></div>
+      <article class="node control"><h3>行内逐接口鉴权</h3><p>报文查询、详情、回放分别授权<br><code>POST /modelgate/payload/replay?id=…</code><br>本进程不自行校验管理员身份</p></article>
+      <div class="connector" aria-hidden="true"></div>
+      <article class="node control"><h3>PayloadController</h3><p>AdminScheduler 上查历史记录<br>优先使用手工正文，再取留档正文<br>两者均为空则拒绝，不发上游请求</p></article>
+    </div>
+  </div>
+  <div class="down">按历史 trafficType 分支，读取当前资源配置和解密后的上游凭证</div>
+  <div class="branches admin">
+    <div class="lane admin"><div class="lane-label"><strong>模型回放</strong><span>modelId 定位当前模型</span></div>
+      <div class="flow two">
+        <article class="node control"><h3>ModelConnectivityService.chat</h3><p>当前参数规则与 ProviderRequestPipeline<br>当前模型映射、URL、协议适配、上游凭证<br>模型回放使用 POST</p></article>
+        <div class="connector" aria-hidden="true"></div>
+        <article class="node"><h3>模型上游</h3><p>真实推理并消耗 Token<br>按当前配置适配响应<br>不是调用方历史配置快照</p></article>
+      </div>
+    </div>
+    <div class="lane admin"><div class="lane-label"><strong>通用服务回放</strong><span>serviceId 定位当前服务</span></div>
+      <div class="flow two">
+        <article class="node control"><h3>ServiceConnectivityService.replay</h3><p>取覆盖值 / 历史 method 与 path<br>去部署文根及服务前缀后拼上游地址<br>必要时还会回落到当前探测配置</p></article>
+        <div class="connector" aria-hidden="true"></div>
+        <article class="node"><h3>HTTP / SSE 上游</h3><p>当前服务凭证及附加头<br>写操作可能重复执行<br>GET / HEAD 不携带请求正文</p></article>
+      </div>
+    </div>
+  </div>
+  <div class="down">WebClient 等待并聚合本次上游响应</div>
+  <article class="node control"><h3>统一调试结果 → 管理页面</h3><p><code>ConnectivityTestVO</code>：连通判定、HTTP 状态、耗时、地址、响应片段。SSE 也聚合后返回，不实时透传；回放通道有独立的等待超时和响应回传上限，不能据此推断在线业务流量的超时策略。服务回放的 <code>success</code> 表示连通性，不等于上游业务成功，必须同时看 HTTP 状态和正文。</p></article>
+  <div class="table-wrap">
+    <table aria-label="回放能力与边界">
+      <thead><tr><th scope="col">核对项</th><th scope="col">当前行为</th><th scope="col">排障含义</th></tr></thead>
+      <tbody>
+        <tr><td>网关业务规则</td><td>跳过调用方凭证、来源规则、模型/服务授权、配额和业务熔断链。</td><td>适合排查上游；不能用来复现网关拦截的 401 / 403 / 429。</td></tr>
+        <tr><td>历史请求头</td><td>只供查询留档，不自动注入回放；使用当前上游凭证和配置头。</td><td>依赖原 Cookie、自定义 Header 或签名的请求，可能无法等价复现。</td></tr>
+        <tr><td>通用服务请求体</td><td>历史正文通常未采集；无手工正文且无留档正文时，Controller 会拒绝回放，连原本无 body 的 GET 也受此校验。</td><td>不能把页面上的“回放”理解为任意历史 HTTP 请求都能一键重发。</td></tr>
+        <tr><td>路径还原</td><td>默认从历史路径剥掉文根与服务前缀；路径可能因列长被截断，旧记录也可能缺失。</td><td><code>stripPrefix=false</code>、缺失或截断的历史路径，需人工核对并显式填写 path。</td></tr>
+        <tr><td>审计与配额</td><td>输出回放 WARN 日志；不新增业务审计/报文记录，也不扣调用方网关配额。</td><td>上游真实调用和计费仍发生；不能据网关用量表判断此次回放成本。</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="notice danger"><strong>生产操作警告：</strong>回放可能再次写入业务数据、触发外部动作或消耗模型 Token；没有自动幂等保障。需限制回放权限，并核对目标环境、请求内容与上游副作用。</div>
+  <div class="boundary"><h3>要验证完整网关链路？</h3><p>使用接入系统凭证重新调用 <code>/modelgate/v1/**</code> 或 <code>/modelgate/svc/**</code>（接入示例 / 测试连通），而不是使用报文回放接口。那条链路才会执行调用方鉴权、授权、配额、熔断和审计。</p></div>
+  <details><summary>实现依据与维护位置</summary><ul class="sources">
+    <li>路径与监听：ApplicationPaths、ModelGateApplication、UrlConstant；网络中间层以行内部署配置为准。</li>
+    <li>录制：BodyParseFilter、ProviderResponseDecorator、PayloadCaptureFilter / ResponseCapture、TraceFilter、RequestHeaderSnapshotter。</li>
+    <li>落库与清理：PayloadService、PendingWriteBuffer、RequestPayloadMapper、AuditService、PayloadCleanupService。</li>
+    <li>回放：PayloadController、ReplayPayloadRequestBO、ModelConnectivityService、ServiceConnectivityService。</li>
+    <li>维护说明：spec/modelgate/16-架构图与报文录制回放.md；结构与过滤器顺序由 ArchitecturePageTest 校验。</li>
+  </ul></details>
+</section>
+</main>
+<footer class="shell">离线可用，无外部字体、图库或绘图服务依赖。图中参数为代码默认值，实际开关、保留期、端口与路由以运行配置为准。</footer>
+<script>
+document.getElementById('print-diagrams').addEventListener('click', function () { window.print(); });
+</script>
 </body>
 </html>
