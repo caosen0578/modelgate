@@ -70,11 +70,11 @@
   <p>把分散的模型与服务，变成一个可统一管理的访问入口。</p>
 </div></header>
 <main class="shell">
-  <nav class="toolbar" aria-label="简图导航"><a href="#overview">网关做什么</a><a href="#recording">怎样录制</a><a href="#replay">怎样回放</a><button id="print-overview" type="button">打印 / 保存 PDF</button></nav>
+  <nav class="toolbar" aria-label="简图导航"><a href="#overview">模型与服务网关</a><a href="#recording">流量录制</a><a href="#replay">流量回放</a><button id="print-overview" type="button">打印 / 保存 PDF</button></nav>
 
   <section id="overview" aria-labelledby="overview-heading">
-    <div class="heading"><span class="number">01</span><h2 id="overview-heading">一个入口，连接多种模型与服务</h2></div>
-    <p class="lead">系统向网关发起调用，由网关统一检查权限、控制用量、转发请求。</p>
+    <div class="heading"><span class="number">01</span><h2 id="overview-heading">模型与服务网关</h2></div>
+    <p class="lead">一个入口，连接多种模型与服务。统一校验权限、控制用量、转发请求。</p>
     <svg class="diagram" viewBox="0 0 1200 410" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="overview-svg-title overview-svg-desc">
       <title id="overview-svg-title">多个业务系统通过统一网关访问大模型和通用业务接口</title>
       <desc id="overview-svg-desc">左侧业务系统汇入中间 ModelGate 网关，网关检查权限和用量后分发到右侧各类大模型或通用业务接口，请求和响应均通过网关。</desc>
@@ -108,8 +108,8 @@
   </section>
 
   <section id="recording" aria-labelledby="recording-heading">
-    <div class="heading"><span class="number">02</span><h2 id="recording-heading">调用照常进行，报文旁路留档</h2></div>
-    <p class="lead">正常调用不等待写库；按需保存调用内容，方便事后查询与排查。</p>
+    <div class="heading"><span class="number">02</span><h2 id="recording-heading">流量录制</h2></div>
+    <p class="lead">调用照常进行，报文旁路留档。按需异步保存，方便事后查询与排查。</p>
     <svg class="diagram" viewBox="0 0 1200 470" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="recording-svg-title recording-svg-desc">
       <title id="recording-svg-title">正常调用的旁路副本异步保存，并供管理人员查询</title>
       <desc id="recording-svg-desc">上方是业务系统、网关、模型或接口之间的双向正常调用。网关向下旁路复制报文，调用结束后异步留档；管理员从留档记录查询调用内容，主通道不等待落库。</desc>
@@ -138,8 +138,8 @@
   </section>
 
   <section id="replay" aria-labelledby="replay-heading">
-    <div class="heading"><span class="number">03</span><h2 id="replay-heading">选择历史请求，重新调用上游排查</h2></div>
-    <p class="lead">授权管理员选取一条记录，核对或补充内容，再次请求上游并查看本次结果。</p>
+    <div class="heading"><span class="number">03</span><h2 id="replay-heading">流量回放</h2></div>
+    <p class="lead">选择历史请求，重新调用上游排查。由授权管理员核对或补充后发起。</p>
     <svg class="diagram" viewBox="0 0 1200 440" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="replay-svg-title replay-svg-desc">
       <title id="replay-svg-title">管理员选择记录、核对内容、重新请求真实上游，再查看新的返回结果</title>
       <desc id="replay-svg-desc">四个步骤依次为选择历史记录、核对或补充请求、管理端重新发送、真实模型或业务接口处理；下方返回线连接到查看本次返回。不是播放旧响应，会真实调用上游，可能产生成本或重复业务操作。</desc>

@@ -23,6 +23,9 @@ class ArchitectureOverviewPageTest {
         while (links.find()) assertTrue(ids.contains(links.group(1)), "悬空引用: " + links.group(1));
         assertEquals(3, Pattern.compile("class=\"diagram\"").matcher(html).results().count());
         assertEquals(3, Pattern.compile("role=\"img\"").matcher(html).results().count());
+        assertTrue(html.contains("<h2 id=\"overview-heading\">模型与服务网关</h2>"));
+        assertTrue(html.contains("<h2 id=\"recording-heading\">流量录制</h2>"));
+        assertTrue(html.contains("<h2 id=\"replay-heading\">流量回放</h2>"));
         assertTrue(html.contains("href=\"architecture.html\""));
         assertTrue(Files.exists(Path.of("src/main/resources/static/architecture.html")));
         assertFalse(Pattern.compile("(?:src|href)=\"(?:https?:)?//", Pattern.CASE_INSENSITIVE).matcher(html).find());
