@@ -89,6 +89,7 @@ public class AuditLogController {
 
         return auditLogMapper.selectPage(new Page<>(q.getPageIndex(), q.getPageSize()),
                 new LambdaQueryWrapper<AuditLogEntity>()
+                        .apply(AuditLogMapper.SYSTEM_AUDIT_SCOPE)
                         .eq(scope.eqAppId() != null,               AuditLogEntity::getAppId,      scope.eqAppId())
                         .in(scope.inAppIds() != null,              AuditLogEntity::getAppId,      scope.inAppIds())
                         .eq(modelId != null && !modelId.isBlank(), AuditLogEntity::getModelId,    modelId)

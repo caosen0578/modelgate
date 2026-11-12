@@ -87,6 +87,8 @@ CREATE TABLE IF NOT EXISTS mg_model_credential (
 CREATE TABLE IF NOT EXISTS mg_app (
     id           BIGINT       NOT NULL AUTO_INCREMENT             COMMENT '主键，自增',
     app_id       VARCHAR(64)  NOT NULL                           COMMENT '应用唯一标识（业务唯一键）',
+    subject_type VARCHAR(16)  NOT NULL DEFAULT 'SYSTEM'          COMMENT '接入主体类型：SYSTEM 或 PERSONAL',
+    person_um    VARCHAR(64)                                    COMMENT '个人接入规范化 UM；系统为 NULL',
     system_name  VARCHAR(128) NOT NULL                           COMMENT '所属业务系统中文名称',
     app_name     VARCHAR(128) NOT NULL                           COMMENT '应用名称',
     sys_code     VARCHAR(64)  NOT NULL                           COMMENT '所属系统编码，如 CRM、BI',
@@ -102,8 +104,9 @@ CREATE TABLE IF NOT EXISTS mg_app (
     creater_um   VARCHAR(100) DEFAULT NULL                       COMMENT '创建人 UM 账号',
     updater_um   VARCHAR(100) DEFAULT NULL                       COMMENT '更新人 UM 账号',
     PRIMARY KEY (id),
-    UNIQUE KEY uk_app_id (app_id, is_del)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='接入系统（调用方应用）';
+    UNIQUE KEY uk_app_id (app_id, is_del),
+    UNIQUE KEY uk_app_person_um (person_um)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='接入主体（系统或个人）';
 
 -- ============================================================================
 -- 4. mg_app_credential —— 接入系统调用凭证

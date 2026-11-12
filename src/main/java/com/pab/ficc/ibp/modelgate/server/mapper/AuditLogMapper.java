@@ -16,6 +16,9 @@ import java.util.Map;
 
 @Mapper
 public interface AuditLogMapper extends BaseMapper<AuditLogEntity> {
+    /** 仅排除已知个人，保留无 appId 的拒绝记录和已删除系统的历史。 */
+    String SYSTEM_AUDIT_SCOPE = "NOT EXISTS (SELECT 1 FROM mg_app p WHERE p.app_id = mg_audit_log.app_id "
+            + "AND p.subject_type = 'PERSONAL')";
 
     default boolean batchInsert(List<AuditLogEntity> list) {
         if (list == null || list.isEmpty()) return true;
@@ -52,7 +55,7 @@ public interface AuditLogMapper extends BaseMapper<AuditLogEntity> {
             // 「总请求数」会把服务调用一起算进模型用量，而平均耗时会被服务的短请求拉低——
             // 报表看起来正常，数字却是错的，对账时才会发现。
             // 历史数据由列默认值 'model' 自动归位，无需回填。
-            "WHERE traffic_type = 'model' " +
+            "WHERE traffic_type = 'model' AND " + SYSTEM_AUDIT_SCOPE + " " +
             "AND create_time BETWEEN #{start} AND #{end} " +
             "<if test='appIds != null and appIds.size() > 0'>" +
             "AND app_id IN <foreach item='a' collection='appIds' open='(' separator=',' close=')'>#{a}</foreach> " +
@@ -63,4 +66,23 @@ public interface AuditLogMapper extends BaseMapper<AuditLogEntity> {
                                          @Param("modelId") String modelId,
                                          @Param("start") LocalDateTime start,
                                          @Param("end") LocalDateTime end);
+
+    /** 仅接受后端通过 UM 解析出的单个个人 ID；没有“空 ID = 全量”分支。 */
+    @Select("""
+            SELECT model_id, COUNT(*) AS total_requests,
+                   COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                   COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                   COALESCE(SUM(CASE WHEN token_source = 'usage' THEN input_tokens + output_tokens ELSE 0 END), 0)
+                       AS upstream_tokens,
+                   COALESCE(SUM(CASE WHEN token_source = 'estimated' THEN input_tokens + output_tokens ELSE 0 END), 0)
+                       AS estimated_tokens
+            FROM mg_audit_log
+            WHERE app_id = #{appId} AND traffic_type = 'model'
+              AND create_time >= #{start} AND create_time < #{endExclusive}
+            GROUP BY model_id
+            ORDER BY model_id
+            """)
+    List<Map<String, Object>> selectPersonalUsageByModel(@Param("appId") String appId,
+                                                         @Param("start") LocalDateTime start,
+                                                         @Param("endExclusive") LocalDateTime endExclusive);
 }

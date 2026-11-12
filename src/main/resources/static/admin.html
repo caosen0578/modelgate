@@ -283,6 +283,9 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
     <div class="nav-item" data-page="apps" onclick="navTo('apps')">
       <span class="icon">🏢</span> 接入系统
     </div>
+    <div class="nav-item" data-page="personal" onclick="navTo('personal')">
+      <span class="icon">👤</span> 个人接入
+    </div>
     <div class="nav-label" style="margin-top:8px">运维</div>
     <div class="nav-item" data-page="audit" onclick="navTo('audit')">
       <span class="icon">📋</span> 审计日志
@@ -424,6 +427,30 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
             </tbody>
           </table>
           <div id="appsPager"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ====== PAGE: 个人接入 ====== -->
+    <div class="panel" id="page-personal">
+      <div class="toolbar">
+        <div class="toolbar-left"><strong>个人接入</strong><span id="paState" class="hint"></span></div>
+        <div class="toolbar-right">
+          <input id="paSearch" aria-label="搜索 UM 或姓名" placeholder="搜索 UM 或姓名" oninput="searchPersonalAccess()"/>
+          <select id="paEnabled" aria-label="个人接入状态" onchange="personalGo(1)">
+            <option value="">全部状态</option><option value="true">启用</option><option value="false">停用</option>
+          </select>
+          <button id="paCreate" class="btn btn-primary" disabled data-api="POST /modelgate/personal-access/create"
+                  onclick="openPersonalProfile()">+ 开通个人接入</button>
+        </div>
+      </div>
+      <div class="card" style="padding:0">
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>UM</th><th>姓名</th><th>状态</th><th>备注</th><th>开通时间</th><th>操作</th></tr></thead>
+            <tbody id="paRows"><tr class="empty-row"><td colspan="6">加载中…</td></tr></tbody>
+          </table>
+          <div id="paPager"></div>
         </div>
       </div>
     </div>
@@ -1894,6 +1921,106 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
   </div>
 </div>
 
+<div class="modal-backdrop" id="paProfileModal">
+  <div class="modal">
+    <div class="modal-header"><h3 id="paProfileTitle">开通个人接入</h3>
+      <button class="modal-close" onclick="closeModal('paProfileModal')">×</button></div>
+    <div class="modal-body">
+      <div class="form-group"><label for="paUm">UM</label><input id="paUm" maxlength="64" placeholder="已核对的 UM 号"/>
+        <span class="hint">不需要录入 appId；开通后 UM 不可更换。</span></div>
+      <div class="form-group"><label for="paName">姓名</label><input id="paName" maxlength="64"/></div>
+      <div class="form-group"><label for="paRemark">备注</label><textarea id="paRemark" maxlength="512" rows="2"></textarea></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-neutral" onclick="closeModal('paProfileModal')">取消</button>
+      <button id="paProfileSave" class="btn btn-primary" onclick="savePersonalProfile()">保存</button></div>
+  </div>
+</div>
+<div class="modal-backdrop" id="paDetailModal">
+  <div class="modal modal-wide">
+    <div class="modal-header"><h3 id="paDetailTitle">个人接入</h3>
+      <button class="modal-close" onclick="closeModal('paDetailModal')">×</button></div>
+    <div class="modal-body">
+      <div class="flex gap-8" style="margin-bottom:14px;flex-wrap:wrap">
+        <button class="btn btn-neutral btn-sm" onclick="showPersonalPanel('info')">个人信息</button>
+        <button class="btn btn-neutral btn-sm" onclick="showPersonalPanel('auth')">模型授权</button>
+        <button class="btn btn-neutral btn-sm" onclick="showPersonalPanel('keys')">凭证管理</button>
+        <button class="btn btn-neutral btn-sm" onclick="showPersonalPanel('example')">接入示例</button>
+        <button class="btn btn-neutral btn-sm" onclick="showPersonalPanel('usage')">Token 用量</button>
+      </div>
+      <div data-pa-panel="info"><p id="paInfo"></p></div>
+      <div data-pa-panel="auth" hidden>
+        <div class="form-group"><label for="paModelSearch">可授权模型</label>
+          <input id="paModelSearch" placeholder="搜索模型名称或 ID" oninput="searchPersonalModels()"/>
+          <select id="paGrantModel" aria-label="授权模型"></select>
+        </div>
+        <div class="flex gap-8" style="flex-wrap:wrap">
+          <label>QPS <input id="paQps" type="number" min="0" value="2" style="width:80px"/></label>
+          <label>日请求 <input id="paDaily" type="number" min="0" value="200" style="width:95px"/></label>
+          <label>月 Token <input id="paMonthly" type="number" min="0" value="100000" style="width:115px"/></label>
+          <label>有效期 <input id="paGrantExpiry" type="datetime-local"/></label>
+        </div>
+        <p class="hint">0 表示不限，空有效期表示长期授权。</p>
+        <div class="flex gap-8" style="margin:8px 0">
+          <button id="paGrantSave" class="btn btn-primary btn-sm" data-api="PUT /modelgate/personal-access/auth/save"
+                  onclick="savePersonalGrant()">保存授权</button>
+          <button class="btn btn-neutral btn-sm" onclick="resetPersonalGrant()">清空表单</button>
+        </div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>模型</th><th>状态</th><th>QPS / 日请求 / 月 Token</th><th>有效期</th><th>操作</th></tr></thead>
+          <tbody id="paGrantRows"></tbody>
+        </table></div>
+      </div>
+      <div data-pa-panel="keys" hidden>
+        <div class="flex gap-8" style="flex-wrap:wrap">
+          <input id="paKeyName" aria-label="凭证名称" maxlength="128" placeholder="凭证名称"/>
+          <label>有效期 <input id="paKeyExpiry" type="datetime-local"/></label>
+          <button id="paIssue" class="btn btn-primary btn-sm" data-api="POST /modelgate/personal-access/credentials/create"
+                  onclick="issuePersonalAccessKey()">签发 API Key</button>
+        </div>
+        <p class="hint">空有效期默认为 90 天。换 Key 时先签发新 Key，验证后撤销旧 Key。</p>
+        <div class="table-wrap"><table>
+          <thead><tr><th>名称</th><th>Key 尾号</th><th>状态</th><th>有效期</th><th>操作</th></tr></thead>
+          <tbody id="paKeyRows"></tbody>
+        </table></div>
+      </div>
+      <div data-pa-panel="example" hidden>
+        <div class="form-group"><label for="paGatewayBase">网关地址</label><input id="paGatewayBase" oninput="renderPersonalExample()"/></div>
+        <div class="form-group"><label for="paExampleModel">已授权模型</label>
+          <select id="paExampleModel" onchange="renderPersonalExample()"></select></div>
+        <pre id="paExample" style="white-space:pre-wrap;background:#f3f6fa;padding:12px;border-radius:6px"></pre>
+        <button class="btn btn-neutral btn-sm" onclick="copyText($('paExample').textContent)">复制接入示例</button>
+        <p class="hint">示例不填真实 Key；只向老师交付网关接口、模型名和个人 Key。</p>
+      </div>
+      <div data-pa-panel="usage" hidden>
+        <div class="flex gap-8" style="flex-wrap:wrap">
+          <label>开始日期 <input type="date" id="paUsageStart"/></label>
+          <label>结束日期 <input type="date" id="paUsageEnd"/></label>
+          <button class="btn btn-primary btn-sm" onclick="loadPersonalUsage()">查询</button>
+        </div>
+        <p class="hint">按 UM 汇总；默认最近 30 天，最多 90 天；审计异步入库。</p>
+        <p id="paUsageSummary" style="margin:10px 0"></p>
+        <div class="table-wrap"><table>
+          <thead><tr><th>模型</th><th>请求数</th><th>输入</th><th>输出</th><th>合计 Token</th><th>上游报告</th><th>估算</th></tr></thead>
+          <tbody id="paUsageRows"></tbody>
+        </table></div>
+      </div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-neutral" onclick="closeModal('paDetailModal')">关闭</button></div>
+  </div>
+</div>
+<dialog class="modal" id="paIssuedDialog" style="border:0;max-width:min(600px,90vw)">
+  <div class="modal-header"><h3 id="paIssuedTitle">保存个人 API Key</h3></div>
+  <div class="modal-body">
+    <p>仅显示一次，请通过行内安全渠道交付给本人。</p>
+    <textarea id="paIssuedKey" aria-label="本次个人 Key" readonly rows="2" style="width:100%;margin:10px 0"></textarea>
+    <p id="paIssuedExpiry" class="hint"></p>
+  </div>
+  <form method="dialog" class="modal-footer">
+    <button class="btn btn-neutral" type="button" onclick="copyText($('paIssuedKey').value)">复制 Key</button>
+    <button class="btn btn-primary">完成</button>
+  </form>
+</dialog>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -1918,7 +2045,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
 //    接入示例（请求报文） / 接入示例 · 连通性测试
 //    模型授权 / 服务授权（接入系统 × 通用服务） / 访问控制
 //    审计日志 & 统计摘要 / 报文记录 / 网关配置
-//    服务管理（通用服务接入 /svc/**） / 模型测试工具 / Demo Data / 初始化
+//    服务管理（通用服务接入 /svc/**） / 模型测试工具 / Demo Data / 个人接入 / 初始化
 //
 //  为什么不拆成多个 html：见 spec/modelgate/05 §1（禁前端 SPA 路由）。
 //  另有实证理由——svcJoinUpstream 一个函数被服务管理页、服务测试工具、
@@ -1939,7 +2066,7 @@ let editingModelId = null; // null=新增, string=编辑
 let editingOriginalModelId = null;
 let currentStep = 1;
 
-const PAGE_TITLES = {models:'模型管理', services:'服务管理', apps:'接入系统', audit:'审计日志', payload:'报文记录', settings:'网关配置'};
+const PAGE_TITLES = {models:'模型管理', services:'服务管理', apps:'接入系统', personal:'个人接入', audit:'审计日志', payload:'报文记录', settings:'网关配置'};
 
 // ============================================================
 // ===== 公共层 · 工具函数
@@ -2042,6 +2169,7 @@ const pageState = {
   models: {pageIndex:1, pageSize:20, total:0, pages:0},
   services:{pageIndex:1, pageSize:20, total:0, pages:0},
   apps:   {pageIndex:1, pageSize:20, total:0, pages:0},
+  personal:{pageIndex:1, pageSize:20, total:0, pages:0},
   audit:  {pageIndex:1, pageSize:20, total:0, pages:0},
   // 报文行含正文预览，默认每页比其它列表小一档，避免一屏塞太多长文本
   payload:{pageIndex:1, pageSize:20, total:0, pages:0},
@@ -2321,6 +2449,7 @@ function navTo(page, skipLoad = false){
   if(page==='models')   loadModels();
   if(page==='services') loadServices();
   if(page==='apps')     loadApps();
+  if(page==='personal'){ loadPersonalAccessMeta(); loadPersonalAccess(); }
   if(page==='audit')  { fillAuditFilters(); loadStats(); loadAudit(); }
   if(page==='payload'){ fillPayloadFilters(); loadPayloadMeta(); loadPayload(); }
   if(page==='settings') loadConfig();
@@ -6241,6 +6370,312 @@ const DEMO_CONFIG = [
   {configKey:'rate.limit.default',configValue:'100',description:'全局默认 QPS',updateTime:'2026-04-23T10:00:00'},
   {configKey:'aksk.window.seconds',configValue:'300',description:'AK/SK 防重放时间窗口',updateTime:'2026-04-23T10:00:00'},
 ];
+
+// ============================================================
+// ===== 模块 · 个人接入
+// ============================================================
+const pa = {enabled:false, rows:[], person:null, grants:[], keys:[], editing:false, listVersion:0, modelVersion:0, detailVersion:0};
+
+async function personalAccessRequest(path, method='GET', body){
+  const response = await fetch(apiUrl('/personal-access' + path), {
+    method, headers:hdrs(), cache:'no-store', body:body === undefined ? undefined : JSON.stringify(body)
+  });
+  const result = await response.json();
+  if(!response.ok || !isOk(result)) throw new Error(errMsg(result));
+  return result.data;
+}
+
+function personalAccessAction(work){
+  return Promise.resolve().then(work).catch(e=>toast(e.message || '个人接入操作失败','error'));
+}
+
+function personalAccessQuery(params){
+  return '?' + new URLSearchParams(Object.entries(params).filter(([,v])=>v !== '' && v != null));
+}
+
+function loadPersonalAccessMeta(){
+  return personalAccessAction(async()=>{
+    pa.enabled = (await personalAccessRequest('/meta')).enabled === true;
+    $('paCreate').disabled = !pa.enabled;
+    $('paState').textContent = pa.enabled ? '功能已启用' : '未启用，仅允许查询、停用和撤销';
+  });
+}
+
+function loadPersonalAccess(){
+  const version = ++pa.listVersion;
+  return personalAccessAction(async()=>{
+    const query = pageQuery('personal', {keyword:$('paSearch').value, enabled:$('paEnabled').value});
+    const data = await personalAccessRequest('/page?' + query);
+    if(version !== pa.listVersion) return;
+    pa.rows = applyPage('personal', data || {});
+    $('paRows').innerHTML = pa.rows.map((p,i)=>
+      '<tr><td><code>' + escapeHtml(p.um) + '</code></td><td>' + escapeHtml(p.name) +
+      '</td><td>' + (p.enabled ? '启用' : '停用') + '</td><td>' + escapeHtml(p.remark || '-') +
+      '</td><td>' + escapeHtml(fmtTime(p.createTime)) +
+      '</td><td><div class="flex gap-8"><button class="btn btn-neutral btn-sm" onclick="openPersonalAccess(' + i +
+      ')">详情</button><button class="btn btn-neutral btn-sm" onclick="openPersonalProfile(' + i +
+      ')">编辑</button><button class="btn btn-neutral btn-sm" onclick="openPersonalAccess(' + i +
+      ',\'usage\')">用量</button><button class="btn btn-warning btn-sm" onclick="togglePersonalAccount(' + i +
+      ')">' + (p.enabled ? '停用' : '启用') + '</button></div></td></tr>'
+    ).join('') || '<tr class="empty-row"><td colspan="6">暂无个人接入</td></tr>';
+    renderPager('personal','paPager','personal');
+  });
+}
+
+function personalGo(page){ pageState.personal.pageIndex=Math.max(1,page); loadPersonalAccess(); }
+function personalSize(size){ pageState.personal.pageSize=Number(size)||20; personalGo(1); }
+const searchPersonalAccess = debounce(()=>personalGo(1), 300);
+
+function openPersonalProfile(index){
+  const row = pa.rows[index];
+  pa.editing = !!row;
+  if(!row && !pa.enabled) return toast('个人接入尚未启用','error');
+  $('paProfileTitle').textContent = row ? '编辑个人资料' : '开通个人接入';
+  $('paUm').value = row?.um || '';
+  $('paUm').disabled = !!row;
+  $('paName').value = row?.name || '';
+  $('paRemark').value = row?.remark || '';
+  openModal('paProfileModal');
+}
+
+function savePersonalProfile(){
+  return personalAccessAction(async()=>{
+    const body = {um:$('paUm').value.trim(), name:$('paName').value.trim(), remark:$('paRemark').value};
+    if(!body.um || !body.name) throw new Error('请填写 UM 和姓名');
+    $('paProfileSave').disabled=true;
+    try{
+      await personalAccessRequest(pa.editing ? '/update' : '/create', pa.editing ? 'PUT' : 'POST', body);
+      closeModal('paProfileModal');
+      toast('个人资料已保存');
+      await loadPersonalAccess();
+    }finally{ $('paProfileSave').disabled=false; }
+  });
+}
+
+function togglePersonalAccount(index){
+  const row = pa.rows[index];
+  if(!row || !row.enabled && !pa.enabled) return;
+  if(!confirm('确认' + (row.enabled ? '停用' : '启用') + ' ' + row.um + ' 的个人接入？')) return;
+  return personalAccessAction(async()=>{
+    await personalAccessRequest('/toggle' + personalAccessQuery({um:row.um, enabled:!row.enabled}), 'PATCH');
+    toast('状态已更新');
+    await loadPersonalAccess();
+  });
+}
+
+function openPersonalAccess(index, tab='info'){
+  const row=pa.rows[index];
+  if(!row) return;
+  const version=++pa.detailVersion;
+  return personalAccessAction(async()=>{
+    const person=await personalAccessRequest('/detail' + personalAccessQuery({um:row.um}));
+    if(version!==pa.detailVersion) return;
+    pa.person=person;
+    pa.grants=[];
+    pa.keys=[];
+    $('paGrantRows').textContent='';
+    $('paKeyRows').textContent='';
+    $('paKeyName').value='';
+    $('paKeyExpiry').value='';
+    $('paExampleModel').textContent='';
+    renderPersonalExample();
+    $('paDetailTitle').textContent=pa.person.name + ' · ' + pa.person.um;
+    $('paInfo').textContent=(pa.person.enabled ? '已启用' : '已停用') + ' · 开通于 ' + fmtTime(pa.person.createTime)
+      + ' · 备注：' + (pa.person.remark || '—');
+    $('paGatewayBase').value=defaultGatewayBase();
+    $('paUsageStart').value='';
+    $('paUsageEnd').value='';
+    $('paUsageSummary').textContent='';
+    $('paUsageRows').textContent='';
+    $('paIssue').disabled=!pa.enabled || !pa.person.enabled;
+    $('paGrantSave').disabled=!pa.enabled;
+    openModal('paDetailModal');
+    showPersonalPanel(tab);
+  });
+}
+
+function showPersonalPanel(tab){
+  document.querySelectorAll('[data-pa-panel]').forEach(el=>el.hidden=el.dataset.paPanel!==tab);
+  if(tab==='auth'){ resetPersonalGrant(); loadPersonalGrants(); }
+  if(tab==='example') loadPersonalGrants(true);
+  if(tab==='keys') loadPersonalKeys();
+  if(tab==='usage') loadPersonalUsage();
+}
+
+function loadPersonalModelOptions(){
+  const version = ++pa.modelVersion;
+  return personalAccessAction(async()=>{
+    const data=await personalAccessRequest('/auth/models' + personalAccessQuery({
+      pageIndex:1,pageSize:50,keyword:$('paModelSearch').value.trim()
+    }));
+    if(version !== pa.modelVersion || $('paGrantModel').disabled) return;
+    $('paGrantModel').innerHTML='<option value="">请选择模型</option>' + (data.items || []).map(m=>
+      '<option value="' + escapeHtml(m.modelId) + '">' + escapeHtml(m.modelName || m.modelId) +
+      ' · ' + escapeHtml(m.modelId) + '</option>').join('');
+  });
+}
+const searchPersonalModels=debounce(loadPersonalModelOptions,300);
+
+function resetPersonalGrant(){
+  $('paGrantModel').disabled=false;
+  $('paModelSearch').value='';
+  $('paQps').value=2;
+  $('paDaily').value=200;
+  $('paMonthly').value=100000;
+  $('paGrantExpiry').value='';
+  loadPersonalModelOptions();
+}
+
+function editPersonalGrant(index){
+  const row=pa.grants[index];
+  if(!row) return;
+  const select=$('paGrantModel');
+  select.replaceChildren(new Option(row.modelName || row.modelId,row.modelId));
+  select.disabled=true;
+  $('paQps').value=row.qpsLimit ?? 0;
+  $('paDaily').value=row.dailyLimit ?? 0;
+  $('paMonthly').value=row.monthlyTokens ?? 0;
+  $('paGrantExpiry').value=(row.expiresAt || '').replace(' ','T');
+}
+
+function loadPersonalGrants(forExample=false){
+  const um=pa.person?.um;
+  if(!um) return;
+  return personalAccessAction(async()=>{
+    const rows=await personalAccessRequest('/auth/list' + personalAccessQuery({um}));
+    if(pa.person?.um!==um) return;
+    pa.grants=rows || [];
+    if(forExample){
+      $('paExampleModel').innerHTML=pa.grants.filter(a=>a.enabled && (!a.expiresAt || Date.parse(a.expiresAt.replace(' ','T'))>Date.now()))
+        .map(a=>'<option value="' + escapeHtml(a.modelId) + '">' + escapeHtml(a.modelName || a.modelId) + '</option>').join('');
+      renderPersonalExample();
+    }else{
+      $('paGrantRows').innerHTML=pa.grants.map((a,i)=>
+        '<tr><td>' + escapeHtml(a.modelName || a.modelId) + '<br/><code>' + escapeHtml(a.modelId) +
+        '</code></td><td>' + (a.enabled ? '启用' : '停用') + '</td><td>' +
+        [a.qpsLimit,a.dailyLimit,a.monthlyTokens].map(fmt).join(' / ') + '</td><td>' + escapeHtml(fmtTime(a.expiresAt)) +
+        '</td><td><button class="btn btn-neutral btn-sm" onclick="editPersonalGrant(' + i + ')">编辑</button> ' +
+        '<button class="btn btn-warning btn-sm" onclick="togglePersonalGrant(' + i + ')">' + (a.enabled ? '停用' : '启用') +
+        '</button></td></tr>').join('') || '<tr class="empty-row"><td colspan="5">暂无授权</td></tr>';
+    }
+  });
+}
+
+function personalAccessTime(id){
+  const value=$(id).value;
+  if(!value) return null;
+  const time=value.replace('T',' ');
+  return time.length===16 ? time + ':00' : time;
+}
+
+function savePersonalGrant(){
+  if(!pa.enabled || !pa.person) return;
+  return personalAccessAction(async()=>{
+    const body={um:pa.person.um, modelId:$('paGrantModel').value, qpsLimit:$('paQps').valueAsNumber,
+      dailyLimit:$('paDaily').valueAsNumber, monthlyTokens:$('paMonthly').valueAsNumber, expiresAt:personalAccessTime('paGrantExpiry')};
+    if(!body.modelId || ![body.qpsLimit,body.dailyLimit,body.monthlyTokens].every(n=>Number.isSafeInteger(n)&&n>=0)){
+      throw new Error('请选择模型并填写非负整数额度');
+    }
+    $('paGrantSave').disabled=true;
+    try{
+      await personalAccessRequest('/auth/save','PUT',body);
+      toast('模型授权已保存');
+      await loadPersonalGrants();
+    }finally{ $('paGrantSave').disabled=!pa.enabled; }
+  });
+}
+
+function togglePersonalGrant(index){
+  const row=pa.grants[index];
+  if(!row || !pa.person || !row.enabled && !pa.enabled) return;
+  return personalAccessAction(async()=>{
+    await personalAccessRequest('/auth/toggle' + personalAccessQuery({
+      um:pa.person.um,modelId:row.modelId,enabled:!row.enabled
+    }),'PATCH');
+    await loadPersonalGrants();
+  });
+}
+
+function loadPersonalKeys(){
+  const um=pa.person?.um;
+  if(!um) return;
+  return personalAccessAction(async()=>{
+    const rows=await personalAccessRequest('/credentials/list' + personalAccessQuery({um}));
+    if(pa.person?.um!==um) return;
+    pa.keys=rows || [];
+    $('paKeyRows').innerHTML=pa.keys.map((k,i)=>
+      '<tr><td>' + escapeHtml(k.credName) + '</td><td><code>****' + escapeHtml(k.accessKey || '') +
+      '</code></td><td>' + (k.enabled ? '启用' : '已撤销') + '</td><td>' + escapeHtml(fmtTime(k.expiresAt)) +
+      '</td><td>' + (k.enabled ? '<button class="btn btn-danger btn-sm" onclick="revokePersonalAccessKey(' +
+        i + ')">撤销</button>' : '—') + '</td></tr>').join('') ||
+      '<tr class="empty-row"><td colspan="5">暂无凭证</td></tr>';
+  });
+}
+
+function issuePersonalAccessKey(){
+  if(!pa.enabled || !pa.person?.enabled || $('paIssue').disabled) return;
+  const um=pa.person.um;
+  return personalAccessAction(async()=>{
+    const credName=$('paKeyName').value.trim();
+    if(!credName) throw new Error('请填写凭证名称');
+    $('paIssue').disabled=true;
+    try{
+      const key=await personalAccessRequest('/credentials/create','POST',{um,credName,expiresAt:personalAccessTime('paKeyExpiry')});
+      $('paIssuedTitle').textContent='保存 ' + um + ' 的个人 Key';
+      $('paIssuedKey').value=key.apiKey;
+      $('paIssuedExpiry').textContent='有效期：' + fmtTime(key.expiresAt);
+      $('paIssuedDialog').showModal();
+      $('paKeyName').value='';
+      await loadPersonalKeys();
+    }finally{ $('paIssue').disabled=!pa.enabled || !pa.person?.enabled; }
+  });
+}
+$('paIssuedDialog').addEventListener('close',()=>{
+  $('paIssuedKey').value='';
+  $('paIssuedExpiry').textContent='';
+});
+
+function revokePersonalAccessKey(index){
+  const key=pa.keys[index];
+  if(!pa.person || !key || !confirm('确认撤销该个人 Key？撤销后不可恢复。')) return;
+  return personalAccessAction(async()=>{
+    await personalAccessRequest('/credentials/revoke' + personalAccessQuery({um:pa.person.um,id:key.id}),'DELETE');
+    toast('Key 已撤销');
+    await loadPersonalKeys();
+  });
+}
+
+function renderPersonalExample(){
+  const model=$('paExampleModel').value;
+  const grant=pa.grants.find(a=>a.modelId===model);
+  if(!grant){ $('paExample').textContent='请先配置有效的模型授权。'; return; }
+  const type=grant.modelType;
+  const path=type==='embedding' ? '/v1/embeddings' : type==='image' ? '/v1/images/generations' :
+    type==='audio' ? '/v1/audio/speech' : '/v1/chat/completions';
+  const body=type==='embedding' ? {model,input:'你好'} : type==='image' ? {model,prompt:'一幅山水画'} :
+    type==='audio' ? {model,input:'你好',voice:'alloy'} : {model,messages:[{role:'user',content:'你好'}],stream:false};
+  $('paExample').textContent=['POST ' + $('paGatewayBase').value.trim().replace(/\/+$/,'') + path,
+    'Authorization: Bearer <个人 API Key>','Content-Type: application/json','',JSON.stringify(body,null,2)].join('\n');
+}
+
+function loadPersonalUsage(){
+  const um=pa.person?.um;
+  if(!um) return;
+  return personalAccessAction(async()=>{
+    const usage=await personalAccessRequest('/usage' + personalAccessQuery({
+      um,start:$('paUsageStart').value,end:$('paUsageEnd').value
+    }));
+    if(pa.person?.um!==um) return;
+    const totals=usage.totals;
+    $('paUsageSummary').textContent=usage.um + ' · ' + usage.start + ' 至 ' + usage.end +
+      ' · 合计 ' + totals.totalTokens.toLocaleString() + ' Token（输入 ' + totals.inputTokens.toLocaleString() +
+      '，输出 ' + totals.outputTokens.toLocaleString() + '）';
+    $('paUsageRows').innerHTML=(usage.models || []).map(m=>'<tr><td>' + escapeHtml(m.modelId || '未识别模型') +
+      '</td>' + [m.totals.requests,m.totals.inputTokens,m.totals.outputTokens,m.totals.totalTokens,
+        m.totals.upstreamTokens,m.totals.estimatedTokens].map(n=>'<td>' + Number(n).toLocaleString() + '</td>').join('') +
+      '</tr>').join('') || '<tr class="empty-row"><td colspan="7">该区间暂无调用</td></tr>';
+  });
+}
 
 // ============================================================
 // ===== 模块 · 初始化

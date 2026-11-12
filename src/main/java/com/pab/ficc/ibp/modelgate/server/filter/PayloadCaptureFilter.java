@@ -181,7 +181,7 @@ public class PayloadCaptureFilter implements GlobalFilter, Ordered {
         if (!isStreamResponse(exchange)) {
             return ResponseCapture.full();
         }
-        if (!payloadLogEnabled) {
+        if (!payloadLogEnabled || CredentialAuthFilter.isPersonal(exchange)) {
             return ResponseCapture.tailOnly();
         }
         // 服务流量的开关在**服务本身**（mg_service.payload_log_enabled），不在授权行上——

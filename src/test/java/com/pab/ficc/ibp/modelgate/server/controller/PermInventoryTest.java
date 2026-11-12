@@ -45,7 +45,7 @@ public class PermInventoryTest {
             AccessRuleController.class, AppController.class, AuditLogController.class,
             CredentialController.class, GatewayConfigController.class, ModelAuthController.class,
             ModelController.class, ProviderAdapterController.class, PayloadController.class, ServiceAuthController.class,
-            ServiceController.class, UsageStatsController.class,
+            ServiceController.class, UsageStatsController.class, PersonalAccessController.class,
     };
 
     private static int pass;
@@ -180,7 +180,8 @@ public class PermInventoryTest {
         }
         String l4Block = doc.substring(l4, end < 0 ? doc.length() : end);
         for (String p : new String[]{"/modelgate/credentials/secret", "/modelgate/services/secret",
-                "/modelgate/payload/query", "/modelgate/payload/detail", "/modelgate/payload/replay"}) {
+                "/modelgate/payload/query", "/modelgate/payload/detail", "/modelgate/payload/replay",
+                "/modelgate/personal-access/credentials/create"}) {
             check(p + " 归在 L4", l4Block.contains("`" + p + "`"));
         }
     }

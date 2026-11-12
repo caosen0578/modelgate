@@ -77,6 +77,7 @@ public class AdminPageStructureTest {
             "模块 · 服务管理（通用服务接入 /svc/**）",
             "模块 · 模型测试工具",
             "模块 · Demo Data",
+            "模块 · 个人接入",
             "模块 · 初始化");
 
     /**

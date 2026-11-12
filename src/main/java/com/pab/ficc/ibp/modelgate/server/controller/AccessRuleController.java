@@ -5,6 +5,7 @@ import com.pab.ficc.ibp.modelgate.server.domain.Result;
 import com.pab.ficc.ibp.modelgate.server.domain.bo.AddRuleRequestBO;
 import com.pab.ficc.ibp.modelgate.server.domain.vo.AccessRuleVO;
 import com.pab.ficc.ibp.modelgate.server.service.AccessRuleService;
+import com.pab.ficc.ibp.modelgate.server.service.AppService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -24,13 +25,17 @@ import java.util.stream.Collectors;
 public class AccessRuleController {
 
     private final AccessRuleService accessRuleService;
+    private final AppService appService;
 
     @Operation(summary = "查询系统访问规则列表")
     @GetMapping(UrlConstant.LIST)
     public Mono<Result<List<AccessRuleVO>>> list(
             @Parameter(description = "系统 ID") @RequestParam("appId") String appId) {
-        return Mono.fromCallable(() -> accessRuleService.listByAppId(appId)
-                        .stream().map(AccessRuleVO::of).collect(Collectors.toList()))
+        return Mono.fromCallable(() -> {
+                    appService.rejectPersonalAppId(appId);
+                    return accessRuleService.listByAppId(appId)
+                            .stream().map(AccessRuleVO::of).collect(Collectors.toList());
+                })
                 .subscribeOn(Schedulers.boundedElastic())
                 .map(Result::success);
     }
@@ -38,8 +43,10 @@ public class AccessRuleController {
     @Operation(summary = "新增访问规则（ip / cidr / domain）")
     @PostMapping(UrlConstant.ADD)
     public Mono<Result<AccessRuleVO>> add(@RequestBody @Valid AddRuleRequestBO req) {
-        return Mono.fromCallable(() -> AccessRuleVO.of(
-                        accessRuleService.add(req.getAppId(), req.toEntity())))
+        return Mono.fromCallable(() -> {
+                    appService.rejectPersonalAppId(req.getAppId());
+                    return AccessRuleVO.of(accessRuleService.add(req.getAppId(), req.toEntity()));
+                })
                 .subscribeOn(Schedulers.boundedElastic())
                 .map(Result::success);
     }
@@ -49,7 +56,10 @@ public class AccessRuleController {
     public Mono<Result<Void>> delete(
             @Parameter(description = "系统 ID") @RequestParam("appId") String appId,
             @Parameter(description = "规则 ID") @RequestParam("id") Long id) {
-        return Mono.fromRunnable(() -> accessRuleService.delete(appId, id))
+        return Mono.fromRunnable(() -> {
+                    appService.rejectPersonalAppId(appId);
+                    accessRuleService.delete(appId, id);
+                })
                 .subscribeOn(Schedulers.boundedElastic())
                 .then(Mono.just(Result.<Void>success(null)));
     }

@@ -46,6 +46,9 @@ public enum ErrorCode {
     MODEL_DISABLED(403, "Model is disabled"),
     AUTH_EXPIRED(403, "Authorization has expired"),
     ACCESS_DENIED(403, "Client IP or domain not allowed"),
+    PERSONAL_ACCESS_DISABLED(403, "个人接入功能未启用"),
+    PERSONAL_MODEL_ONLY(403, "个人凭证仅能调用已授权的模型"),
+    SYSTEM_ACCESS_ONLY(403, "该接口只管理系统接入，请使用个人接入页面"),
 
     // ===== 模型路由 =====
     MODEL_NOT_FOUND(404, "Model not found"),

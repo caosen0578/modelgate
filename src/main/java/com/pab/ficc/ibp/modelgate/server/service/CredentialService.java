@@ -119,6 +119,23 @@ public class CredentialService {
         return new CreatedCredential(cred, plainSecret);
     }
 
+    /** 个人 Key 不嵌入账户编号、不存可还原密文，仍使用现有 SHA-256 查询鉴权。 */
+    public CreatedCredential createPersonalApiKey(String appId, String name, LocalDateTime expiresAt) {
+        String apiKey = "mgp_" + randomHex(24);
+        AppCredentialEntity cred = new AppCredentialEntity();
+        cred.setAppId(appId);
+        cred.setCredName(name);
+        cred.setCredType("api_key");
+        cred.setAccessKey(tail4(apiKey));
+        cred.setSecretHash(cryptoService.sha256Hex(apiKey));
+        cred.setEnabled(true);
+        cred.setExpiresAt(expiresAt);
+        credentialMapper.insert(cred);
+        cacheManager.evictCredentialCacheByAppId(appId);
+        log.info("[Credential] 签发个人凭证: appId={}, credId={}, expiresAt={}", appId, cred.getId(), expiresAt);
+        return new CreatedCredential(cred, apiKey);
+    }
+
     /**
      * 全部接入系统的凭证数量，用于系统列表展示。
      * 一次查询后内存聚合，避免逐行 N+1。统计含已禁用/已过期凭证。

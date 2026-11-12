@@ -64,6 +64,7 @@ public interface UrlConstant {
     /** 服务授权（接入系统 × 服务），与 MG_AUTH 平级 */
     String MG_SERVICE_AUTH = "/service-auth";
     String MG_APPS        = "/apps";
+    String MG_PERSONAL_ACCESS = "/personal-access";
     String MG_CREDENTIALS = "/credentials";
     String MG_AUTH        = "/auth";
     String MG_ACCESS      = "/access";
@@ -75,7 +76,7 @@ public interface UrlConstant {
     /** 明确列举内部资源；绝不能用空 BASE + '/'，否则全部业务路径会被免鉴权。 */
     java.util.List<String> MANAGE_PATHS = java.util.List.of(MG_MODELS, MG_SERVICES,
         MG_SERVICE_AUTH, MG_APPS, MG_CREDENTIALS, MG_AUTH, MG_ACCESS, MG_CONFIG,
-        MG_STATS, MG_AUDIT, MG_PAYLOAD);
+        MG_STATS, MG_AUDIT, MG_PAYLOAD, MG_PERSONAL_ACCESS);
 
     // ===== 通用子路径（method-level）=====
     //
@@ -127,4 +128,12 @@ public interface UrlConstant {
     String REPLAY       = "/replay";
     /** 某服务最近被实际调用过的入站路径，供「接入示例」带出接口路径 */
     String RECENT_PATHS = "/recent-paths";
+
+    String PERSONAL_CREDENTIAL_LIST = MG_CREDENTIALS + LIST;
+    String PERSONAL_CREDENTIAL_CREATE = MG_CREDENTIALS + CREATE;
+    String PERSONAL_CREDENTIAL_REVOKE = MG_CREDENTIALS + REVOKE;
+    String PERSONAL_AUTH_MODELS = MG_AUTH + MG_MODELS;
+    String PERSONAL_AUTH_LIST = MG_AUTH + LIST;
+    String PERSONAL_AUTH_SAVE = MG_AUTH + SAVE;
+    String PERSONAL_AUTH_TOGGLE = MG_AUTH + TOGGLE;
 }

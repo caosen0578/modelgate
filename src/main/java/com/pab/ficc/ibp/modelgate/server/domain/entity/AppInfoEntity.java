@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.pab.ficc.ibp.modelgate.server.common.AppSubject;
 import lombok.Data;
 
 import java.time.LocalDateTime;
@@ -16,6 +17,13 @@ public class AppInfoEntity {
     @TableId(type = IdType.AUTO)
     private Long id;
     private String appId;
+    private String subjectType;
+    /** 仅个人接入使用，系统接入为 null。 */
+    private String personUm;
+
+    public boolean isPersonal() {
+        return AppSubject.PERSONAL.equals(subjectType);
+    }
     /** 所属业务系统中文名；与应用中文名分开，避免一个系统下多个应用无法区分。 */
     private String systemName;
     /** 调用方应用中文名，对应应用级 appId/appCode。 */

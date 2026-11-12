@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.pab.ficc.ibp.modelgate.server.common.BusinessException;
+import com.pab.ficc.ibp.modelgate.server.common.AppSubject;
 import com.pab.ficc.ibp.modelgate.server.common.ErrorCode;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.pab.ficc.ibp.modelgate.server.domain.bo.AppQueryBO;
@@ -36,7 +37,8 @@ public class AppService {
     private final GatewayCacheManager cacheManager;
 
     public List<AppInfoEntity> findAll() {
-        return appMapper.selectList(null);
+        return appMapper.selectList(new LambdaQueryWrapper<AppInfoEntity>()
+                .eq(AppInfoEntity::getSubjectType, AppSubject.SYSTEM));
     }
 
     /**
@@ -56,6 +58,7 @@ public class AppService {
 
         return appMapper.selectPage(new Page<>(q.getPageIndex(), q.getPageSize()),
                 new LambdaQueryWrapper<AppInfoEntity>()
+                        .eq(AppInfoEntity::getSubjectType, AppSubject.SYSTEM)
                         .and(hasKeyword, w -> w.like(AppInfoEntity::getAppId, keyword.trim())
                                 .or().like(AppInfoEntity::getSystemName, keyword.trim())
                                 .or().like(AppInfoEntity::getAppName, keyword.trim())
@@ -83,7 +86,26 @@ public class AppService {
         return cacheManager.getAppInfo(appId, () -> findByAppId(appId));
     }
 
+    public AppInfoEntity findSystemByAppId(String appId) {
+        AppInfoEntity app = findByAppId(appId);
+        if (app.isPersonal()) throw new BusinessException(ErrorCode.SYSTEM_ACCESS_ONLY);
+        return app;
+    }
+
+    /** 旧管理 API 的对象范围校验，不走业务请求热路径，也不改变原来查不到 App 的行为。 */
+    public void rejectPersonalAppId(String appId) {
+        if (appMapper.exists(new LambdaQueryWrapper<AppInfoEntity>()
+                .eq(AppInfoEntity::getAppId, appId)
+                .eq(AppInfoEntity::getSubjectType, AppSubject.PERSONAL))) {
+            throw new BusinessException(ErrorCode.SYSTEM_ACCESS_ONLY);
+        }
+    }
+
     public AppInfoEntity create(AppInfoEntity app) {
+        if (AppSubject.isReservedAppId(app.getAppId())) {
+            throw new BusinessException(ErrorCode.INVALID_PARAMETER, "P_ 前缀保留给个人接入");
+        }
+        app.setSubjectType(AppSubject.SYSTEM);
         boolean exists = appMapper.exists(new LambdaQueryWrapper<AppInfoEntity>().eq(AppInfoEntity::getAppId, app.getAppId()));
         if (exists) {
             throw new BusinessException(ErrorCode.RESOURCE_ALREADY_EXISTS, "appId: " + app.getAppId());
@@ -98,7 +120,7 @@ public class AppService {
     }
 
     public AppInfoEntity update(String appId, AppInfoEntity updates) {
-        findByAppId(appId);
+        findSystemByAppId(appId);
         // update_time / updater 由 AuditFieldMetaObjectHandler 自动填充（05 §10）
         appMapper.update(updates, new LambdaQueryWrapper<AppInfoEntity>().eq(AppInfoEntity::getAppId, appId));
         // 系统可能在本次更新里被停用，凭证准入状态随之改变，必须失效相关缓存
@@ -130,7 +152,7 @@ public class AppService {
     }
 
     public void delete(String appId) {
-        findByAppId(appId);
+        findSystemByAppId(appId);
         int rules = accessRuleMapper.delete(new LambdaQueryWrapper<AccessRuleEntity>().eq(AccessRuleEntity::getAppId, appId));
         int auths = authMapper.delete(new LambdaQueryWrapper<AppModelAuthEntity>().eq(AppModelAuthEntity::getAppId, appId));
         int creds = credentialMapper.delete(new LambdaQueryWrapper<AppCredentialEntity>().eq(AppCredentialEntity::getAppId, appId));

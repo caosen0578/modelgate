@@ -75,6 +75,7 @@ public class ModelAuthService {
         List<AppModelAuthEntity> auths = authMapper.selectList(
                 new LambdaQueryWrapper<AppModelAuthEntity>()
                         .eq(AppModelAuthEntity::getModelId, modelId)
+                        .notInSql(AppModelAuthEntity::getAppId, AppMapper.PERSONAL_APP_IDS)
                         .orderByDesc(AppModelAuthEntity::getCreateTime));
         if (auths.isEmpty()) {
             return List.of();
@@ -97,7 +98,8 @@ public class ModelAuthService {
      * 统计的是**授权记录数**，不区分是否实际生效——生效与否在详情弹窗里逐条给结论。
      */
     public Map<String, Long> countByModelId() {
-        return authMapper.selectList(null).stream()
+        return authMapper.selectList(new LambdaQueryWrapper<AppModelAuthEntity>()
+                        .notInSql(AppModelAuthEntity::getAppId, AppMapper.PERSONAL_APP_IDS)).stream()
                 .collect(Collectors.groupingBy(AppModelAuthEntity::getModelId, Collectors.counting()));
     }
 

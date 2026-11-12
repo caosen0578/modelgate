@@ -8,6 +8,7 @@ import com.pab.ficc.ibp.modelgate.server.domain.bo.UpdateServiceAuthRequestBO;
 import com.pab.ficc.ibp.modelgate.server.domain.vo.ServiceAuthVO;
 import com.pab.ficc.ibp.modelgate.server.domain.vo.ServiceAuthorizedAppVO;
 import com.pab.ficc.ibp.modelgate.server.service.ServiceAuthService;
+import com.pab.ficc.ibp.modelgate.server.service.AppService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -43,12 +44,16 @@ import java.util.List;
 public class ServiceAuthController {
 
     private final ServiceAuthService serviceAuthService;
+    private final AppService appService;
 
     @Operation(summary = "查询某接入系统的服务授权列表（含是否实际生效）")
     @GetMapping(UrlConstant.LIST)
     public Mono<Result<List<ServiceAuthVO>>> list(
             @Parameter(description = "接入系统 ID") @RequestParam("appId") String appId) {
-        return Mono.fromCallable(() -> serviceAuthService.listByAppIdWithServiceName(appId))
+        return Mono.fromCallable(() -> {
+                    appService.rejectPersonalAppId(appId);
+                    return serviceAuthService.listByAppIdWithServiceName(appId);
+                })
                 .subscribeOn(AdminScheduler.get())
                 .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .map(Result::success);
@@ -76,8 +81,10 @@ public class ServiceAuthController {
     @Operation(summary = "为系统批量授权服务（已授权的跳过，不覆盖既有配额）")
     @PostMapping(UrlConstant.ADD)
     public Mono<Result<Void>> add(@RequestBody @Valid AddServiceAuthRequestBO req) {
-        return Mono.fromRunnable(() -> serviceAuthService.addAuthorizations(
-                        req.getAppId(), req.getServiceIds(), req.toTemplate()))
+        return Mono.fromRunnable(() -> {
+                    appService.rejectPersonalAppId(req.getAppId());
+                    serviceAuthService.addAuthorizations(req.getAppId(), req.getServiceIds(), req.toTemplate());
+                })
                 .subscribeOn(AdminScheduler.get())
                 .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .then(Mono.just(Result.<Void>success(null)));
@@ -86,9 +93,11 @@ public class ServiceAuthController {
     @Operation(summary = "修改单条服务授权（配额/过期时间；过期时间传空=改为永久）")
     @PutMapping(UrlConstant.UPDATE)
     public Mono<Result<ServiceAuthVO>> update(@RequestBody @Valid UpdateServiceAuthRequestBO req) {
-        return Mono.fromCallable(() -> serviceAuthService.updateAuthorization(
-                        req.getAppId(), req.getServiceId(), req.getEnabled(),
-                        req.getQpsLimit(), req.getDailyLimit(), req.getExpiresAt()))
+        return Mono.fromCallable(() -> {
+                    appService.rejectPersonalAppId(req.getAppId());
+                    return serviceAuthService.updateAuthorization(req.getAppId(), req.getServiceId(), req.getEnabled(),
+                            req.getQpsLimit(), req.getDailyLimit(), req.getExpiresAt());
+                })
                 .subscribeOn(AdminScheduler.get())
                 .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .map(Result::success);
@@ -110,7 +119,10 @@ public class ServiceAuthController {
             @Parameter(description = "接入系统 ID") @RequestParam("appId") String appId,
             @Parameter(description = "服务编码") @RequestParam("serviceId") String serviceId,
             @Parameter(description = "目标状态：true=启用，false=禁用") @RequestParam("enabled") boolean enabled) {
-        return Mono.fromRunnable(() -> serviceAuthService.setAuthEnabled(appId, serviceId, enabled))
+        return Mono.fromRunnable(() -> {
+                    appService.rejectPersonalAppId(appId);
+                    serviceAuthService.setAuthEnabled(appId, serviceId, enabled);
+                })
                 .subscribeOn(AdminScheduler.get())
                 .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .then(Mono.just(Result.<Void>success(null)));
@@ -121,7 +133,10 @@ public class ServiceAuthController {
     public Mono<Result<Void>> revoke(
             @Parameter(description = "接入系统 ID") @RequestParam("appId") String appId,
             @Parameter(description = "服务编码") @RequestParam("serviceId") String serviceId) {
-        return Mono.fromRunnable(() -> serviceAuthService.revoke(appId, serviceId))
+        return Mono.fromRunnable(() -> {
+                    appService.rejectPersonalAppId(appId);
+                    serviceAuthService.revoke(appId, serviceId);
+                })
                 .subscribeOn(AdminScheduler.get())
                 .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .then(Mono.just(Result.<Void>success(null)));

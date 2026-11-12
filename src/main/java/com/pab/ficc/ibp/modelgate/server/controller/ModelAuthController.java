@@ -7,6 +7,7 @@ import com.pab.ficc.ibp.modelgate.server.domain.bo.UpdateAuthRequestBO;
 import com.pab.ficc.ibp.modelgate.server.domain.vo.AppModelAuthVO;
 import com.pab.ficc.ibp.modelgate.server.domain.vo.ModelAuthorizedAppVO;
 import com.pab.ficc.ibp.modelgate.server.service.ModelAuthService;
+import com.pab.ficc.ibp.modelgate.server.service.AppService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -25,12 +26,16 @@ import java.util.List;
 public class ModelAuthController {
 
     private final ModelAuthService modelAuthService;
+    private final AppService appService;
 
     @Operation(summary = "查询系统的模型授权列表")
     @GetMapping(UrlConstant.LIST)
     public Mono<Result<List<AppModelAuthVO>>> list(
             @Parameter(description = "系统 ID") @RequestParam("appId") String appId) {
-        return Mono.fromCallable(() -> modelAuthService.listByAppIdWithModelName(appId))
+        return Mono.fromCallable(() -> {
+                    appService.rejectPersonalAppId(appId);
+                    return modelAuthService.listByAppIdWithModelName(appId);
+                })
                 .subscribeOn(Schedulers.boundedElastic())
                 .map(Result::success);
     }
@@ -47,8 +52,10 @@ public class ModelAuthController {
     @Operation(summary = "为系统批量授权模型")
     @PostMapping(UrlConstant.ADD)
     public Mono<Result<Void>> addAuthorizations(@RequestBody @Valid AddAuthRequestBO req) {
-        return Mono.fromRunnable(() -> modelAuthService.addAuthorizations(
-                        req.getAppId(), req.getModelIds(), req.toTemplate()))
+        return Mono.fromRunnable(() -> {
+                    appService.rejectPersonalAppId(req.getAppId());
+                    modelAuthService.addAuthorizations(req.getAppId(), req.getModelIds(), req.toTemplate());
+                })
                 .subscribeOn(Schedulers.boundedElastic())
                 .then(Mono.just(Result.<Void>success(null)));
     }
@@ -56,8 +63,10 @@ public class ModelAuthController {
     @Operation(summary = "更新授权配置（QPS / 日限 / 月 Token 配额）")
     @PutMapping(UrlConstant.UPDATE)
     public Mono<Result<AppModelAuthVO>> update(@RequestBody @Valid UpdateAuthRequestBO req) {
-        return Mono.fromCallable(() -> AppModelAuthVO.of(
-                        modelAuthService.update(req.getAppId(), req.getModelId(), req.toEntity())))
+        return Mono.fromCallable(() -> {
+                    appService.rejectPersonalAppId(req.getAppId());
+                    return AppModelAuthVO.of(modelAuthService.update(req.getAppId(), req.getModelId(), req.toEntity()));
+                })
                 .subscribeOn(Schedulers.boundedElastic())
                 .map(Result::success);
     }
@@ -76,6 +85,7 @@ public class ModelAuthController {
             @Parameter(description = "模型 ID") @RequestParam("modelId") String modelId,
             @Parameter(description = "目标状态：true=启用，false=禁用") @RequestParam("enabled") boolean enabled) {
         return Mono.fromRunnable(() -> {
+                    appService.rejectPersonalAppId(appId);
                     if (enabled) modelAuthService.enable(appId, modelId);
                     else modelAuthService.disable(appId, modelId);
                 })
@@ -88,7 +98,10 @@ public class ModelAuthController {
     public Mono<Result<Void>> revoke(
             @Parameter(description = "系统 ID") @RequestParam("appId") String appId,
             @Parameter(description = "模型 ID") @RequestParam("modelId") String modelId) {
-        return Mono.fromRunnable(() -> modelAuthService.revoke(appId, modelId))
+        return Mono.fromRunnable(() -> {
+                    appService.rejectPersonalAppId(appId);
+                    modelAuthService.revoke(appId, modelId);
+                })
                 .subscribeOn(Schedulers.boundedElastic())
                 .then(Mono.just(Result.<Void>success(null)));
     }

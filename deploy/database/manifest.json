@@ -38,7 +38,8 @@
     "sql/upgrade_20260828_service_probe.sql",
     "sql/upgrade_20260829_payload_replay.sql",
     "sql/upgrade_20260910_hex_encoding.sql",
-    "sql/upgrade_20261007_provider_adapter_v2.sql"
+    "sql/upgrade_20261007_provider_adapter_v2.sql",
+    "sql/upgrade_20261112_personal_access.sql"
   ],
   "readOnlyExternal": null,
   "sourceRoot": "src/main/java",

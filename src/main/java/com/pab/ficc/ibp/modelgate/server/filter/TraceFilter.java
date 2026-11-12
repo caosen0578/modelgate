@@ -72,7 +72,9 @@ public class TraceFilter implements GlobalFilter, Ordered {
         exchange.getResponse().beforeCommit(() -> {
             String appId   = exchange.getAttribute(CredentialAuthFilter.ATTR_APP_ID);
             String modelId = exchange.getAttribute("mg.modelId");
-            if (appId != null)   exchange.getResponse().getHeaders().set("X-Mg-App", appId);
+            if (appId != null && !CredentialAuthFilter.isPersonal(exchange)) {
+                exchange.getResponse().getHeaders().set("X-Mg-App", appId);
+            }
             if (modelId != null) exchange.getResponse().getHeaders().set("X-Mg-Model", modelId);
             return Mono.empty();
         });
@@ -153,7 +155,8 @@ public class TraceFilter implements GlobalFilter, Ordered {
                                                 PayloadCaptureFilter.ATTR_RESPONSE_TRUNCATED)),
                                         httpStatus);
                             }
-                        } else if (appId != null && modelId != null && responseBytes != null
+                        } else if (!CredentialAuthFilter.isPersonal(exchange)
+                                && appId != null && modelId != null && responseBytes != null
                                 && capture.isFullMode()
                                 && modelAuthService.isPayloadLogEnabled(appId, modelId)) {
                             payloadService.submit(traceId, appId, modelId,

@@ -1,0 +1,15 @@
+{
+  "system": {
+    "appId": "00012001",
+    "systemName": "测试系统",
+    "appName": "测试系统应用",
+    "sysCode": "MGQA",
+    "appCode": "MGQA-SYSTEM",
+    "owner": "测试负责人"
+  },
+  "personA": { "um": "MGQA_TEACHER_A", "name": "测试老师甲", "remark": "仅隔离库验收" },
+  "personB": { "um": "MGQA_TEACHER_B", "name": "测试老师乙", "remark": "仅隔离库验收" },
+  "modelId": "mgqa-chat",
+  "ungrantedModelId": "mgqa-ungranted",
+  "usage": { "prompt_tokens": 12, "completion_tokens": 8, "total_tokens": 20 }
+}

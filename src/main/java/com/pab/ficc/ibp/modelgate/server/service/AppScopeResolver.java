@@ -169,7 +169,9 @@ public class AppScopeResolver {
     private List<String> findAppIdsByAppCode(String appCode) {
         return appMapper.selectList(new LambdaQueryWrapper<AppInfoEntity>()
                         .select(AppInfoEntity::getAppId)
-                        .eq(AppInfoEntity::getAppCode, appCode))
+                        .eq(AppInfoEntity::getAppCode, appCode)
+                        .eq(AppInfoEntity::getSubjectType,
+                                com.pab.ficc.ibp.modelgate.server.common.AppSubject.SYSTEM))
                 .stream()
                 .map(AppInfoEntity::getAppId)
                 .filter(id -> id != null && !id.isBlank())

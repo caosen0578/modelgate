@@ -7,6 +7,7 @@ import com.pab.ficc.ibp.modelgate.server.domain.entity.AppCredentialEntity;
 import com.pab.ficc.ibp.modelgate.server.domain.vo.AppCredentialVO;
 import com.pab.ficc.ibp.modelgate.server.domain.vo.CredentialCreatedVO;
 import com.pab.ficc.ibp.modelgate.server.service.CredentialService;
+import com.pab.ficc.ibp.modelgate.server.service.AppService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -28,13 +29,17 @@ import java.util.stream.Collectors;
 public class CredentialController {
 
     private final CredentialService credentialService;
+    private final AppService appService;
 
     @Operation(summary = "查询系统凭证列表")
     @GetMapping(UrlConstant.LIST)
     public Mono<Result<List<AppCredentialVO>>> list(
             @Parameter(description = "系统 ID") @RequestParam("appId") String appId) {
-        return Mono.fromCallable(() -> credentialService.listByAppId(appId)
-                        .stream().map(AppCredentialVO::of).collect(Collectors.toList()))
+        return Mono.fromCallable(() -> {
+                    appService.rejectPersonalAppId(appId);
+                    return credentialService.listByAppId(appId)
+                            .stream().map(AppCredentialVO::of).collect(Collectors.toList());
+                })
                 .subscribeOn(Schedulers.boundedElastic())
                 .map(Result::success);
     }
@@ -46,7 +51,10 @@ public class CredentialController {
             @Parameter(description = "凭证 ID") @RequestParam(name = "credId") Long credId) {
         // 明文只在本接口按需解密返回，且记 INFO 便于事后追溯"谁在什么时候查了哪条凭证"
         log.info("[Credential][reveal] 查看凭证明文: appId={}, credId={}", appId, credId);
-        return Mono.fromCallable(() -> credentialService.revealSecret(appId, credId))
+        return Mono.fromCallable(() -> {
+                    appService.rejectPersonalAppId(appId);
+                    return credentialService.revealSecret(appId, credId);
+                })
                 .subscribeOn(Schedulers.boundedElastic())
                 .map(Result::success);
     }
@@ -55,6 +63,7 @@ public class CredentialController {
     @PostMapping(UrlConstant.CREATE)
     public Mono<Result<CredentialCreatedVO>> create(@RequestBody @Valid CreateCredentialRequestBO req) {
         return Mono.fromCallable(() -> {
+            appService.rejectPersonalAppId(req.getAppId());
             AppCredentialEntity cred = req.toEntity();
             CredentialService.CreatedCredential created = credentialService.create(req.getAppId(), cred);
             AppCredentialEntity saved = created.credential();
@@ -81,6 +90,7 @@ public class CredentialController {
             @Parameter(description = "凭证 ID") @RequestParam("id") Long id,
             @Parameter(description = "目标状态：true=启用，false=禁用") @RequestParam("enabled") boolean enabled) {
         return Mono.fromRunnable(() -> {
+                    appService.rejectPersonalAppId(appId);
                     if (enabled) credentialService.enable(appId, id);
                     else credentialService.disable(appId, id);
                 })
@@ -93,7 +103,10 @@ public class CredentialController {
     public Mono<Result<Void>> delete(
             @Parameter(description = "系统 ID") @RequestParam("appId") String appId,
             @Parameter(description = "凭证 ID") @RequestParam("id") Long id) {
-        return Mono.fromRunnable(() -> credentialService.delete(appId, id))
+        return Mono.fromRunnable(() -> {
+                    appService.rejectPersonalAppId(appId);
+                    credentialService.delete(appId, id);
+                })
                 .subscribeOn(Schedulers.boundedElastic())
                 .then(Mono.just(Result.<Void>success(null)));
     }

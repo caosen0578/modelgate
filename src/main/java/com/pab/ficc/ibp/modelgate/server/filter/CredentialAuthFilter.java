@@ -1,6 +1,7 @@
 package com.pab.ficc.ibp.modelgate.server.filter;
 
 import com.pab.ficc.ibp.modelgate.server.common.TrafficType;
+import com.pab.ficc.ibp.modelgate.server.common.AppSubject;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pab.ficc.ibp.modelgate.server.common.ErrorCode;
@@ -15,6 +16,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
 import org.springframework.core.Ordered;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -86,6 +88,14 @@ public class CredentialAuthFilter implements GlobalFilter, Ordered {
      */
     public static final String ATTR_APP_ID = "mg.appId";
     public static final String ATTR_CRED_TYPE = "mg.credType";
+    private static final String ATTR_PERSONAL = "mg.personal";
+
+    @Value(AppSubject.PERSONAL_ENABLED_PROPERTY)
+    private boolean personalAccessEnabled;
+
+    public static boolean isPersonal(ServerWebExchange exchange) {
+        return Boolean.TRUE.equals(exchange.getAttribute(ATTR_PERSONAL));
+    }
 
     private final CredentialService credentialService;
     private final AppService appService;
@@ -149,12 +159,27 @@ public class CredentialAuthFilter implements GlobalFilter, Ordered {
                     } catch (Exception e) {
                         app = Optional.empty();
                     }
+                    boolean personal = app.map(AppInfoEntity::isPersonal).orElse(false);
+                    if (personal) {
+                        // 已验证的个人身份用于审计分流，即使停用或开关关闭也不串到系统统计。
+                        exchange.getAttributes().put(ATTR_PERSONAL, Boolean.TRUE);
+                        exchange.getAttributes().put(ATTR_APP_ID, cred.getAppId());
+                    }
                     if (app.isEmpty() || Boolean.FALSE.equals(app.get().getEnabled())) {
                         // app.isEmpty() 既可能是系统被删、也可能是查库异常，两者后果相同但成因不同，
                         // 打出来才能区分"业务上禁用了"和"DB 出问题了"
                         log.info("[CredentialAuth] 拒绝: 接入系统不可用, appId={}, 存在={}, path={}",
                                 cred.getAppId(), app.isPresent(), path);
                         return reject(exchange, HttpStatus.FORBIDDEN, ErrorCode.APP_DISABLED);
+                    }
+                    if (personal) {
+                        if (!personalAccessEnabled) {
+                            return reject(exchange, HttpStatus.FORBIDDEN, ErrorCode.PERSONAL_ACCESS_DISABLED);
+                        }
+                        if (TrafficType.resolve(exchange) != TrafficType.MODEL
+                                || !"api_key".equals(cred.getCredType()) || !authorization.startsWith("Bearer ")) {
+                            return reject(exchange, HttpStatus.FORBIDDEN, ErrorCode.PERSONAL_MODEL_ONLY);
+                        }
                     }
 
                     // 同时写 attribute（供先于本过滤器执行的 TraceFilter 在 doFinally 回读）
@@ -164,8 +189,12 @@ public class CredentialAuthFilter implements GlobalFilter, Ordered {
                     }
                     // 将 appId 和凭证类型注入请求头，供后续过滤器（ModelAuthFilter、QuotaFilter）读取
                     var mutated = exchange.getRequest().mutate()
-                            .header("X-Mg-App", cred.getAppId())
-                            .header("X-Mg-Cred-Type", cred.getCredType())
+                            .headers(headers -> {
+                                // 只保留鉴权结果，调用方伪造的同名 Header 不参与授权或配额。
+                                headers.set("X-Mg-App", cred.getAppId());
+                                if (cred.getCredType() != null) headers.set("X-Mg-Cred-Type", cred.getCredType());
+                                else headers.remove("X-Mg-Cred-Type");
+                            })
                             .build();
                     return chain.filter(exchange.mutate().request(mutated).build());
                 });

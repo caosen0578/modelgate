@@ -57,15 +57,20 @@ public class ModelAuthFilter implements GlobalFilter, Ordered {
             return chain.filter(exchange);
         }
 
-        String appId = exchange.getRequest().getHeaders().getFirst("X-Mg-App");
+        boolean personal = CredentialAuthFilter.isPersonal(exchange);
+        String appId = personal ? exchange.getAttribute(CredentialAuthFilter.ATTR_APP_ID)
+                : exchange.getRequest().getHeaders().getFirst("X-Mg-App");
         if (appId == null) {
+            if (personal) return reject(exchange, HttpStatus.UNAUTHORIZED, ErrorCode.INVALID_API_KEY);
             return chain.filter(exchange);
         }
 
         // BodyParseFilter (order=-175) runs before us, so mg.modelId is already extracted.
         // Null here means non-JSON or non-POST request (e.g. GET /v1/models) — no model auth needed.
         String modelId = exchange.getAttribute("mg.modelId");
-        if (modelId == null) {
+        if (modelId == null || personal && modelId.isBlank()) {
+            // 个人请求不能先跳过授权，再由下游的历史兼容路径补解析模型。
+            if (personal) return reject(exchange, HttpStatus.BAD_REQUEST, ErrorCode.MODEL_FIELD_MISSING);
             return chain.filter(exchange);
         }
 

@@ -58,7 +58,7 @@ public class AppController {
     @Operation(summary = "查询单个接入系统详情")
     @GetMapping(UrlConstant.DETAIL)
     public Mono<Result<AppVO>> findOne(@Parameter(description = "系统 ID") @RequestParam("appId") String appId) {
-        return Mono.fromCallable(() -> AppVO.of(appService.findByAppId(appId)))
+        return Mono.fromCallable(() -> AppVO.of(appService.findSystemByAppId(appId)))
                 .subscribeOn(AdminScheduler.get())
                 .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .map(Result::success);
@@ -88,6 +88,7 @@ public class AppController {
             @Parameter(description = "系统 ID") @RequestParam("appId") String appId,
             @Parameter(description = "目标状态：true=启用，false=禁用") @RequestParam("enabled") boolean enabled) {
         return Mono.fromRunnable(() -> {
+                    appService.rejectPersonalAppId(appId);
                     if (enabled) appService.enable(appId);
                     else appService.disable(appId);
                 })
