@@ -12,7 +12,8 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.CacheControl;
+import org.springframework.http.server.reactive.ServerHttpResponse;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
@@ -21,7 +22,6 @@ import jakarta.validation.Valid;
 import java.util.List;
 import java.util.stream.Collectors;
 
-@Slf4j
 @Tag(name = "凭证管理", description = "为接入系统生成和管理 API Key / AK-SK 访问凭证")
 @RestController
 @RequestMapping(UrlConstant.MG_CREDENTIALS)
@@ -48,9 +48,9 @@ public class CredentialController {
     @GetMapping(UrlConstant.SECRET)
     public Mono<Result<String>> revealSecret(
             @Parameter(description = "系统 ID") @RequestParam(name = "appId") String appId,
-            @Parameter(description = "凭证 ID") @RequestParam(name = "credId") Long credId) {
-        // 明文只在本接口按需解密返回，且记 INFO 便于事后追溯"谁在什么时候查了哪条凭证"
-        log.info("[Credential][reveal] 查看凭证明文: appId={}, credId={}", appId, credId);
+            @Parameter(description = "凭证 ID") @RequestParam(name = "credId") Long credId,
+            ServerHttpResponse response) {
+        response.getHeaders().setCacheControl(CacheControl.noStore());
         return Mono.fromCallable(() -> {
                     appService.rejectPersonalAppId(appId);
                     return credentialService.revealSecret(appId, credId);
@@ -59,9 +59,11 @@ public class CredentialController {
                 .map(Result::success);
     }
 
-    @Operation(summary = "生成凭证（API Key 或 AK-SK，Secret 仅此时明文返回一次）")
+    @Operation(summary = "生成凭证（返回当次生成的 API Key 或 AK-SK）")
     @PostMapping(UrlConstant.CREATE)
-    public Mono<Result<CredentialCreatedVO>> create(@RequestBody @Valid CreateCredentialRequestBO req) {
+    public Mono<Result<CredentialCreatedVO>> create(@RequestBody @Valid CreateCredentialRequestBO req,
+                                                     ServerHttpResponse response) {
+        response.getHeaders().setCacheControl(CacheControl.noStore());
         return Mono.fromCallable(() -> {
             appService.rejectPersonalAppId(req.getAppId());
             AppCredentialEntity cred = req.toEntity();

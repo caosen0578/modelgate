@@ -152,13 +152,25 @@ class PersonalAccessIntegrationTest {
         String bearerB = keyB.path("apiKey").asText();
         assertTrue(oldA.matches("mgp_[0-9a-f]{48}"));
         assertFalse(oldA.contains(aId));
-        assertNull(jdbc.queryForObject("SELECT secret_encrypted FROM mg_app_credential WHERE id = ?",
-                String.class, keyA.path("id").asLong()));
+        long keyAId = keyA.path("id").asLong();
+        String encrypted = jdbc.queryForObject("SELECT secret_encrypted FROM mg_app_credential WHERE id = ?",
+                String.class, keyAId);
+        assertNotNull(encrypted);
+        assertNotEquals(oldA, encrypted);
+        String revealA = PERSONAL + "/credentials/secret?um=" + a + "&id=" + keyAId;
+        client().get().uri(revealA).exchange().expectStatus().isOk()
+                .expectHeader().valueEquals("Cache-Control", "no-store")
+                .expectBody().jsonPath("$.data").isEqualTo(oldA);
+        client().get().uri(PERSONAL + "/credentials/secret?um=" + b + "&id=" + keyAId)
+                .exchange().expectStatus().isBadRequest();
         var stockKey = json(client().post().uri("/modelgate/credentials/create")
                 .bodyValue(Map.of("appId", system, "credName", "系统测试", "credType", "api_key"))
                 .exchange().expectStatus().isOk());
         String sysBearer = stockKey.path("apiKey").asText();
         assertTrue(sysBearer.startsWith("mg-" + system + "-"));
+        client().get().uri("/modelgate/credentials/secret?appId=" + system + "&credId=" + stockKey.path("id").asLong())
+                .exchange().expectStatus().isOk().expectHeader().valueEquals("Cache-Control", "no-store")
+                .expectBody().jsonPath("$.data").isEqualTo(sysBearer);
 
         call(oldA, model, false).expectStatus().isOk().expectHeader().doesNotExist("X-Mg-App")
                 .expectBody().jsonPath("$.usage.total_tokens").isEqualTo(20);
@@ -167,6 +179,7 @@ class PersonalAccessIntegrationTest {
                 .exchange().expectStatus().isBadRequest();
         client().delete().uri(PERSONAL + "/credentials/revoke?um=" + a + "&id=" + keyA.path("id").asLong())
                 .exchange().expectStatus().isOk();
+        client().get().uri(revealA).exchange().expectStatus().isBadRequest();
         call(rotated, model, true).expectStatus().isOk()
                 .expectHeader().contentTypeCompatibleWith(MediaType.TEXT_EVENT_STREAM)
                 .expectBody(String.class).value(content -> assertTrue(content.contains("[DONE]")));
@@ -211,6 +224,15 @@ class PersonalAccessIntegrationTest {
         });
         usage(a.toLowerCase(java.util.Locale.ROOT), a, 24, 16, 40);
         usage(b, b, 12, 8, 20);
+        long keyBId = keyB.path("id").asLong();
+        jdbc.update("UPDATE mg_app_credential SET secret_encrypted = NULL WHERE id = ?", keyBId);
+        client().patch().uri(PERSONAL + "/toggle?um=" + b + "&enabled=true").exchange().expectStatus().isOk();
+        client().get().uri(PERSONAL + "/credentials/secret?um=" + b + "&id=" + keyBId)
+                .exchange().expectStatus().isBadRequest()
+                .expectBody().jsonPath("$.resultMessage").value((String message) ->
+                        assertTrue(message.contains("仅存哈希无法找回")));
+        client().get().uri(PERSONAL + "/credentials/list?um=" + b).exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.data[0].secretRetrievable").isEqualTo(false);
         client().get().uri(PERSONAL + "/usage?um=UNKNOWN_UM").exchange().expectStatus().isBadRequest();
         client().get().uri(PERSONAL + "/usage?um=" + a + "&start=2020-01-01&end=" + LocalDate.now())
                 .exchange().expectStatus().isBadRequest();
@@ -221,7 +243,8 @@ class PersonalAccessIntegrationTest {
         client().get().uri("/modelgate/audit/query?appId=" + aId).exchange().expectStatus().isOk()
                 .expectBody().jsonPath("$.data.total").isEqualTo(0);
         client().get().uri(PERSONAL + "/credentials/list?um=" + a).exchange().expectStatus().isOk()
-                .expectBody().jsonPath("$.data[0].secretRetrievable").isEqualTo(false)
+                .expectBody().jsonPath("$.data[0].secretRetrievable").isEqualTo(true)
+                .jsonPath("$.data[0].secretEncrypted").doesNotExist()
                 .jsonPath("$.data[0].apiKey").doesNotExist();
         assertTrue(mockingDetails(payload).getInvocations().stream()
                 .noneMatch(invocation -> invocation.getMethod().getName().equals("submit")),

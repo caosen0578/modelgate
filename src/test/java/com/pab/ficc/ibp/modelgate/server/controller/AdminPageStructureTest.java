@@ -44,7 +44,7 @@ public class AdminPageStructureTest {
 
     /** 顶格函数定义（模块内的嵌套函数不顶格，不会被匹配到） */
     private static final Pattern TOP_LEVEL_FN =
-            Pattern.compile("(?m)^function ([A-Za-z_$][A-Za-z0-9_$]*)\\s*\\(");
+            Pattern.compile("(?m)^(?:async )?function ([A-Za-z_$][A-Za-z0-9_$]*)\\s*\\(");
 
     /**
      * 期望的分区与顺序。<b>新增模块时改这里</b>，并同步 admin.html 顶部的目录注释。
@@ -144,7 +144,7 @@ public class AdminPageStructureTest {
         }
         String common = html.substring(start, end);
         for (String fn : COMMON_FUNCTIONS) {
-            Pattern def = Pattern.compile("(?m)^(function|const|let)\\s+" + Pattern.quote(fn) + "\\b");
+            Pattern def = Pattern.compile("(?m)^(?:(?:async )?function|const|let)\\s+" + Pattern.quote(fn) + "\\b");
             boolean inCommon = def.matcher(common).find();
             boolean anywhere = def.matcher(html).find();
             check(fn + " 定义在公共层内",

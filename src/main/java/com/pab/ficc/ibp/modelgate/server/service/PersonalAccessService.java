@@ -127,6 +127,13 @@ public class PersonalAccessService {
                 .map(AppCredentialVO::of).toList();
     }
 
+    public String revealKey(String um, Long id) {
+        requireEnabled();
+        AppInfoEntity app = findPerson(um);
+        if (!Boolean.TRUE.equals(app.getEnabled())) throw new BusinessException(ErrorCode.APP_DISABLED);
+        return credentialService.revealPersonalApiKey(app.getAppId(), id);
+    }
+
     public PersonalAccessViews.IssuedKey issue(PersonalAccessRequests.Credential request) {
         requireEnabled();
         AppInfoEntity app = findPerson(request.um());

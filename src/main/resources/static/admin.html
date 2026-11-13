@@ -1204,7 +1204,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
       <div style="font-size:13px;color:#64748b;margin-bottom:8px">
         以下为解密后的明文密钥，请勿截图或粘贴到公共渠道。
       </div>
-      <div id="secretViewValue" style="font-family:monospace;font-size:13px;word-break:break-all;
+      <div id="secretViewValue" style="font-family:monospace;font-size:13px;white-space:pre-wrap;word-break:break-all;
            background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:12px"></div>
     </div>
     <div class="modal-footer">
@@ -1701,7 +1701,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
       <button class="modal-close" onclick="closeModal('credModal')">×</button>
     </div>
     <div class="modal-body">
-      <div class="warn-box">⚠️ 生成后 Secret Key 仅显示一次，请妥善保存！</div>
+      <div class="warn-box">请妥善保存凭证。有明文查看权限的管理员可以按需找回。</div>
       <div class="form-grid mt-12">
         <div class="form-group">
           <label>凭证名称 <span style="color:red">*</span></label>
@@ -2011,8 +2011,8 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
 <dialog class="modal" id="paIssuedDialog" style="border:0;max-width:min(600px,90vw)">
   <div class="modal-header"><h3 id="paIssuedTitle">保存个人 API Key</h3></div>
   <div class="modal-body">
-    <p>仅显示一次，请通过行内安全渠道交付给本人。</p>
-    <textarea id="paIssuedKey" aria-label="本次个人 Key" readonly rows="2" style="width:100%;margin:10px 0"></textarea>
+    <p>请通过行内安全渠道交付给本人。</p>
+    <textarea id="paIssuedKey" aria-label="个人 API Key" readonly rows="2" style="width:100%;margin:10px 0"></textarea>
     <p id="paIssuedExpiry" class="hint"></p>
   </div>
   <form method="dialog" class="modal-footer">
@@ -2418,7 +2418,11 @@ function extractUsageLabel(text){
 // 弹窗常驻页面、切到任何页都显示——2b141a8 修的就是这个。
 // ============================================================
 function openModal(id){ $(id).classList.add('open'); }
-function closeModal(id){ $(id).classList.remove('open'); }
+function closeModal(id){
+  $(id).classList.remove('open');
+  if(id==='credShowModal') $('credShowBody').replaceChildren();
+  if(id==='secretViewModal') $('secretViewValue').textContent='';
+}
 
 // ============================================================
 // ===== 公共层 · 服务地址拼接
@@ -3376,15 +3380,20 @@ function renderCreds(data){
 // 明文按需向后端单条索取，不随列表下发；取到后只放进剪贴板/临时展示，不写入任何前端缓存
 async function revealCredSecret(credId, credName){
   if(!currentApp) return;
+  const appId=currentApp.appId;
+  const cred=currentCreds.find(c=>String(c.id)===String(credId));
   try{
-    const url = apiUrl(`/credentials/secret?appId=${encodeURIComponent(currentApp.appId)}&credId=${credId}`);
-    const r = await fetch(url, {headers:hdrs()});
+    const url = apiUrl(`/credentials/secret?appId=${encodeURIComponent(appId)}&credId=${credId}`);
+    const r = await fetch(url, {headers:hdrs(), cache:'no-store'});
     const j = await r.json();
     if(!isOk(j)){ toast('查看失败: '+errMsg(j),'error'); return; }
     const secret = j.data||'';
     if(!secret){ toast('后端未返回密钥','error'); return; }
+    if(currentApp?.appId!==appId) return;
     $('secretViewName').textContent = credName || ('#'+credId);
-    $('secretViewValue').textContent = secret;
+    $('secretViewValue').textContent = cred?.credType==='ak_sk'
+      ? 'Access Key: ' + (cred.accessKey || '') + '\nSecret Key: ' + secret
+      : secret;
     openModal('secretViewModal');
   }catch(e){
     console.warn('[ModelGate] 查看密钥异常', e);
@@ -3398,7 +3407,6 @@ function copySecretValue(){
 
 // 关闭即清空 DOM 中的明文，避免留在页面上被他人看到
 function closeSecretView(){
-  $('secretViewValue').textContent = '';
   closeModal('secretViewModal');
 }
 
@@ -4073,18 +4081,18 @@ async function submitCred(){
 }
 
 function showCredResult(data){
-  let html = '<div class="warn-box">此凭证只显示一次，关闭后无法再次查看</div>';
+  let html = '<div class="warn-box">请复制并妥善保存凭证。有明文查看权限的管理员可以按需找回。</div>';
   if(data.credType==='api_key'||data.apiKey){
     html += `<div style="margin-top:12px;font-size:12px;color:#374151;margin-bottom:6px">API Key</div>
-    <div class="secret-box"><span class="val">${data.apiKey}</span>
-    <button class="copy-btn" onclick="copyText('${data.apiKey}')">复制</button></div>`;
+    <div class="secret-box"><span class="val">${escapeHtml(data.apiKey)}</span>
+    <button class="copy-btn" onclick="copyText(this.previousElementSibling.textContent)">复制</button></div>`;
   } else {
     html += `<div style="margin-top:12px;font-size:12px;color:#374151;margin-bottom:6px">Access Key</div>
-    <div class="secret-box"><span class="val">${data.accessKey}</span>
-    <button class="copy-btn" onclick="copyText('${data.accessKey}')">复制</button></div>
+    <div class="secret-box"><span class="val">${escapeHtml(data.accessKey)}</span>
+    <button class="copy-btn" onclick="copyText(this.previousElementSibling.textContent)">复制</button></div>
     <div style="margin-top:8px;font-size:12px;color:#374151;margin-bottom:6px">Secret Key</div>
-    <div class="secret-box"><span class="val">${data.secretKey}</span>
-    <button class="copy-btn" onclick="copyText('${data.secretKey}')">复制</button></div>`;
+    <div class="secret-box"><span class="val">${escapeHtml(data.secretKey)}</span>
+    <button class="copy-btn" onclick="copyText(this.previousElementSibling.textContent)">复制</button></div>`;
   }
   $('credShowBody').innerHTML = html;
   openModal('credShowModal');
@@ -6630,12 +6638,37 @@ function loadPersonalKeys(){
     const rows=await personalAccessRequest('/credentials/list' + personalAccessQuery({um}));
     if(pa.person?.um!==um) return;
     pa.keys=rows || [];
-    $('paKeyRows').innerHTML=pa.keys.map((k,i)=>
-      '<tr><td>' + escapeHtml(k.credName) + '</td><td><code>****' + escapeHtml(k.accessKey || '') +
-      '</code></td><td>' + (k.enabled ? '启用' : '已撤销') + '</td><td>' + escapeHtml(fmtTime(k.expiresAt)) +
-      '</td><td>' + (k.enabled ? '<button class="btn btn-danger btn-sm" onclick="revokePersonalAccessKey(' +
-        i + ')">撤销</button>' : '—') + '</td></tr>').join('') ||
+    $('paKeyRows').innerHTML=pa.keys.map((key,index)=>{
+      let actions='—';
+      if(key.enabled){
+        actions='<button class="btn btn-danger btn-sm" onclick="revokePersonalAccessKey(' + index + ')">撤销</button>';
+        const expired=key.expiresAt && Date.parse(key.expiresAt.replace(' ','T'))<=Date.now();
+        if(pa.enabled && pa.person.enabled && !expired){
+          const unavailable=key.secretRetrievable ? '' : 'disabled title="该 Key 仅存哈希，请重新签发" ';
+          actions='<button class="btn btn-neutral btn-sm" data-api="GET /modelgate/personal-access/credentials/secret" '
+            + unavailable + 'onclick="revealPersonalAccessKey(' + index + ')">查看密钥</button> ' + actions;
+        }
+      }
+      return '<tr><td>' + escapeHtml(key.credName) + '</td><td><code>****' + escapeHtml(key.accessKey || '') +
+        '</code></td><td>' + (key.enabled ? '启用' : '已撤销') + '</td><td>' + escapeHtml(fmtTime(key.expiresAt)) +
+        '</td><td>' + actions + '</td></tr>';
+    }).join('') ||
       '<tr class="empty-row"><td colspan="5">暂无凭证</td></tr>';
+  });
+}
+
+function revealPersonalAccessKey(index){
+  const key=pa.keys[index];
+  const um=pa.person?.um;
+  const version=pa.detailVersion;
+  if(!key?.secretRetrievable || !um) return;
+  return personalAccessAction(async()=>{
+    const secret=await personalAccessRequest('/credentials/secret' + personalAccessQuery({um,id:key.id}));
+    if(version!==pa.detailVersion || !$('paDetailModal').classList.contains('open') || $('paIssuedDialog').open) return;
+    $('paIssuedTitle').textContent='查看 ' + um + ' 的个人 Key';
+    $('paIssuedKey').value=secret;
+    $('paIssuedExpiry').textContent='有效期：' + fmtTime(key.expiresAt);
+    $('paIssuedDialog').showModal();
   });
 }
 
@@ -6711,7 +6744,7 @@ function loadPersonalUsage(){
 // 点遮罩关弹窗。挂在这里而不是公共层：它是一次性副作用，不是可复用函数。
 // 必须只匹配 .modal-backdrop（内层 .modal 不能挂，否则点弹窗内容也会关掉）。
 document.querySelectorAll('.modal-backdrop').forEach(el=>{
-  el.addEventListener('click', e=>{ if(e.target===el) el.classList.remove('open'); });
+  el.addEventListener('click', e=>{ if(e.target===el) closeModal(el.id); });
 });
 
 window.onload = () => {

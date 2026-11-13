@@ -119,7 +119,7 @@ public class CredentialService {
         return new CreatedCredential(cred, plainSecret);
     }
 
-    /** 个人 Key 不嵌入账户编号、不存可还原密文，仍使用现有 SHA-256 查询鉴权。 */
+    /** 个人 Key 不嵌入账户编号；哈希用于鉴权，密文用于授权管理员找回。 */
     public CreatedCredential createPersonalApiKey(String appId, String name, LocalDateTime expiresAt) {
         String apiKey = "mgp_" + randomHex(24);
         AppCredentialEntity cred = new AppCredentialEntity();
@@ -128,6 +128,7 @@ public class CredentialService {
         cred.setCredType("api_key");
         cred.setAccessKey(tail4(apiKey));
         cred.setSecretHash(cryptoService.sha256Hex(apiKey));
+        cred.setSecretEncrypted(cryptoService.encrypt(apiKey));
         cred.setEnabled(true);
         cred.setExpiresAt(expiresAt);
         credentialMapper.insert(cred);
@@ -156,17 +157,31 @@ public class CredentialService {
      * @return 明文密钥（api_key 返回 key 本身，ak_sk 返回 SK）
      */
     public String revealSecret(String appId, Long credId) {
+        return decryptCredential(getCredentialByIdAndApp(appId, credId));
+    }
+
+    public String revealPersonalApiKey(String appId, Long credId) {
         AppCredentialEntity cred = getCredentialByIdAndApp(appId, credId);
+        if (!"api_key".equals(cred.getCredType()) || !Boolean.TRUE.equals(cred.getEnabled())) {
+            throw new BusinessException(ErrorCode.INVALID_PARAMETER, "仅支持查看有效的个人 API Key");
+        }
+        if (cred.getExpiresAt() != null && !cred.getExpiresAt().isAfter(LocalDateTime.now())) {
+            throw new BusinessException(ErrorCode.INVALID_PARAMETER, "个人 API Key 已过期，请重新签发");
+        }
+        return decryptCredential(cred);
+    }
+
+    private String decryptCredential(AppCredentialEntity cred) {
         String encrypted = cred.getSecretEncrypted();
         if (encrypted == null || encrypted.isBlank()) {
-            log.info("[Credential] 查看密钥失败（无密文，创建于「密钥可查看」启用之前）: appId={}, credId={}", appId, credId);
+            log.info("[Credential] 查看密钥失败（无密文）: appId={}, credId={}", cred.getAppId(), cred.getId());
             throw new BusinessException(ErrorCode.INVALID_PARAMETER,
                     "该凭证创建于「密钥可查看」启用之前，仅存哈希无法找回，请重新生成凭证");
         }
-        // 05 §4.1 强制：解密查看必须留 INFO 日志（谁、何时、查了哪条），供事后追溯
+        String plaintext = cryptoService.decrypt(encrypted);
         log.info("[Credential] 查看密钥明文: appId={}, credId={}, credName={}, type={}",
-                appId, credId, cred.getCredName(), cred.getCredType());
-        return cryptoService.decrypt(encrypted);
+                cred.getAppId(), cred.getId(), cred.getCredName(), cred.getCredType());
+        return plaintext;
     }
 
     /**

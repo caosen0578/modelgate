@@ -75,12 +75,20 @@ public class PersonalAccessController {
         return read(() -> personal.credentials(um));
     }
 
-    @Operation(summary = "签发个人 API Key（仅当次显示明文）")
+    @Operation(summary = "签发个人 API Key（返回当次签发明文）")
     @PostMapping(UrlConstant.PERSONAL_CREDENTIAL_CREATE)
     public Mono<Result<PersonalAccessViews.IssuedKey>> issue(
             @RequestBody @Valid PersonalAccessRequests.Credential request, ServerHttpResponse response) {
         response.getHeaders().setCacheControl(CacheControl.noStore());
         return read(() -> personal.issue(request));
+    }
+
+    @Operation(summary = "查看单条个人 API Key 明文（独立权限，按 UM 校验归属）")
+    @GetMapping(UrlConstant.PERSONAL_CREDENTIAL_SECRET)
+    public Mono<Result<String>> revealKey(@RequestParam("um") String um, @RequestParam("id") Long id,
+                                          ServerHttpResponse response) {
+        response.getHeaders().setCacheControl(CacheControl.noStore());
+        return read(() -> personal.revealKey(um, id));
     }
 
     @Operation(summary = "撤销个人 API Key")
