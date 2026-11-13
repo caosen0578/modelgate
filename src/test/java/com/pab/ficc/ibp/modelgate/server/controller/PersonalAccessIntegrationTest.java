@@ -28,10 +28,12 @@ import org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceTransactionManagerAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.boot.env.YamlPropertySourceLoader;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.core.io.FileSystemResource;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
@@ -71,6 +73,14 @@ class PersonalAccessIntegrationTest {
     @Autowired PayloadService payload;
     @Autowired CredentialAuthFilter credentialAuthFilter;
     @Autowired PersonalAccessService personalAccessService;
+
+    @Test
+    void applicationYamlExposesPersonalAccessSwitch() throws Exception {
+        var config = new FileSystemResource("src/main/resources/application.yml");
+        assertTrue(new YamlPropertySourceLoader().load("application", config).stream()
+                .anyMatch(source -> source.getProperty("modelgate.personal-access.enabled") instanceof Boolean),
+                "application.yml 必须显式提供布尔类型的个人接入开关");
+    }
 
     @Test
     void recordsRealUsageByUmWithoutChangingSystemUsage() throws Exception {

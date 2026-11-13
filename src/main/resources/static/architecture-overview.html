@@ -76,12 +76,12 @@
     <div class="heading"><span class="number">01</span><h2 id="overview-heading">模型与服务网关</h2></div>
     <p class="lead">一个入口，连接多种模型与服务。统一校验权限、控制用量、转发请求。</p>
     <svg class="diagram" viewBox="0 0 1200 410" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="overview-svg-title overview-svg-desc">
-      <title id="overview-svg-title">多个业务系统通过统一网关访问大模型和通用业务接口</title>
-      <desc id="overview-svg-desc">左侧业务系统汇入中间 ModelGate 网关，网关检查权限和用量后分发到右侧各类大模型或通用业务接口，请求和响应均通过网关。</desc>
-      <text x="142" y="38" class="small" text-anchor="middle">现有业务系统</text>
+      <title id="overview-svg-title">业务系统与个人通过统一网关接入</title>
+      <desc id="overview-svg-desc">业务系统通过 ModelGate 访问授权模型和通用业务接口，个人通过专属 Key 访问授权模型，Token 用量按 UM 查询。</desc>
+      <text x="142" y="38" class="small" text-anchor="middle">接入方</text>
       <rect class="node" x="20" y="65" width="245" height="70" rx="12"/><use href="#icon-building" class="icon" x="40" y="82" width="36" height="36"/><text class="label" x="94" y="108">客户管理</text>
       <rect class="node" x="20" y="165" width="245" height="70" rx="12"/><use href="#icon-building" class="icon" x="40" y="182" width="36" height="36"/><text class="label" x="94" y="208">数据分析</text>
-      <rect class="node" x="20" y="265" width="245" height="70" rx="12"/><use href="#icon-building" class="icon" x="40" y="282" width="36" height="36"/><text class="label" x="94" y="308">其他业务</text>
+      <rect class="node" x="20" y="265" width="245" height="70" rx="12"/><use href="#icon-building" class="icon" x="40" y="282" width="36" height="36"/><text class="label" x="94" y="308">个人接入</text>
       <path class="wire" d="M265 100H294V300H265M265 200H405" marker-end="url(#arrow-blue)"/>
       <text x="350" y="180" class="tiny" text-anchor="middle">请求 / 响应</text>
       <rect class="gateway" x="410" y="74" width="365" height="252" rx="24"/>
@@ -97,10 +97,10 @@
       <text class="label" x="993" y="108">各类大模型</text><text class="small" x="934" y="150">不同模型，统一接入管理</text>
       <rect class="target" x="910" y="220" width="270" height="120" rx="16"/><use href="#icon-service" class="icon green-icon" x="932" y="240" width="42" height="42"/>
       <text class="label" x="993" y="268">通用业务接口</text><text class="small" x="934" y="310">普通调用，也支持实时推送</text>
-      <text class="tiny" x="600" y="384" text-anchor="middle">业务系统不直接持有上游密钥，由网关统一保管和使用</text>
+      <text class="tiny" x="600" y="384" text-anchor="middle">个人仅调用授权模型，Token 用量按 UM 查询</text>
     </svg>
     <div class="mobile-flow" aria-label="统一接入简易流程">
-      <div class="mobile-node"><strong>现有业务系统</strong><p>客户管理、数据分析及其他业务</p></div><div class="mobile-arrow" aria-hidden="true">↓</div>
+      <div class="mobile-node"><strong>业务系统与个人</strong><p>个人仅调用授权模型，Token 用量按 UM 查询</p></div><div class="mobile-arrow" aria-hidden="true">↓</div>
       <div class="mobile-node primary"><strong>ModelGate 网关</strong><p>权限校验 · 用量控制 · 请求转发</p></div><div class="mobile-arrow" aria-hidden="true">↓</div>
       <div class="mobile-node upstream"><strong>各类大模型 / 通用业务接口</strong><p>支持普通调用与实时推送，响应经网关返回</p></div>
     </div>

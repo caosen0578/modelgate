@@ -289,6 +289,10 @@ resilience4j:
 
 # ===== ModelGate 自定义配置（Apollo 热更新以下所有项） =====
 modelgate:
+  personal-access:
+    # 个人接入默认关闭。完成数据库增量和管理权限配置后可启用。
+    enabled: false
+
   # 【已移除】modelgate.upstream.url
   # 该属性此前仅作为 GatewayConfigService.getUpstreamUrl() 的兜底值，而该方法无任何路由调用方，
   # 已随 upstream.url 配置项一并删除。Gateway 静态路由的占位地址见上方

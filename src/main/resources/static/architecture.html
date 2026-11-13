@@ -75,7 +75,7 @@ section{padding:18px 14px}h2{font-size:18px}.section-number{font-size:20px}.lane
 <header class="masthead"><div class="shell">
   <div class="eyebrow">MODELGATE / ARCHITECTURE</div>
   <h1>网络与报文录制回放架构</h1>
-  <p>业务流量、管理操作和录制旁路分开呈现。以下描述当前仓库实现，不将规划中的个人接入、消息中间件或历史响应模拟画成已有能力。</p>
+  <p>业务流量、管理操作和录制旁路分开呈现。系统接入可调用授权模型和通用服务。个人接入启用后，老师用专属 API Key 调用授权模型，用量按 UM 查询。</p>
   <div class="metadata"><span>代码核对：<strong><time datetime="2026-10-30">2026-10-30</time></strong></span><span>部署文根：<strong><code>/modelgate</code></strong></span><span>技术底座：<strong>Spring Cloud Gateway · WebFlux · Reactor Netty</strong></span></div>
 </div></header>
 <nav class="navigation" aria-label="架构图导航"><div class="shell">
@@ -90,8 +90,8 @@ section{padding:18px 14px}h2{font-size:18px}.section-number{font-size:20px}.lane
   <p class="description">同一域名按路径复用；SLB / 容器入口转发后必须保留应用文根。下图为逻辑拓扑，实例数、域名和外部挂载路径以部署配置为准。</p>
   <div class="lane">
     <div class="lane-label"><strong>业务数据面</strong><span>模型流式 / 非流式，以及通用 SSE / 普通 HTTP</span></div>
-    <div class="flow" role="group" aria-label="接入系统经 SLB 访问 ModelGate，网关转发至配置的上游">
-      <article class="node"><span class="tag">CALLER</span><h3>内部接入系统</h3><p>API Key 或 AK/SK<br>凭证归属接入账户 <code>appId</code></p></article>
+    <div class="flow" role="group" aria-label="接入系统与个人经 SLB 访问 ModelGate，网关转发至授权的上游">
+      <article class="node"><span class="tag">CALLER</span><h3>接入系统与个人</h3><p>系统：API Key 或 AK/SK<br>个人：专属 API Key，仅调用授权模型<br>个人 Token 用量按 UM 查询</p></article>
       <div class="connector" aria-hidden="true"></div>
       <article class="node"><span class="tag">INGRESS</span><h3>行内域名 · SLB</h3><p><code>/modelgate/v1/**</code><br><code>/modelgate/svc/{服务编码}/**</code><br>流式链路需端到端支持及时 flush</p></article>
       <div class="connector" aria-hidden="true"></div>
