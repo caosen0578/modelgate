@@ -128,6 +128,15 @@ class PersonalAccessIntegrationTest {
         client().get().uri(PERSONAL + "/page?keyword=MGQA_TEACHER").exchange().expectStatus().isOk()
                 .expectBody().jsonPath("$.data.total").isEqualTo(2);
 
+        client().put().uri(PERSONAL + "/auth/save")
+                .bodyValue(Map.of("um", a, "modelId", model, "expiresAt", "2020-01-01 10:00:00"))
+                .exchange().expectStatus().isBadRequest()
+                .expectBody().jsonPath("$.resultCode").isEqualTo("10003")
+                .jsonPath("$.resultMessage").value((String message) ->
+                        assertTrue(message.contains("有效期必须晚于当前时间")));
+        client().get().uri(PERSONAL + "/auth/list?um=" + a).exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.data.length()").isEqualTo(0);
+
         for (String um : new String[]{a, b}) {
             client().put().uri(PERSONAL + "/auth/save").bodyValue(Map.of("um", um, "modelId", model, "qpsLimit", 0))
                     .exchange().expectStatus().isOk();
