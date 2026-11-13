@@ -1,5 +1,7 @@
 package com.pab.ficc.ibp.modelgate.server.service;
 
+import com.pab.ficc.ibp.modelgate.server.common.BusinessException;
+import com.pab.ficc.ibp.modelgate.server.common.ErrorCode;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.GatewayConfigEntity;
 import com.pab.ficc.ibp.modelgate.server.mapper.GatewayConfigMapper;
 import jakarta.annotation.PostConstruct;
@@ -8,6 +10,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -75,7 +79,17 @@ public class GatewayConfigService {
         return configMapper.selectList(null);
     }
 
+    public Optional<String> findModelPublicBaseUrl() {
+        // 示例打开时读取单条，跨实例保存/删除后无需等待定时刷新。
+        return Optional.ofNullable(configMapper.selectById(GatewayConfigEntity.KEY_PUBLIC_GATEWAY_BASE_URL))
+                .map(GatewayConfigEntity::getConfigValue)
+                .map(GatewayConfigService::normalizeModelPublicBaseUrl);
+    }
+
     public GatewayConfigEntity upsert(GatewayConfigEntity config, String operatorName) {
+        if (GatewayConfigEntity.KEY_PUBLIC_GATEWAY_BASE_URL.equals(config.getConfigKey())) {
+            config.setConfigValue(normalizeModelPublicBaseUrl(config.getConfigValue()));
+        }
         config.setUpdater(operatorName);
         config.setUpdateTime(LocalDateTime.now());
 
@@ -96,5 +110,35 @@ public class GatewayConfigService {
         configMapper.deleteById(key);
         configCache.remove(key);
         log.info("[GatewayConfig] Deleted: key={}", key);
+    }
+
+    private static String normalizeModelPublicBaseUrl(String raw) {
+        String value = raw.strip();
+        URI uri;
+        try {
+            uri = new URI(value);
+        } catch (URISyntaxException e) {
+            throw invalidModelPublicBaseUrl();
+        }
+        String scheme = uri.getScheme();
+        String path = uri.getPath();
+        if (uri.toASCIIString().length() > 4000 || !("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))
+                || uri.getHost() == null || uri.getPort() == 0 || uri.getPort() > 65535
+                || uri.getRawAuthority().endsWith(":")
+                || uri.getRawUserInfo() != null || uri.getRawQuery() != null || uri.getRawFragment() != null
+                || path.indexOf('\\') >= 0 || path.matches("(?s).*/\\.{1,2}(/.*)?")
+                || path.chars().anyMatch(Character::isISOControl)) {
+            throw invalidModelPublicBaseUrl();
+        }
+        // 基础地址包含外部文根。具体 /v1 接口路径由接入示例拼接。
+        if (path.matches(".*/v1(?:/(?:chat/completions|completions|responses|messages|embeddings|images/generations|audio/speech|models))?/*")) {
+            throw new BusinessException(ErrorCode.INVALID_PARAMETER, "请填写模型对外基础地址，去掉末尾的 /v1 或具体接口路径");
+        }
+        return uri.toASCIIString().replaceAll("/+$", "");
+    }
+
+    private static BusinessException invalidModelPublicBaseUrl() {
+        return new BusinessException(ErrorCode.INVALID_PARAMETER,
+                "请填写完整的 HTTP(S) 地址，例如 https://api.example.com/modelgate，地址中不能包含账号密码、查询参数或片段");
     }
 }

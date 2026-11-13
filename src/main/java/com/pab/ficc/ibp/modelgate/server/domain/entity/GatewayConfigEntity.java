@@ -56,5 +56,6 @@ public class GatewayConfigEntity {
 
     /** 熔断开关 */
     public static final String KEY_CIRCUIT_BREAKER_ENABLED = "circuit.breaker.enabled";
+    public static final String KEY_PUBLIC_GATEWAY_BASE_URL = "gateway.public.base-url";
 
 }

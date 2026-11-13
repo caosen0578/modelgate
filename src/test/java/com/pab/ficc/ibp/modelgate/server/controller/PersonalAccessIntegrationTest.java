@@ -49,6 +49,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -80,6 +81,33 @@ class PersonalAccessIntegrationTest {
         assertTrue(new YamlPropertySourceLoader().load("application", config).stream()
                 .anyMatch(source -> source.getProperty("modelgate.personal-access.enabled") instanceof Boolean),
                 "application.yml 必须显式提供布尔类型的个人接入开关");
+    }
+
+    @Test
+    void modelPublicBaseUrlReadsOnlyItsOwnConfigAndRejectsInvalidChanges() {
+        String readPath = "/modelgate/config/model-public-base-url";
+        String savePath = "/modelgate/config/save";
+        String key = "gateway.public.base-url";
+        client().get().uri(readPath).exchange().expectStatus().isOk()
+                .expectHeader().valueEquals("Cache-Control", "no-store")
+                .expectBody().jsonPath("$.data.baseUrl").doesNotExist();
+
+        String externalBase = "https://models.example.test:8443/llm/modelgate";
+        client().put().uri(savePath).bodyValue(Map.of("key", key, "value", "  " + externalBase + "///  "))
+                .exchange().expectStatus().isOk().expectBody().jsonPath("$.data.configValue").isEqualTo(externalBase);
+        for (String invalid : List.of("/modelgate", "ftp://models.example.test", "https://user@models.example.test",
+                "https://models.example.test:65536", externalBase + "?key=1", externalBase + "#section",
+                externalBase + "/v1/chat/completions", externalBase + "/%2e%2e/modelgate")) {
+            client().put().uri(savePath).bodyValue(Map.of("key", key, "value", invalid))
+                    .exchange().expectStatus().isBadRequest().expectBody().jsonPath("$.resultCode").isEqualTo("10003");
+        }
+        client().get().uri(readPath).exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.baseUrl").isEqualTo(externalBase)
+                .jsonPath("$.data.configKey").doesNotExist()
+                .jsonPath("$.data.updater").doesNotExist();
+        client().delete().uri("/modelgate/config/delete?key=" + key).exchange().expectStatus().isOk();
+        client().get().uri(readPath).exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.data.baseUrl").doesNotExist();
     }
 
     @Test
@@ -291,9 +319,10 @@ class PersonalAccessIntegrationTest {
             JacksonConfig.class, CryptoService.class, GatewayCacheManager.class, RateLimitService.class,
             AppService.class, CredentialService.class, AccessRuleService.class, ModelAuthService.class,
             ServiceAuthService.class, ModelService.class, AppScopeResolver.class, PersonalAccessService.class,
-            AuditService.class, RequestHeaderSnapshotter.class, UpstreamResponseParser.class,
+            AuditService.class, RequestHeaderSnapshotter.class, UpstreamResponseParser.class, GatewayConfigService.class,
             PersonalAccessController.class, AppController.class, CredentialController.class, ModelAuthController.class,
             ServiceAuthController.class, AccessRuleController.class, AuditLogController.class, UsageStatsController.class,
+            GatewayConfigController.class,
             GlobalExceptionHandler.class, TraceWebFilter.class, TraceFilter.class, CredentialAuthFilter.class,
             AppAccessControlFilter.class, BodyParseFilter.class, ModelAuthFilter.class, QuotaFilter.class,
             PayloadCaptureFilter.class, ModelRouteFilter.class,

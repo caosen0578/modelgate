@@ -12,7 +12,9 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.CacheControl;
 import org.springframework.http.server.reactive.ServerHttpRequest;
+import org.springframework.http.server.reactive.ServerHttpResponse;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
@@ -36,6 +38,17 @@ import java.util.stream.Collectors;
 public class GatewayConfigController {
 
     private final GatewayConfigService configService;
+
+    @Operation(summary = "读取模型对外接入地址")
+    @GetMapping(UrlConstant.MODEL_PUBLIC_BASE_URL)
+    public Mono<Result<ModelPublicBaseUrl>> modelPublicBaseUrl(ServerHttpResponse response) {
+        response.getHeaders().setCacheControl(CacheControl.noStore());
+        return Mono.fromCallable(() -> new ModelPublicBaseUrl(configService.findModelPublicBaseUrl().orElse(null)))
+                .subscribeOn(Schedulers.boundedElastic())
+                .map(Result::success);
+    }
+
+    public record ModelPublicBaseUrl(String baseUrl) {}
 
     @Operation(summary = "查询所有网关配置项")
     @GetMapping(UrlConstant.FIND_ALL)

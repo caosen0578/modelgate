@@ -69,6 +69,7 @@ public interface UrlConstant {
     String MG_AUTH        = "/auth";
     String MG_ACCESS      = "/access";
     String MG_CONFIG      = "/config";
+    String MODEL_PUBLIC_BASE_URL = "/model-public-base-url";
     String MG_STATS       = "/stats";
     String MG_AUDIT       = "/audit";
     String MG_PAYLOAD     = "/payload";

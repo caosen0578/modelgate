@@ -679,6 +679,18 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
         </div>
       </div>
 
+      <div class="card">
+        <div class="card-title">模型对外接入地址</div>
+        <div class="form-group">
+          <label for="cfg_model_public_base">调用方可访问的基础地址</label>
+          <input id="cfg_model_public_base" maxlength="4000" placeholder="https://api.example.com/modelgate"/>
+          <span class="hint">包含实际外部文根，供模型接入示例和网关测试使用。未配置时使用默认地址。</span>
+        </div>
+        <button class="btn btn-primary" data-api="PUT /modelgate/config/save" onclick="saveModelPublicBaseUrl()">保存地址</button>
+        <button class="btn btn-neutral" id="cfg_model_public_reset" data-api="DELETE /modelgate/config/delete"
+                onclick="resetModelPublicBaseUrl()" hidden>恢复默认</button>
+      </div>
+
       <!--
         原「🔐 Admin 访问配置」卡片已移除：
         原卡片的保存与重新生成都是只弹 toast 的空实现，会误导运维。
@@ -1268,9 +1280,9 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
         </div>
         <div class="form-group">
           <label>网关地址</label>
-          <input id="ug_base" oninput="renderUsage()" placeholder="http://host:port">
-          <span class="hint">默认取「当前域名 + 部署文根」。行内部署走域名时文根是 <code>/backend</code>，
-            业务流量同样要带上它才能到后端；直连应用 IP/端口时为空。若业务流量另有入口地址，改这里</span>
+          <input id="ug_base" oninput="editUsageAddress()" placeholder="https://api.example.com/modelgate">
+          <span class="hint" id="ug_addressHint"></span>
+          <span class="hint" id="ug_requestAddress"></span>
         </div>
       </div>
       <div class="form-group" style="margin-top:12px" id="ug_streamRow">
@@ -1322,7 +1334,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
     <div class="modal-footer">
       <button class="btn btn-neutral" onclick="closeUsageModal()">关闭</button>
       <button class="btn btn-warning" id="ug_testBtn" onclick="runUsageTest()">▶ 测试连通</button>
-      <button class="btn btn-primary" onclick="copyUsage()">复制示例</button>
+      <button class="btn btn-primary" id="ug_copyBtn" onclick="copyUsage()">复制示例</button>
     </div>
   </div>
 </div>
@@ -1984,11 +1996,14 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
         </table></div>
       </div>
       <div data-pa-panel="example" hidden>
-        <div class="form-group"><label for="paGatewayBase">网关地址</label><input id="paGatewayBase" oninput="renderPersonalExample()"/></div>
+        <div class="form-group"><label for="paGatewayBase">网关地址</label>
+          <input id="paGatewayBase" oninput="editPersonalGatewayAddress()"/>
+          <span class="hint" id="paGatewayAddressHint"></span>
+          <span class="hint" id="paRequestAddress"></span></div>
         <div class="form-group"><label for="paExampleModel">已授权模型</label>
           <select id="paExampleModel" onchange="renderPersonalExample()"></select></div>
         <pre id="paExample" style="white-space:pre-wrap;background:#f3f6fa;padding:12px;border-radius:6px"></pre>
-        <button class="btn btn-neutral btn-sm" onclick="copyText($('paExample').textContent)">复制接入示例</button>
+        <button class="btn btn-neutral btn-sm" id="paCopyExample" onclick="copyText($('paExample').textContent)">复制接入示例</button>
         <p class="hint">示例不填真实 Key；只向老师交付网关接口、模型名和个人 Key。</p>
       </div>
       <div data-pa-panel="usage" hidden>
@@ -2146,6 +2161,27 @@ function apiUrl(path){
  */
 function defaultGatewayBase(){
   return location.origin + CTX_ROOT;
+}
+const MODEL_PUBLIC_BASE_URL_KEY='gateway.public.base-url';
+
+async function loadModelGatewayBase(){
+  const base=defaultGatewayBase();
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),5000);
+  try{
+    const response=await fetch(apiUrl('/config/model-public-base-url'),
+      {headers:hdrs(),cache:'no-store',signal:controller.signal});
+    const result=await response.json();
+    if(response.ok && isOk(result) && result.data && typeof result.data==='object'){
+      if(result.data.baseUrl) return {base:result.data.baseUrl,hint:'已使用网关配置的模型对外接入地址，可临时修改。'};
+      return {base,hint:'尚未配置模型对外接入地址，当前使用默认地址。'};
+    }
+  }catch(e){
+    // 配置无法读取时，仍可使用当前环境的默认地址。
+  }finally{
+    clearTimeout(timer);
+  }
+  return {base,hint:'未能读取模型对外接入地址，当前使用默认地址。交付前请核对。'};
 }
 // 页面不再持有任何管理凭据：AdminAuthFilter 已移除，鉴权由内网体系在接口层承担，
 // 浏览器带的是内网鉴权层自己的会话（Cookie / 4A 票据），这里只需声明内容类型。
@@ -3415,6 +3451,7 @@ function closeSecretView(){
 // ============================================================
 // 弹窗上下文；secret 只在用户显式点「填入真实密钥」后才有值，关窗即清空，不进任何缓存
 let usageCtx = null;
+let usageOpenVersion = 0;
 
 // 授权是否真的可用：拿禁用/过期的授权去生成示例，接入方照抄必然 403
 function isAuthUsable(a){
@@ -3426,12 +3463,19 @@ function isAuthUsable(a){
 
 async function openUsageModal(credId){
   if(!currentApp) return;
+  const version=++usageOpenVersion;
+  const appId=currentApp.appId;
   const c = (currentCreds||[]).find(x=>x.id===credId);
   if(!c){ toast('凭证不存在，请刷新列表','error'); return; }
+  const addressRequest=loadModelGatewayBase();
   // 授权列表只在切到对应子页时才加载；从凭证页直接开会拿到空下拉，故两套都主动拉一次
   await loadAuths();
   await loadServiceAuths();
-  usageCtx = {cred:c, secret:null, fmt:'curl'};
+  if(version!==usageOpenVersion || currentApp?.appId!==appId) return;
+  const defaultBase=defaultGatewayBase();
+  const context={cred:c,secret:null,fmt:'curl',modelBase:defaultBase,serviceBase:defaultBase,
+    modelHint:'正在读取模型对外接入地址…',modelAddressLoading:true};
+  usageCtx=context;
 
   // 服务下拉：effective 已由后端算好（接入系统启用 且 授权启用 且 未过期 且 服务启用），
   // 前端不再自己拼这四个条件——拼错了会把调不通的服务当成可用的给出去
@@ -3449,7 +3493,6 @@ async function openUsageModal(credId){
     : '<option value="">（该系统暂无可用授权，请先到「模型授权」页授权）</option>';
 
   $('ug_credName').textContent = c.credName || ('#'+credId);
-  $('ug_base').value = defaultGatewayBase();
   $('ug_stream').checked = false;
   $('ug_kind').value = 'model';
   $('ug_svcPath').value = '';
@@ -3464,6 +3507,12 @@ async function openUsageModal(credId){
   $('ug_testWrap').style.display = 'none';
   setUsageFmt('curl');
   openModal('usageModal');
+  const address=await addressRequest;
+  if(usageCtx!==context || !context.modelAddressLoading || !$('usageModal').classList.contains('open')) return;
+  context.modelBase=address.base;
+  context.modelHint=address.hint;
+  context.modelAddressLoading=false;
+  if($('ug_kind').value==='model') onUsageKindChange();
 }
 
 /**
@@ -3474,6 +3523,10 @@ async function openUsageModal(credId){
  */
 function onUsageKindChange(){
   const svc = $('ug_kind').value === 'service';
+  if(usageCtx){
+    $('ug_base').value=svc ? usageCtx.serviceBase : usageCtx.modelBase;
+    $('ug_addressHint').textContent=svc ? '使用原网关默认地址，可临时修改。' : usageCtx.modelHint;
+  }
   $('ug_modelRow').style.display     = svc ? 'none' : '';
   $('ug_streamRow').style.display    = svc ? 'none' : '';
   $('ug_serviceRow').style.display   = svc ? '' : 'none';
@@ -3483,6 +3536,18 @@ function onUsageKindChange(){
   // 切换类型后旧的测试结果不再对应当前配置，留着会让人误读
   $('ug_testWrap').style.display = 'none';
   if(svc){ onUsageServiceChange(); } else { renderUsage(); }
+}
+
+function editUsageAddress(){
+  if(!usageCtx) return;
+  if($('ug_kind').value==='service') usageCtx.serviceBase=$('ug_base').value;
+  else{
+    usageCtx.modelBase=$('ug_base').value;
+    usageCtx.modelAddressLoading=false;
+    usageCtx.modelHint='本次使用手动填写的地址。';
+    $('ug_addressHint').textContent=usageCtx.modelHint;
+  }
+  renderUsage();
 }
 
 /**
@@ -3620,12 +3685,16 @@ function usageParts(){
   const modelType = (opt && opt.dataset.type) || 'chat';
   const base   = ($('ug_base').value || defaultGatewayBase()).trim().replace(/\/+$/,'');
   const embed  = modelType==='embedding';
-  const stream = !embed && $('ug_stream').checked;   // embeddings 没有流式
+  const stream = modelType==='chat' && $('ug_stream').checked;
   const bodyObj = embed
     ? {model:modelId, input:'需要向量化的文本'}
-    : Object.assign({model:modelId, messages:[{role:'user', content:'你好'}]}, stream?{stream:true}:{});
+    : modelType==='image' ? {model:modelId,prompt:'一幅山水画'}
+      : modelType==='audio' ? {model:modelId,input:'你好',voice:'alloy'}
+        : Object.assign({model:modelId, messages:[{role:'user', content:'你好'}]}, stream?{stream:true}:{});
+  const path=embed ? '/v1/embeddings' : modelType==='image' ? '/v1/images/generations' :
+    modelType==='audio' ? '/v1/audio/speech' : '/v1/chat/completions';
   return {kind:'model', modelId, modelType, base, embed, stream, method:'POST', hasBody:true,
-          path: embed ? '/v1/embeddings' : '/v1/chat/completions',
+          path,
           body: JSON.stringify(bodyObj, null, 2)};
 }
 
@@ -3662,13 +3731,13 @@ function usageCurl(p){
       + 'SK="' + (usageCtx.secret||'<在此填入 SecretKey>') + '"\n'
       + 'TS=$(date +%s%3N)          # 毫秒时间戳；macOS 用 $(($(date +%s)*1000))\n'
       + 'SIGN=$(printf "%s:%s" "$AK" "$TS" | openssl dgst -sha256 -hmac "$SK" | awk \'{print $NF}\')\n\n'
-      + 'curl -X POST "' + p.base + p.path + '" \\\n'
+      + 'curl -X POST ' + shellSingleQuoted(p.base + p.path) + ' \\\n'
       + '  -H "Content-Type: application/json" \\\n'
       + '  -H "Authorization: AKSK $AK:$TS:$SIGN" \\\n'
       + (p.stream ? '  -N \\\n' : '')
       + '  -d ' + shellSingleQuoted(p.body);
   }
-  return 'curl -X POST "' + p.base + p.path + '" \\\n'
+  return 'curl -X POST ' + shellSingleQuoted(p.base + p.path) + ' \\\n'
     + '  -H "Content-Type: application/json" \\\n'
     + '  -H "Authorization: Bearer ' + (usageCtx.secret||'<在此填入 API Key>') + '" \\\n'
     + (p.stream ? '  -N \\\n' : '')
@@ -3762,18 +3831,27 @@ function usagePython(p){
       + 'ts = str(int(time.time() * 1000))          # 毫秒时间戳，服务端校验 ±5 分钟\n'
       + 'sign = hmac.new(SK.encode(), f"{AK}:{ts}".encode(), hashlib.sha256).hexdigest()\n\n'
       + 'resp = requests.post(\n'
-      + '    "' + p.base + p.path + '",\n'
+      + '    ' + JSON.stringify(p.base + p.path) + ',\n'
       + '    headers={"Content-Type": "application/json",\n'
       + '             "Authorization": f"AKSK {AK}:{ts}:{sign}"},\n'
       + '    json=' + pyBody + ',\n'
       + ')\n'
       + 'print(resp.status_code, resp.text)';
   }
-  // api_key 是 OpenAI 兼容的，直接用官方 SDK 最省事；base_url 必须带 /v1
+  if(p.modelType==='image' || p.modelType==='audio'){
+    return 'import requests\n\n'
+      + 'resp = requests.post(\n'
+      + '    ' + JSON.stringify(p.base + p.path) + ',\n'
+      + '    headers={"Content-Type": "application/json", "Authorization": '
+      + JSON.stringify('Bearer ' + (usageCtx.secret||'<在此填入 API Key>')) + '},\n'
+      + '    data=' + JSON.stringify(p.body) + ',\n'
+      + ')\nprint(resp.status_code, resp.headers.get("Content-Type"))';
+  }
+  // 对话和向量示例沿用 OpenAI SDK；base_url 必须带 /v1。
   const head = '# pip install openai\nfrom openai import OpenAI\n\n'
     + 'client = OpenAI(\n'
     + '    api_key="' + (usageCtx.secret||'<在此填入 API Key>') + '",\n'
-    + '    base_url="' + p.base + '/v1",\n'
+    + '    base_url=' + JSON.stringify(p.base + '/v1') + ',\n'
     + ')\n\n';
   if(p.embed){
     return head
@@ -3808,6 +3886,13 @@ function renderUsage(){
   // 看起来就像"改了没生效"。这正是"不打勾却显示 SSE 结果"最可能的成因。
   $('ug_testWrap').style.display = 'none';
   const p = usageParts();
+  const addressPending=p.kind==='model' && usageCtx.modelAddressLoading;
+  $('ug_copyBtn').disabled=addressPending;
+  $('ug_testBtn').disabled=addressPending || usageCtx.testing===true;
+  const streamSwitch=$('ug_stream');
+  streamSwitch.disabled=p.kind==='model' && p.modelType!=='chat';
+  if(streamSwitch.disabled) streamSwitch.checked=false;
+  $('ug_requestAddress').textContent=p.kind==='model' ? '请求地址：' + p.base + p.path : '';
   const fn = usageCtx.fmt==='http' ? usageHttp : (usageCtx.fmt==='python' ? usagePython : usageCurl);
   // 用 textContent 而非 innerHTML：示例里的尖括号占位符不能被当成标签
   $('ug_code').textContent = fn(p);
@@ -3925,7 +4010,9 @@ function diagnoseUsageTest(status, kind){
 
 async function runUsageTest(){
   if(!usageCtx || !currentApp) return;
+  const context=usageCtx;
   const p = usageParts();
+  if(p.kind==='model' && context.modelAddressLoading) return;
   if(p.kind === 'service'){
     if(!p.serviceId || p.serviceId === '<服务编码>'){ toast('请先选择要测试的服务','error'); return; }
   }else if(!p.modelId || p.modelId === '<模型ID>'){
@@ -3933,6 +4020,7 @@ async function runUsageTest(){
   }
 
   const btn = $('ug_testBtn');
+  context.testing=true;
   btn.disabled = true; btn.textContent = '测试中…';
   $('ug_testWrap').style.display = 'block';
   $('ug_testVerdict').innerHTML = '<span class="tag tag-gray">请求中…</span>';
@@ -3944,8 +4032,8 @@ async function runUsageTest(){
   try{
     const secret = await fetchSecretForTest();
     let auth;
-    if(usageCtx.cred.credType === 'ak_sk'){
-      const ak = usageCtx.cred.accessKey, ts = String(Date.now());
+    if(context.cred.credType === 'ak_sk'){
+      const ak = context.cred.accessKey, ts = String(Date.now());
       auth = `AKSK ${ak}:${ts}:${await signAksk(ak, secret, ts)}`;
     }else{
       auth = 'Bearer ' + secret;
@@ -3953,6 +4041,7 @@ async function runUsageTest(){
 
     // 服务接口的方法/请求体由接入方定义；GET 或无请求体时不能塞 body，
     // 否则 fetch 直接抛 TypeError（GET/HEAD 不允许带 body）
+    if(usageCtx!==context || !$('usageModal').classList.contains('open')) return;
     const init = {method: p.method || 'POST', headers:{'Authorization':auth}};
     if(p.hasBody !== false && p.body){
       init.headers['Content-Type'] = 'application/json';
@@ -3967,9 +4056,10 @@ async function runUsageTest(){
           k + ': ' + (k.toLowerCase()==='authorization' ? String(v).slice(0,12)+'…（已截断）' : v)).join('\n')
       + (init.body ? '\n\n' + init.body : '\n\n(无请求体)');
 
-    const resp = await fetch(p.base + p.path, init);
+    const resp = await fetch(p.base + p.path, p.kind==='model' ? {...init,redirect:'error'} : init);
     const cost = Date.now() - started;
     const text = await resp.text();
+    if(usageCtx!==context || !$('usageModal').classList.contains('open')) return;
 
     // 响应体里的 code 比 HTTP 状态更精确（网关 Filter 的错误结构为 {code,message,traceId}），
     // 优先用它做诊断；解析不出来再回落到 HTTP 状态
@@ -4012,6 +4102,7 @@ async function runUsageTest(){
           + '网关无法真正建连却仍返回 2xx。请到「模型管理」检查 upstreamUrl 是否为 http:// 或 https:// 开头。'
         : (bodyMsg ? `上游/网关返回：${bodyMsg}。` : '') + diagnoseUsageTest(bodyCode || resp.status, p.kind);
   }catch(e){
+    if(usageCtx!==context || !$('usageModal').classList.contains('open')) return;
     const cost = Date.now() - started;
     $('ug_testVerdict').innerHTML = '<span class="tag tag-red">❌ 请求未发出</span>';
     $('ug_testMeta').textContent = `${cost}ms`;
@@ -4021,11 +4112,15 @@ async function runUsageTest(){
         + ' ak_sk 凭证请改用示例里的 curl / Python 脚本测试；api_key 凭证不受此限制。';
     }else{
       $('ug_testBody').textContent = String(e && e.message || e);
-      $('ug_testDiag').textContent = '请求没能发出去：多为「网关地址」填错或不可达，也可能是跨域被拦。'
+      $('ug_testDiag').textContent = '浏览器未取得响应。请核对网关地址、网络、跨域和 HTTPS 限制，模型测试请使用无需重定向的最终地址。'
         + ' 地址应指向业务流量入口（/v1/** 所在的 host:port），不一定与管理页同址。';
     }
   }finally{
-    btn.disabled = false; btn.textContent = '▶ 测试连通';
+    context.testing=false;
+    if(usageCtx===context){
+      btn.disabled=$('ug_kind').value==='model' && context.modelAddressLoading;
+      btn.textContent='▶ 测试连通';
+    }
   }
 }
 
@@ -5664,13 +5759,41 @@ async function loadConfig(){
   try{
     const r = await fetch(apiUrl('/config/find-all'), {headers:hdrs()});
     const j = await r.json();
+    if(!r.ok || !isOk(j)) throw new Error(errMsg(j));
     renderConfig(j.data||[]);
     // 填充快捷项
     const map = {};
     (j.data||[]).forEach(c=>map[c.configKey]=c.configValue);
     if(map['circuit.breaker.enabled'])$('cfg_circuit_enabled').value = map['circuit.breaker.enabled'];
+    $('cfg_model_public_base').value=map[MODEL_PUBLIC_BASE_URL_KEY] || '';
+    $('cfg_model_public_reset').hidden=!map[MODEL_PUBLIC_BASE_URL_KEY];
   }catch(e){
     renderConfig(DEMO_CONFIG);
+  }
+}
+
+function saveModelPublicBaseUrl(){
+  const value=$('cfg_model_public_base').value.trim();
+  if(!value){ toast('请输入模型对外接入地址。清除配置请点击恢复默认。','error'); return; }
+  return writeConfig('/config/save','PUT',{key:MODEL_PUBLIC_BASE_URL_KEY,value,description:'模型对外接入地址'},'模型对外接入地址已保存');
+}
+
+function resetModelPublicBaseUrl(){
+  if(!confirm('恢复默认模型接入地址？')) return;
+  return writeConfig('/config/delete?key=' + encodeURIComponent(MODEL_PUBLIC_BASE_URL_KEY),'DELETE',undefined,'已恢复默认模型接入地址');
+}
+
+async function writeConfig(path,method,body,message){
+  try{
+    const response=await fetch(apiUrl(path),{method,headers:hdrs(),body:body===undefined ? undefined : JSON.stringify(body)});
+    const result=await response.json();
+    if(!response.ok || !isOk(result)) throw new Error(errMsg(result));
+    toast(message);
+    await loadConfig();
+    return true;
+  }catch(e){
+    toast(e.message || '网关配置操作失败','error');
+    return false;
   }
 }
 
@@ -5679,14 +5802,14 @@ function renderConfig(data){
   if(!data.length){ tbody.innerHTML='<tr class="empty-row"><td colspan="5">暂无配置</td></tr>'; return; }
   tbody.innerHTML = data.map(c=>`
     <tr>
-      <td><code>${c.configKey}</code></td>
-      <td><input type="text" value="${escHtml(c.configValue)}" id="cfgv_${c.configKey.replace(/\./g,'_')}" style="width:100%;min-width:200px"/></td>
-      <td style="font-size:12px;color:#64748b">${c.description||'-'}</td>
+      <td><code>${escapeHtml(c.configKey)}</code></td>
+      <td><input type="text" value="${escapeHtml(c.configValue)}" id="cfgv_${escapeHtml(c.configKey.replace(/\./g,'_'))}" style="width:100%;min-width:200px"/></td>
+      <td style="font-size:12px;color:#64748b">${escapeHtml(c.description||'-')}</td>
       <td style="font-size:12px;color:#94a3b8">${fmtTime(c.updateTime)}</td>
       <td>
         <div class="flex gap-8">
-          <button class="btn btn-success btn-sm" title="PUT /config/save  {key:'${c.configKey}'}" onclick="saveConfigKv('${c.configKey}','${escHtml(c.description||'')}')">保存</button>
-          <button class="btn btn-danger btn-sm" title="DELETE /config/delete?key=${c.configKey}" onclick="delConfig('${c.configKey}')">删除</button>
+          <button class="btn btn-success btn-sm" data-api="PUT /modelgate/config/save" onclick="saveConfigKv(${jsArg(c.configKey)},${jsArg(c.description||'')})">保存</button>
+          <button class="btn btn-danger btn-sm" data-api="DELETE /modelgate/config/delete" onclick="delConfig(${jsArg(c.configKey)})">删除</button>
         </div>
       </td>
     </tr>
@@ -5709,19 +5832,12 @@ async function saveGlobalConfig(){
 async function saveConfigKv(key, desc){
   const elId = 'cfgv_'+key.replace(/\./g,'_');
   const value = $(elId) ? $(elId).value.trim() : '';
-  try{
-    const r = await fetch(apiUrl('/config/save'), {method:'PUT', headers:hdrs(), body:JSON.stringify({key,value,description:desc})});
-    const j = await r.json();
-    if(isOk(j)){ toast(`[${key}] 已保存`); loadConfig(); }
-    else toast('失败: '+errMsg(j),'error');
-  }catch(e){ toast(`[${key}] 已保存（演示）`); }
+  await writeConfig('/config/save','PUT',{key,value,description:desc},`[${key}] 已保存`);
 }
 
 async function delConfig(key){
   if(!confirm(`确认删除配置 [${key}]？`)) return;
-  try{ await fetch(apiUrl(`/config/delete?key=${key}`), {method:'DELETE', headers:hdrs()}); }catch(e){}
-  toast('已删除');
-  loadConfig();
+  await writeConfig('/config/delete?key=' + encodeURIComponent(key),'DELETE',undefined,'已删除');
 }
 
 async function addConfig(){
@@ -5729,10 +5845,9 @@ async function addConfig(){
   const val = $('newCfgVal').value.trim();
   const desc= $('newCfgDesc').value.trim();
   if(!key||!val){ toast('key 和 value 不能为空','error'); return; }
-  try{ await fetch(apiUrl('/config/save'), {method:'PUT', headers:hdrs(), body:JSON.stringify({key,value:val,description:desc})}); }catch(e){}
-  $('newCfgKey').value=$('newCfgVal').value=$('newCfgDesc').value='';
-  toast('配置已新增');
-  loadConfig();
+  if(await writeConfig('/config/save','PUT',{key,value:val,description:desc},'配置已新增')){
+    $('newCfgKey').value=$('newCfgVal').value=$('newCfgDesc').value='';
+  }
 }
 
 // ============================================================
@@ -6409,7 +6524,8 @@ const DEMO_CONFIG = [
 // ============================================================
 // ===== 模块 · 个人接入
 // ============================================================
-const pa = {enabled:false, rows:[], person:null, grants:[], keys:[], editing:false, listVersion:0, modelVersion:0, detailVersion:0};
+const pa = {enabled:false, rows:[], person:null, grants:[], keys:[], editing:false, listVersion:0, modelVersion:0, detailVersion:0,
+  addressVersion:0,addressEdited:false,addressLoading:false};
 
 async function personalAccessRequest(path, method='GET', body){
   const response = await fetch(apiUrl('/personal-access' + path), {
@@ -6518,6 +6634,9 @@ function openPersonalAccess(index, tab='info'){
     $('paInfo').textContent=(pa.person.enabled ? '已启用' : '已停用') + ' · 开通于 ' + fmtTime(pa.person.createTime)
       + ' · 备注：' + (pa.person.remark || '—');
     $('paGatewayBase').value=defaultGatewayBase();
+    $('paGatewayAddressHint').textContent='';
+    pa.addressEdited=false;
+    pa.addressLoading=false;
     $('paUsageStart').value='';
     $('paUsageEnd').value='';
     $('paUsageSummary').textContent='';
@@ -6532,7 +6651,7 @@ function openPersonalAccess(index, tab='info'){
 function showPersonalPanel(tab){
   document.querySelectorAll('[data-pa-panel]').forEach(el=>el.hidden=el.dataset.paPanel!==tab);
   if(tab==='auth'){ resetPersonalGrant(); loadPersonalGrants(); }
-  if(tab==='example') loadPersonalGrants(true);
+  if(tab==='example'){ refreshPersonalGatewayAddress(); loadPersonalGrants(true); }
   if(tab==='keys') loadPersonalKeys();
   if(tab==='usage') loadPersonalUsage();
 }
@@ -6705,17 +6824,44 @@ function revokePersonalAccessKey(index){
   });
 }
 
+async function refreshPersonalGatewayAddress(){
+  if(pa.addressEdited) return;
+  const personVersion=pa.detailVersion;
+  const version=++pa.addressVersion;
+  pa.addressLoading=true;
+  $('paGatewayAddressHint').textContent='正在读取模型对外接入地址…';
+  renderPersonalExample();
+  const {base,hint}=await loadModelGatewayBase();
+  if(personVersion!==pa.detailVersion || version!==pa.addressVersion || pa.addressEdited) return;
+  $('paGatewayBase').value=base;
+  $('paGatewayAddressHint').textContent=hint;
+  pa.addressLoading=false;
+  renderPersonalExample();
+}
+
+function editPersonalGatewayAddress(){
+  pa.addressEdited=true;
+  pa.addressLoading=false;
+  $('paGatewayAddressHint').textContent='本次使用手动填写的地址。';
+  renderPersonalExample();
+}
+
 function renderPersonalExample(){
   const model=$('paExampleModel').value;
   const grant=pa.grants.find(a=>a.modelId===model);
+  $('paCopyExample').disabled=pa.addressLoading || !grant;
+  $('paRequestAddress').textContent='';
   if(!grant){ $('paExample').textContent='请先配置有效的模型授权。'; return; }
   const type=grant.modelType;
   const path=type==='embedding' ? '/v1/embeddings' : type==='image' ? '/v1/images/generations' :
     type==='audio' ? '/v1/audio/speech' : '/v1/chat/completions';
   const body=type==='embedding' ? {model,input:'你好'} : type==='image' ? {model,prompt:'一幅山水画'} :
     type==='audio' ? {model,input:'你好',voice:'alloy'} : {model,messages:[{role:'user',content:'你好'}],stream:false};
-  $('paExample').textContent=['POST ' + $('paGatewayBase').value.trim().replace(/\/+$/,'') + path,
-    'Authorization: Bearer <个人 API Key>','Content-Type: application/json','',JSON.stringify(body,null,2)].join('\n');
+  const requestUrl=$('paGatewayBase').value.trim().replace(/\/+$/,'') + path;
+  $('paRequestAddress').textContent='请求地址：' + requestUrl;
+  $('paExample').textContent=['curl -X POST ' + shellSingleQuoted(requestUrl),
+    "  -H 'Authorization: Bearer <个人 API Key>'","  -H 'Content-Type: application/json'",
+    '  -d ' + shellSingleQuoted(JSON.stringify(body,null,2))].join(' \\\n');
 }
 
 function loadPersonalUsage(){
