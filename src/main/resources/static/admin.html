@@ -2297,12 +2297,39 @@ function statusTag(s){
   return `<span class="tag tag-gray">${s||'-'}</span>`;
 }
 
-function copyText(t){
-  navigator.clipboard.writeText(t).then(()=>toast('已复制到剪贴板')).catch(()=>{
-    const ta = document.createElement('textarea');
-    ta.value=t; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
-    toast('已复制到剪贴板');
-  });
+async function copyText(t){
+  if(!t){ toast('没有可复制的内容','info'); return false; }
+  let copied=false;
+  try{
+    if(navigator.clipboard?.writeText){
+      await navigator.clipboard.writeText(t);
+      copied=true;
+    }
+  }catch{
+    // Clipboard API 被禁用时，尝试使用选区复制。
+  }
+  if(!copied){
+    const activeElement=document.activeElement;
+    const container=activeElement?.closest('dialog, .modal') ?? document.body;
+    const field=document.createElement('textarea');
+    field.value=t;
+    field.readOnly=true;
+    field.style.cssText='position:fixed;top:0;left:0;opacity:0;pointer-events:none';
+    try{
+      container.appendChild(field);
+      field.focus({preventScroll:true});
+      field.select();
+      copied=document.execCommand?.('copy')===true;
+    }catch{
+      copied=false;
+    }finally{
+      field.remove();
+      if(activeElement instanceof HTMLElement) activeElement.focus({preventScroll:true});
+    }
+  }
+  if(copied) toast('已复制到剪贴板');
+  else toast('当前浏览器无法自动复制，请选中文字手动复制。','info');
+  return copied;
 }
 
 // ============================================================
