@@ -284,7 +284,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
       <span class="icon">🏢</span> 接入系统
     </div>
     <div class="nav-item" data-page="personal" onclick="navTo('personal')">
-      <span class="icon">👤</span> 个人接入
+      <span class="icon">👤</span> 个人用户
     </div>
     <div class="nav-label" style="margin-top:8px">运维</div>
     <div class="nav-item" data-page="audit" onclick="navTo('audit')">
@@ -434,21 +434,24 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
     <!-- ====== PAGE: 个人接入 ====== -->
     <div class="panel" id="page-personal">
       <div class="toolbar">
-        <div class="toolbar-left"><strong>个人接入</strong><span id="paState" class="hint"></span></div>
+        <div class="toolbar-left"><strong>个人用户</strong><span id="paState" class="hint"></span></div>
         <div class="toolbar-right">
           <input id="paSearch" aria-label="搜索 UM 或姓名" placeholder="搜索 UM 或姓名" oninput="searchPersonalAccess()"/>
           <select id="paEnabled" aria-label="个人接入状态" onchange="personalGo(1)">
             <option value="">全部状态</option><option value="true">启用</option><option value="false">停用</option>
           </select>
           <button id="paCreate" class="btn btn-primary" disabled data-api="POST /modelgate/personal-access/create"
-                  onclick="openPersonalProfile()">+ 开通个人接入</button>
+                  onclick="openPersonalProfile()">新增</button>
+          <button id="paImport" class="btn btn-neutral" disabled onclick="openPersonalBatch('import')">批量导入</button>
+          <button id="paBatchGrant" class="btn btn-neutral" disabled onclick="openPersonalBatch('grant')">批量授权模型（0）</button>
+          <button id="paClearSelection" class="btn btn-neutral" hidden onclick="clearPersonalSelection()">清空选择</button>
         </div>
       </div>
       <div class="card" style="padding:0">
         <div class="table-wrap">
           <table>
-            <thead><tr><th>UM</th><th>姓名</th><th>状态</th><th>备注</th><th>开通时间</th><th>操作</th></tr></thead>
-            <tbody id="paRows"><tr class="empty-row"><td colspan="6">加载中…</td></tr></tbody>
+            <thead><tr><th><input type="checkbox" id="paSelectPage" aria-label="选择本页用户" onchange="selectPersonalPage(this.checked)"/></th><th>UM</th><th>姓名</th><th>状态</th><th>备注</th><th>开通时间</th><th>操作</th></tr></thead>
+            <tbody id="paRows"><tr class="empty-row"><td colspan="7">加载中…</td></tr></tbody>
           </table>
           <div id="paPager"></div>
         </div>
@@ -1935,16 +1938,51 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
 
 <div class="modal-backdrop" id="paProfileModal">
   <div class="modal">
-    <div class="modal-header"><h3 id="paProfileTitle">开通个人接入</h3>
+    <div class="modal-header"><h3 id="paProfileTitle">新增个人用户</h3>
       <button class="modal-close" onclick="closeModal('paProfileModal')">×</button></div>
     <div class="modal-body">
-      <div class="form-group"><label for="paUm">UM</label><input id="paUm" maxlength="64" placeholder="已核对的 UM 号"/>
-        <span class="hint">不需要录入 appId；开通后 UM 不可更换。</span></div>
+      <div class="form-group"><label for="paUm">UM</label><input id="paUm" maxlength="64" placeholder="请输入 UM 号"
+          oninput="resetPersonalCms()" onblur="lookupPersonalCms(false)" onkeydown="if(event.key==='Enter') lookupPersonalCms(true)"/>
+        <button id="paCmsLookup" class="btn btn-neutral btn-sm" type="button" onclick="lookupPersonalCms(true)">查询 CMS 人员</button>
+        <span id="paCmsHint" class="hint" aria-live="polite"></span></div>
       <div class="form-group"><label for="paName">姓名</label><input id="paName" maxlength="64"/></div>
       <div class="form-group"><label for="paRemark">备注</label><textarea id="paRemark" maxlength="512" rows="2"></textarea></div>
     </div>
     <div class="modal-footer"><button class="btn btn-neutral" onclick="closeModal('paProfileModal')">取消</button>
       <button id="paProfileSave" class="btn btn-primary" onclick="savePersonalProfile()">保存</button></div>
+  </div>
+</div>
+<div class="modal-backdrop" id="paBatchModal">
+  <div class="modal modal-wide">
+    <div class="modal-header"><h3 id="paBatchTitle">批量处理</h3><button class="modal-close" onclick="closePersonalBatch()">×</button></div>
+    <div class="modal-body">
+      <div id="paImportPanel">
+        <p>上传 UTF-8 CSV，每行填写 UM 和姓名，最多 100 行。仅新增用户，已有 UM 跳过。</p>
+        <a href="data:text/csv;charset=utf-8,%EF%BB%BFUM%2C%E5%A7%93%E5%90%8D%0D%0A" download="个人用户导入模板.csv">下载模板</a>
+        <input type="file" id="paImportFile" accept=".csv,text/csv" aria-label="个人用户 CSV"/>
+      </div>
+      <div id="paBatchGrantPanel">
+        <p id="paBatchUsers"></p>
+        <div class="form-group"><label for="paBatchModelSearch">搜索授权模型</label>
+          <input id="paBatchModelSearch" oninput="searchPersonalBatchModels()" placeholder="输入名称或模型 ID"/>
+          <div id="paBatchModels" style="max-height:140px;overflow:auto"></div>
+          <p id="paBatchModelCount" class="hint"></p>
+        </div>
+        <div class="flex gap-8" style="flex-wrap:wrap">
+          <label>QPS <input id="paBatchQps" type="number" min="0" value="2" style="width:80px"/></label>
+          <label>日请求 <input id="paBatchDaily" type="number" min="0" value="200" style="width:95px"/></label>
+          <label>月 Token <input id="paBatchMonthly" type="number" min="0" value="100000" style="width:115px"/></label>
+          <label>有效期 <input id="paBatchExpiry" type="datetime-local"/></label>
+        </div>
+        <p class="hint">每次最多 100 个用户与模型组合。已有授权保留原配额、有效期和状态。0 表示不限。</p>
+      </div>
+      <p id="paBatchResult" role="status"></p>
+      <div id="paBatchItems" style="max-height:250px;overflow:auto"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-neutral" onclick="closePersonalBatch()">关闭</button>
+      <button id="paBatchSubmit" class="btn btn-primary" onclick="submitPersonalBatch()">确认</button>
+    </div>
   </div>
 </div>
 <div class="modal-backdrop" id="paDetailModal">
@@ -2081,7 +2119,7 @@ let editingModelId = null; // null=新增, string=编辑
 let editingOriginalModelId = null;
 let currentStep = 1;
 
-const PAGE_TITLES = {models:'模型管理', services:'服务管理', apps:'接入系统', personal:'个人接入', audit:'审计日志', payload:'报文记录', settings:'网关配置'};
+const PAGE_TITLES = {models:'模型管理', services:'服务管理', apps:'接入系统', personal:'个人用户', audit:'审计日志', payload:'报文记录', settings:'网关配置'};
 
 // ============================================================
 // ===== 公共层 · 工具函数
@@ -6526,6 +6564,9 @@ const DEMO_CONFIG = [
 // ============================================================
 const pa = {enabled:false, rows:[], person:null, grants:[], keys:[], editing:false, listVersion:0, modelVersion:0, detailVersion:0,
   addressVersion:0,addressEdited:false,addressLoading:false};
+const paSelected=new Map();
+const paBatch={mode:null, users:[], models:new Map(), options:[], version:0, busy:false};
+let paCmsVersion=0, paCmsPerson=null;
 
 async function personalAccessRequest(path, method='GET', body){
   const response = await fetch(apiUrl('/personal-access' + path), {
@@ -6548,6 +6589,8 @@ function loadPersonalAccessMeta(){
   return personalAccessAction(async()=>{
     pa.enabled = (await personalAccessRequest('/meta')).enabled === true;
     $('paCreate').disabled = !pa.enabled;
+    $('paImport').disabled = !pa.enabled;
+    updatePersonalSelection();
     $('paState').textContent = pa.enabled ? '功能已启用' : '未启用，仅允许查询、停用和撤销';
   });
 }
@@ -6560,7 +6603,9 @@ function loadPersonalAccess(){
     if(version !== pa.listVersion) return;
     pa.rows = applyPage('personal', data || {});
     $('paRows').innerHTML = pa.rows.map((p,i)=>
-      '<tr><td><code>' + escapeHtml(p.um) + '</code></td><td>' + escapeHtml(p.name) +
+      '<tr><td><input type="checkbox" data-pa-select aria-label="选择 ' + escapeHtml(p.um) + '" ' +
+      (p.enabled ? (paSelected.has(p.um) ? 'checked ' : '') : 'disabled ') +
+      'onchange="selectPersonalUser(' + i + ',this.checked)"/></td><td><code>' + escapeHtml(p.um) + '</code></td><td>' + escapeHtml(p.name) +
       '</td><td>' + (p.enabled ? '启用' : '停用') + '</td><td>' + escapeHtml(p.remark || '-') +
       '</td><td>' + escapeHtml(fmtTime(p.createTime)) +
       '</td><td><div class="flex gap-8"><button class="btn btn-neutral btn-sm" onclick="openPersonalAccess(' + i +
@@ -6568,7 +6613,12 @@ function loadPersonalAccess(){
       ')">编辑</button><button class="btn btn-neutral btn-sm" onclick="openPersonalAccess(' + i +
       ',\'usage\')">用量</button><button class="btn btn-warning btn-sm" onclick="togglePersonalAccount(' + i +
       ')">' + (p.enabled ? '停用' : '启用') + '</button></div></td></tr>'
-    ).join('') || '<tr class="empty-row"><td colspan="6">暂无个人接入</td></tr>';
+    ).join('') || '<tr class="empty-row"><td colspan="7">暂无个人用户</td></tr>';
+    for(const row of pa.rows) if(paSelected.has(row.um)){
+      if(row.enabled) paSelected.set(row.um,row);
+      else paSelected.delete(row.um);
+    }
+    updatePersonalSelection();
     renderPager('personal','paPager','personal');
   });
 }
@@ -6581,17 +6631,23 @@ function openPersonalProfile(index){
   const row = pa.rows[index];
   pa.editing = !!row;
   if(!row && !pa.enabled) return toast('个人接入尚未启用','error');
-  $('paProfileTitle').textContent = row ? '编辑个人资料' : '开通个人接入';
+  $('paProfileTitle').textContent = row ? '编辑个人资料' : '新增个人用户';
   $('paUm').value = row?.um || '';
   $('paUm').disabled = !!row;
   $('paName').value = row?.name || '';
   $('paRemark').value = row?.remark || '';
+  $('paCmsLookup').hidden=!!row;
+  $('paName').readOnly=!row;
+  resetPersonalCms();
   openModal('paProfileModal');
 }
 
 function savePersonalProfile(){
   return personalAccessAction(async()=>{
     const body = {um:$('paUm').value.trim(), name:$('paName').value.trim(), remark:$('paRemark').value};
+    if(!pa.editing && (!paCmsPerson || paCmsPerson.um.toLowerCase()!==body.um.toLowerCase())){
+      throw new Error('请先核对 CMS 人员');
+    }
     if(!body.um || !body.name) throw new Error('请填写 UM 和姓名');
     $('paProfileSave').disabled=true;
     try{
@@ -6600,6 +6656,183 @@ function savePersonalProfile(){
       toast('个人资料已保存');
       await loadPersonalAccess();
     }finally{ $('paProfileSave').disabled=false; }
+  });
+}
+
+function resetPersonalCms(){
+  paCmsVersion++;
+  paCmsPerson=null;
+  $('paCmsHint').textContent='';
+  if(!pa.editing) $('paName').value='';
+  $('paProfileSave').disabled=!pa.editing;
+}
+
+async function lookupPersonalCms(allowRemote){
+  const um=$('paUm').value.trim().toLowerCase();
+  if(pa.editing || !um || !$('paProfileModal').classList.contains('open')) return;
+  if(!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(um)){
+    $('paCmsHint').textContent='UM 格式有误';
+    return;
+  }
+  if(paCmsPerson?.um.toLowerCase()===um) return;
+  const version=++paCmsVersion;
+  $('paCmsHint').textContent='正在查询 CMS 人员…';
+  try{
+    // 内置管理页通过同域 SLB 调用 user 服务，由该入口按菜单码鉴权。
+    const path=allowRemote ? '/resolve-org' : '/org';
+    const response=await fetch('/api/user/cms-user' + path + '?um=' + encodeURIComponent(um),{
+      method:allowRemote ? 'POST' : 'GET',headers:{...hdrs(),Authorization:'c90022500','Sys-Source':'96008'},cache:'no-store'
+    });
+    const result=await response.json();
+    if(version!==paCmsVersion || !$('paProfileModal').classList.contains('open')) return;
+    if(!response.ok || !isOk(result)) throw new Error(errMsg(result));
+    const person=result.data;
+    if(!person?.found || person.um?.toLowerCase()!==um || !person.name?.trim()){
+      $('paCmsHint').textContent=allowRemote ? 'CMS 未找到匹配人员' : '本地未命中，可点击「查询 CMS 人员」实时拉取';
+      return;
+    }
+    paCmsPerson=person;
+    $('paName').value=person.name;
+    $('paCmsHint').textContent=[person.center,person.team,person.groupName].filter(Boolean).join(' / ') || '已核对 CMS 人员';
+    $('paProfileSave').disabled=false;
+  }catch(e){
+    if(version===paCmsVersion) $('paCmsHint').textContent=e.message || 'CMS 查询失败，请重试';
+  }
+}
+
+function updatePersonalSelection(){
+  const enabled=pa.rows.filter(row=>row.enabled);
+  $('paSelectPage').disabled=!enabled.length;
+  $('paSelectPage').checked=enabled.length>0 && enabled.every(row=>paSelected.has(row.um));
+  $('paSelectPage').indeterminate=!$('paSelectPage').checked && enabled.some(row=>paSelected.has(row.um));
+  $('paBatchGrant').disabled=!pa.enabled || !paSelected.size;
+  $('paClearSelection').hidden=!paSelected.size;
+  $('paBatchGrant').textContent='批量授权模型（' + paSelected.size + '）';
+}
+
+function selectPersonalUser(index,checked){
+  const row=pa.rows[index];
+  if(!row?.enabled) return;
+  if(checked) paSelected.set(row.um,row);
+  else paSelected.delete(row.um);
+  updatePersonalSelection();
+}
+
+function selectPersonalPage(checked){
+  pa.rows.forEach((row,index)=>{
+    if(row.enabled) selectPersonalUser(index,checked);
+  });
+  document.querySelectorAll('#paRows [data-pa-select]:enabled').forEach(box=>box.checked=checked);
+}
+
+function clearPersonalSelection(){
+  paSelected.clear();
+  document.querySelectorAll('#paRows [data-pa-select]').forEach(box=>box.checked=false);
+  updatePersonalSelection();
+}
+
+function openPersonalBatch(mode){
+  if(!pa.enabled || paBatch.busy || (mode==='grant' && !paSelected.size)) return;
+  paBatch.mode=mode;
+  paBatch.users=[...paSelected.values()];
+  paBatch.models.clear();
+  paBatch.options=[];
+  $('paBatchTitle').textContent=mode==='import' ? '批量导入个人用户' : '批量授权模型';
+  $('paImportPanel').hidden=mode!=='import';
+  $('paBatchGrantPanel').hidden=mode!=='grant';
+  $('paImportFile').value='';
+  $('paBatchResult').textContent='';
+  $('paBatchItems').replaceChildren();
+  $('paBatchSubmit').disabled=false;
+  $('paBatchSubmit').textContent=mode==='import' ? '确认导入' : '确认授权';
+  $('paBatchUsers').textContent='已选用户：' + paBatch.users.map(user=>user.name + '（' + user.um + '）').join('、');
+  $('paBatchQps').value=2;
+  $('paBatchDaily').value=200;
+  $('paBatchMonthly').value=100000;
+  $('paBatchExpiry').value='';
+  $('paBatchModelSearch').value='';
+  $('paBatchModels').replaceChildren();
+  $('paBatchModelCount').textContent='';
+  openModal('paBatchModal');
+  if(mode==='grant') loadPersonalBatchModels();
+}
+
+function closePersonalBatch(){
+  if(paBatch.busy) return;
+  paBatch.version++;
+  closeModal('paBatchModal');
+}
+
+function loadPersonalBatchModels(){
+  const version=++paBatch.version;
+  return personalAccessAction(async()=>{
+    const data=await personalAccessRequest('/auth/models' + personalAccessQuery({
+      pageIndex:1,pageSize:50,keyword:$('paBatchModelSearch').value.trim()
+    }));
+    if(version!==paBatch.version || paBatch.mode!=='grant') return;
+    paBatch.options=data.items || [];
+    $('paBatchModels').innerHTML=paBatch.options.map((model,index)=>
+      '<label style="display:block"><input type="checkbox" ' + (paBatch.models.has(model.modelId) ? 'checked ' : '') +
+      'onchange="selectPersonalBatchModel(' + index + ',this.checked)"/> ' + escapeHtml(model.modelName || model.modelId) +
+      '（' + escapeHtml(model.modelId) + '）</label>').join('') || '未找到可授权模型';
+  });
+}
+const searchPersonalBatchModels=debounce(loadPersonalBatchModels,300);
+
+function selectPersonalBatchModel(index,checked){
+  const model=paBatch.options[index];
+  if(!model) return;
+  if(checked) paBatch.models.set(model.modelId,model);
+  else paBatch.models.delete(model.modelId);
+  $('paBatchModelCount').textContent='已选：' + [...paBatch.models.values()].map(model=>model.modelName || model.modelId).join('、') +
+    '。共 ' + (paBatch.users.length * paBatch.models.size) + ' 个组合。';
+}
+
+async function readPersonalImportFile(){
+  const file=$('paImportFile').files[0];
+  if(!file || !/\.csv$/i.test(file.name) || file.size>64*1024) throw new Error('请选择不超过 64 KB 的 CSV 文件');
+  const lines=(await file.text()).replace(/^\uFEFF/,'').split(/\r?\n/).filter(line=>line.trim());
+  if(!/^\s*"?UM"?\s*,\s*"?姓名"?\s*$/i.test(lines.shift() || '')) throw new Error('表头应为 UM,姓名，请使用导入模板');
+  if(!lines.length || lines.length>100) throw new Error('请填写 1 至 100 行用户');
+  return lines.map((line,index)=>{
+    const row=line.match(/^\s*"?([A-Za-z0-9][A-Za-z0-9._-]{0,63})"?\s*,\s*(?:"([^"]+)"|([^",]+))\s*$/);
+    const name=(row?.[2] ?? row?.[3] ?? '').trim();
+    if(!row || !name || name.length>64) throw new Error('第 ' + (index+2) + ' 行的 UM 或姓名格式有误');
+    return {um:row[1],name};
+  });
+}
+
+function submitPersonalBatch(){
+  if(paBatch.busy || $('paBatchSubmit').disabled) return;
+  return personalAccessAction(async()=>{
+    paBatch.busy=true;
+    $('paBatchSubmit').disabled=true;
+    let done=false;
+    try{
+      const importing=paBatch.mode==='import';
+      let body;
+      if(importing) body={users:await readPersonalImportFile()};
+      else{
+        const modelIds=[...paBatch.models.keys()];
+        if(!modelIds.length || modelIds.length>30 || paBatch.users.length*modelIds.length>100) throw new Error('请至少选择一个模型，单次最多 30 个模型和 100 个组合');
+        body={ums:paBatch.users.map(user=>user.um),modelIds,
+          qpsLimit:$('paBatchQps').valueAsNumber,dailyLimit:$('paBatchDaily').valueAsNumber,
+          monthlyTokens:$('paBatchMonthly').valueAsNumber,expiresAt:personalAccessTime('paBatchExpiry')};
+        if(![body.qpsLimit,body.dailyLimit,body.monthlyTokens].every(n=>Number.isSafeInteger(n)&&n>=0)) throw new Error('请填写非负整数额度');
+      }
+      const result=await personalAccessRequest(importing ? '/import' : '/auth/batch','POST',body);
+      $('paBatchResult').textContent='新增 ' + result.added + '，跳过 ' + result.skipped + '，失败 ' + result.failed + '。';
+      $('paBatchItems').replaceChildren(...result.items.map(item=>{
+        const line=document.createElement('p');
+        line.textContent=[item.um,item.modelId,item.message].filter(Boolean).join(' · ');
+        return line;
+      }));
+      done=true;
+      await loadPersonalAccess();
+    }finally{
+      paBatch.busy=false;
+      $('paBatchSubmit').disabled=done;
+    }
   });
 }
 
@@ -6890,7 +7123,11 @@ function loadPersonalUsage(){
 // 点遮罩关弹窗。挂在这里而不是公共层：它是一次性副作用，不是可复用函数。
 // 必须只匹配 .modal-backdrop（内层 .modal 不能挂，否则点弹窗内容也会关掉）。
 document.querySelectorAll('.modal-backdrop').forEach(el=>{
-  el.addEventListener('click', e=>{ if(e.target===el) closeModal(el.id); });
+  el.addEventListener('click', e=>{
+    if(e.target!==el) return;
+    if(el.id==='paBatchModal') closePersonalBatch();
+    else closeModal(el.id);
+  });
 });
 
 window.onload = () => {

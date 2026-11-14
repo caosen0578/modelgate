@@ -111,6 +111,42 @@ class PersonalAccessIntegrationTest {
     }
 
     @Test
+    void importsProfilesSeparatelyAndAddsOnlyMissingModelGrants() {
+        String model = "mgqa-batch-model";
+        String first = "MGQA_BATCH_A";
+        String second = "MGQA_BATCH_B";
+        var jdbc = new JdbcTemplate(dataSource);
+        jdbc.update("INSERT INTO mg_model (model_id, model_name, provider, upstream_url) VALUES (?, ?, ?, ?)",
+                model, "批量验收模型", "openai", "http://127.0.0.1:" + upstream.port());
+        var users = List.of(Map.of("um", first, "name", "测试甲"), Map.of("um", second, "name", "测试乙"),
+                Map.of("um", first.toLowerCase(java.util.Locale.ROOT), "name", "重复甲"));
+        client().post().uri(PERSONAL + "/import").bodyValue(Map.of("users", users)).exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.data.added").isEqualTo(2).jsonPath("$.data.skipped").isEqualTo(1);
+        client().get().uri(PERSONAL + "/credentials/list?um=" + first).exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.data.length()").isEqualTo(0);
+        client().get().uri(PERSONAL + "/auth/list?um=" + first).exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.data.length()").isEqualTo(0);
+        client().put().uri(PERSONAL + "/auth/save").bodyValue(Map.of("um", first, "modelId", model, "qpsLimit", 9))
+                .exchange().expectStatus().isOk();
+        client().patch().uri(PERSONAL + "/auth/toggle?um=" + first + "&modelId=" + model + "&enabled=false")
+                .exchange().expectStatus().isOk();
+        var grant = Map.of("ums", List.of(first, second), "modelIds", List.of(model), "qpsLimit", 3);
+        client().post().uri(PERSONAL + "/auth/batch").bodyValue(grant).exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.data.added").isEqualTo(1).jsonPath("$.data.skipped").isEqualTo(1);
+        client().get().uri(PERSONAL + "/auth/list?um=" + first).exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.data[0].qpsLimit").isEqualTo(9).jsonPath("$.data[0].enabled").isEqualTo(false);
+        client().get().uri(PERSONAL + "/auth/list?um=" + second).exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.data[0].qpsLimit").isEqualTo(3);
+        client().post().uri(PERSONAL + "/auth/batch").bodyValue(grant).exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.data.added").isEqualTo(0).jsonPath("$.data.skipped").isEqualTo(2);
+        // 其余验收场景复用同一个隔离库，恢复该场景录入的资料。
+        var appIds = jdbc.queryForList("SELECT app_id FROM mg_app WHERE person_um IN (?, ?)", String.class, first, second);
+        for (String id : appIds) jdbc.update("DELETE FROM mg_app_model_auth WHERE app_id = ?", id);
+        jdbc.update("DELETE FROM mg_app WHERE person_um IN (?, ?)", first, second);
+        jdbc.update("DELETE FROM mg_model WHERE model_id = ?", model);
+    }
+
+    @Test
     void recordsRealUsageByUmWithoutChangingSystemUsage() throws Exception {
         JsonNode seed;
         try (var input = new ClassPathResource("personal-access/scenario.json").getInputStream()) {

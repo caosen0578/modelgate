@@ -128,7 +128,7 @@ public class ModelAuthService {
                 .orElse(false);
     }
 
-    public void addAuthorizations(String appId, List<String> modelIds, AppModelAuthEntity template) {
+    public int addAuthorizations(String appId, List<String> modelIds, AppModelAuthEntity template) {
         int added = 0;
         int skipped = 0;
         for (String modelId : modelIds) {
@@ -160,6 +160,7 @@ public class ModelAuthService {
         log.info("[ModelAuth] 新增授权: appId={}, 请求={} 个, 新增={} 个, 跳过={} 个, qps={}, daily={}, monthlyTokens={}, expiresAt={}",
                 appId, modelIds.size(), added, skipped,
                 template.getQpsLimit(), template.getDailyLimit(), template.getMonthlyTokens(), template.getExpiresAt());
+        return added;
     }
 
     /**

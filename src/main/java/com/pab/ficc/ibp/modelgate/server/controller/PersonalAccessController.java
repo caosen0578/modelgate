@@ -57,6 +57,20 @@ public class PersonalAccessController {
         return read(() -> personal.create(request));
     }
 
+    @Operation(summary = "批量导入个人用户")
+    @PostMapping("/import")
+    public Mono<Result<PersonalAccessViews.BatchResult>> importUsers(
+            @RequestBody @Valid PersonalAccessRequests.ImportUsers request) {
+        return read(() -> personal.importUsers(request));
+    }
+
+    @Operation(summary = "批量新增个人模型授权")
+    @PostMapping("/auth/batch")
+    public Mono<Result<PersonalAccessViews.BatchResult>> batchGrant(
+            @RequestBody @Valid PersonalAccessRequests.BatchGrant request) {
+        return read(() -> personal.batchGrant(request));
+    }
+
     @Operation(summary = "更新个人姓名与备注（不修改 UM）")
     @PutMapping(UrlConstant.UPDATE)
     public Mono<Result<PersonalAccessViews.Profile>> update(@RequestBody @Valid PersonalAccessRequests.Profile request) {

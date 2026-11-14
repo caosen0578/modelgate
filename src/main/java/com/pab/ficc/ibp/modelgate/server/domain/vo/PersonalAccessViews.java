@@ -23,6 +23,19 @@ public final class PersonalAccessViews {
 
     public record IssuedKey(Long id, String apiKey, LocalDateTime expiresAt) {}
 
+    public record BatchItem(String um, String modelId, String status, String message) {}
+    public record BatchResult(int added, int skipped, int failed, List<BatchItem> items) {
+        public static BatchResult of(List<BatchItem> items) {
+            int added = 0;
+            int skipped = 0;
+            for (BatchItem item : items) {
+                if ("ADDED".equals(item.status())) added++;
+                if ("SKIPPED".equals(item.status())) skipped++;
+            }
+            return new BatchResult(added, skipped, items.size() - added - skipped, items);
+        }
+    }
+
     public record ModelOption(String modelId, String modelName, String modelType) {
         public static ModelOption of(ModelInstanceEntity model) {
             return new ModelOption(model.getModelId(), model.getModelName(), model.getModelType());

@@ -26,6 +26,8 @@ import org.springframework.stereotype.Service;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -115,6 +117,31 @@ public class PersonalAccessService {
         return detail(app.getPersonUm());
     }
 
+    public PersonalAccessViews.BatchResult importUsers(PersonalAccessRequests.ImportUsers request) {
+        requireEnabled();
+        var results = new ArrayList<PersonalAccessViews.BatchItem>();
+        var seen = new HashSet<String>();
+        for (var user : request.users()) {
+            String um = user.um();
+            try {
+                um = AppSubject.normalizeUm(um);
+                if (!seen.add(um)) {
+                    results.add(new PersonalAccessViews.BatchItem(um, null, "SKIPPED", "文件中 UM 重复"));
+                    continue;
+                }
+                create(user);
+                results.add(new PersonalAccessViews.BatchItem(um, null, "ADDED", "已新增"));
+            } catch (BusinessException e) {
+                String status = e.getErrorCode() == ErrorCode.RESOURCE_ALREADY_EXISTS ? "SKIPPED" : "FAILED";
+                results.add(new PersonalAccessViews.BatchItem(um, null, status, e.getMessage()));
+            } catch (RuntimeException e) {
+                log.warn("[PersonalAccess] 导入失败: um={}", um, e);
+                results.add(new PersonalAccessViews.BatchItem(um, null, "FAILED", "写入失败，请核对后重试"));
+            }
+        }
+        return PersonalAccessViews.BatchResult.of(results);
+    }
+
     public void toggle(String um, boolean active) {
         if (active) requireEnabled();
         String appId = findPerson(um).getAppId();
@@ -166,18 +193,57 @@ public class PersonalAccessService {
         String modelId = request.modelId();
         requireActiveModel(modelId);
         if (request.expiresAt() != null) requireFuture(request.expiresAt());
-        AppModelAuthEntity values = new AppModelAuthEntity();
-        values.setQpsLimit(request.qpsLimit() == null ? 2 : request.qpsLimit());
-        values.setDailyLimit(request.dailyLimit() == null ? 200 : request.dailyLimit());
-        values.setMonthlyTokens(request.monthlyTokens() == null ? 100_000L : request.monthlyTokens());
-        values.setExpiresAt(request.expiresAt());
-        values.setPayloadLogEnabled(false);
+        var values = grantValues(request.qpsLimit(), request.dailyLimit(), request.monthlyTokens(), request.expiresAt());
         if (modelAuthService.listByAppId(appId).stream().anyMatch(a -> modelId.equals(a.getModelId()))) {
             // 修改配额不会隐式启用一条已停用的授权。
             modelAuthService.update(appId, modelId, values);
         } else {
             modelAuthService.addAuthorizations(appId, List.of(modelId), values);
         }
+    }
+
+    public PersonalAccessViews.BatchResult batchGrant(PersonalAccessRequests.BatchGrant request) {
+        requireEnabled();
+        var ums = request.ums().stream().map(AppSubject::normalizeUm).distinct().toList();
+        var modelIds = request.modelIds().stream().distinct().toList();
+        if (ums.size() * modelIds.size() > 100) {
+            throw new BusinessException(ErrorCode.INVALID_PARAMETER, "每次最多提交 100 个用户与模型的组合");
+        }
+        if (request.expiresAt() != null) requireFuture(request.expiresAt());
+        // 参数校验在写入前完成，避免提交了不存在或停用模型的请求时出现部分授权。
+        modelIds.forEach(this::requireActiveModel);
+        var values = grantValues(request.qpsLimit(), request.dailyLimit(), request.monthlyTokens(), request.expiresAt());
+        var results = new ArrayList<PersonalAccessViews.BatchItem>();
+        for (String um : ums) {
+            var app = findByUm(um).orElse(null);
+            for (String modelId : modelIds) {
+                if (app == null || !Boolean.TRUE.equals(app.getEnabled())) {
+                    results.add(new PersonalAccessViews.BatchItem(um, modelId, "SKIPPED", "用户不存在或已停用"));
+                    continue;
+                }
+                try {
+                    boolean added = modelAuthService.addAuthorizations(app.getAppId(), List.of(modelId), values) == 1;
+                    results.add(new PersonalAccessViews.BatchItem(um, modelId, added ? "ADDED" : "SKIPPED",
+                            added ? "已授权" : "已有授权，保留原配置"));
+                } catch (DuplicateKeyException e) {
+                    results.add(new PersonalAccessViews.BatchItem(um, modelId, "SKIPPED", "已有授权，保留原配置"));
+                } catch (RuntimeException e) {
+                    log.warn("[PersonalAccess] 批量授权写入失败: appId={}, modelId={}", app.getAppId(), modelId, e);
+                    results.add(new PersonalAccessViews.BatchItem(um, modelId, "FAILED", "写入失败，请核对后重试"));
+                }
+            }
+        }
+        return PersonalAccessViews.BatchResult.of(results);
+    }
+
+    private static AppModelAuthEntity grantValues(Integer qps, Integer daily, Long monthly, LocalDateTime expiresAt) {
+        var values = new AppModelAuthEntity();
+        values.setQpsLimit(qps == null ? 2 : qps);
+        values.setDailyLimit(daily == null ? 200 : daily);
+        values.setMonthlyTokens(monthly == null ? 100_000L : monthly);
+        values.setExpiresAt(expiresAt);
+        values.setPayloadLogEnabled(false);
+        return values;
     }
 
     public void toggleGrant(String um, String modelId, boolean active) {
