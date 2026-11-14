@@ -281,10 +281,10 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
       <span class="icon">🔌</span> 服务管理
     </div>
     <div class="nav-item" data-page="apps" onclick="navTo('apps')">
-      <span class="icon">🏢</span> 接入系统
+      <span class="icon">🏢</span> 接入应用
     </div>
     <div class="nav-item" data-page="personal" onclick="navTo('personal')">
-      <span class="icon">👤</span> 个人用户
+      <span class="icon">👤</span> 接入用户
     </div>
     <div class="nav-label" style="margin-top:8px">运维</div>
     <div class="nav-item" data-page="audit" onclick="navTo('audit')">
@@ -349,7 +349,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
     </div>
 
     <!-- ====== PAGE: 服务管理 ====== -->
-    <!-- 与「模型管理」平级的第二类上游目标：接入系统的普通 HTTP / SSE 接口借本网关做鉴权与配额。
+    <!-- 与「模型管理」平级的第二类上游目标：接入应用的普通 HTTP / SSE 接口借本网关做鉴权与配额。
          对外路径固定为 /svc/{服务编码}/**，网关剥掉前缀后把剩余路径拼到 upstream_url 之后，
          接入方内部接口路径一行都不用改。 -->
     <div class="panel" id="page-services">
@@ -393,7 +393,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
       </div>
     </div>
 
-    <!-- ====== PAGE: 接入系统 ====== -->
+    <!-- ====== PAGE: 接入应用 ====== -->
     <div class="panel" id="page-apps">
       <div class="toolbar">
         <div class="toolbar-left">
@@ -401,7 +401,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
         </div>
         <div class="toolbar-right">
           <input type="text" id="appSearch" placeholder="搜索系统 / 应用 ID / 名称..." style="width:240px" oninput="searchApps()"/>
-          <button class="btn btn-primary" data-api="POST /modelgate/apps/create" onclick="openAppModal()">+ 新增系统</button>
+          <button class="btn btn-primary" data-api="POST /modelgate/apps/create" onclick="openAppModal()">+ 新增应用</button>
         </div>
       </div>
       <div class="card" style="padding:0;overflow:hidden">
@@ -431,10 +431,10 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
       </div>
     </div>
 
-    <!-- ====== PAGE: 个人接入 ====== -->
+    <!-- ====== PAGE: 接入用户 ====== -->
     <div class="panel" id="page-personal">
       <div class="toolbar">
-        <div class="toolbar-left"><strong>个人用户</strong><span id="paState" class="hint"></span></div>
+        <div class="toolbar-left"><strong>接入用户</strong><span id="paState" class="hint"></span></div>
         <div class="toolbar-right">
           <input id="paSearch" aria-label="搜索 UM 或姓名" placeholder="搜索 UM 或姓名" oninput="searchPersonalAccess()"/>
           <select id="paEnabled" aria-label="个人接入状态" onchange="personalGo(1)">
@@ -494,7 +494,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
                  所以这里把下拉做成"选了就回填输入框"，输入框是唯一的提交来源。 -->
             <select id="auditApp" style="width:140px" onchange="pickAuditApp(this.value)"><option value="">全部系统</option></select>
             <input type="text" id="auditAppId" placeholder="appId（精确）" style="width:150px"
-                   oninput="syncAuditAppSelect()" title="接入系统 appId，精确匹配"/>
+                   oninput="syncAuditAppSelect()" title="接入应用 appId，精确匹配"/>
             <input type="text" id="auditAppCode" placeholder="应用编码（精确）" style="width:140px"
                    title="mg_app.app_code，精确匹配。一个编码可能对应多个应用，会一并查出；与 appId 同时填写按「与」处理"/>
             <select id="auditModel" style="width:140px"><option value="">全部模型</option></select>
@@ -563,7 +563,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
             <!-- 与审计页同一套逻辑：下拉只负责回填 appId 输入框，输入框才是提交来源。理由见审计页注释。 -->
             <select id="pl_app" style="width:150px" onchange="pickPayloadApp(this.value)"><option value="">全部系统</option></select>
             <input type="text" id="pl_appId" placeholder="appId（精确）" style="width:150px"
-                   oninput="syncPayloadAppSelect()" title="接入系统 appId，精确匹配"/>
+                   oninput="syncPayloadAppSelect()" title="接入应用 appId，精确匹配"/>
             <input type="text" id="pl_appCode" placeholder="应用编码（精确）" style="width:140px"
                    title="mg_app.app_code，精确匹配。一个编码可能对应多个应用，会一并查出；与 appId 同时填写按「与」处理"/>
             <select id="pl_model" style="width:150px"><option value="">全部模型</option></select>
@@ -767,7 +767,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
       </div>
       <div class="flex gap-8 mt-12">
         <button class="btn btn-primary" data-api="PUT /modelgate/apps/update" onclick="saveAppInfo()">保存修改</button>
-        <button class="btn btn-danger" data-api="DELETE /modelgate/apps/delete" onclick="deleteApp()">删除系统</button>
+        <button class="btn btn-danger" data-api="DELETE /modelgate/apps/delete" onclick="deleteApp()">删除应用</button>
       </div>
     </div>
 
@@ -1044,12 +1044,12 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
     </div>
     <div class="modal-body">
       <div style="font-size:12px;color:#64748b;margin-bottom:10px">
-        「生效」= 接入系统已启用 且 授权已启用 且 未过期。三者任一不满足，该系统实际调不通本模型。
+        「生效」= 接入应用已启用 且 授权已启用 且 未过期。三者任一不满足，该应用实际调不通本模型。
       </div>
       <table style="width:100%">
         <thead>
           <tr>
-            <th>接入系统</th><th>系统编码</th><th>负责人</th>
+            <th>接入应用</th><th>系统编码</th><th>负责人</th>
             <th>生效</th><th>QPS</th><th>日调用</th><th>月 Token</th><th>过期时间</th>
           </tr>
         </thead>
@@ -1128,7 +1128,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
             （可能重复下单/建单）。网关无法替业务判断哪个接口是幂等的。
             回放<b>直连上游</b>，跳过凭证鉴权 / 访问控制 / 授权 / 配额——
             所以它复现不了 403、429 这类被网关拦下的问题；那类请用
-            「接入系统 → 凭证管理 → 接入示例 → 测试连通」。
+            「接入应用 → 凭证管理 → 接入示例 → 测试连通」。
           </div>
 
           <!-- 服务流量才需要方法与路径：模型侧上游路径由 mg_model 自己算得出 -->
@@ -1396,7 +1396,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
            所以服务流量稳态下比模型流量少一次 Redis 往返。 -->
       <div class="hint" style="margin-top:10px">
         报文留档开关在<b>服务本身</b>（服务管理页），不在这里——服务侧的粒度是"每个接口录入时决定记不记"，
-        与模型侧按接入系统逐条控制不同。
+        与模型侧按接入应用逐条控制不同。
       </div>
     </div>
     <div class="modal-footer">
@@ -1538,11 +1538,11 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
     </div>
     <div class="modal-body">
       <div style="font-size:12px;color:#6b7280;margin-bottom:8px">
-        「生效」= 接入系统已启用 且 授权已启用 且 未过期。三者任一不满足，该系统实际调不通本服务。
+        「生效」= 接入应用已启用 且 授权已启用 且 未过期。三者任一不满足，该应用实际调不通本服务。
       </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>接入系统</th><th>系统编码</th><th>负责人</th><th>QPS</th><th>日限额</th><th>过期时间</th><th>生效</th></tr></thead>
+          <thead><tr><th>接入应用</th><th>系统编码</th><th>负责人</th><th>QPS</th><th>日限额</th><th>过期时间</th><th>生效</th></tr></thead>
           <tbody id="serviceAppsTbody"><tr class="empty-row"><td colspan="7">加载中…</td></tr></tbody>
         </table>
       </div>
@@ -1551,11 +1551,11 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
   </div>
 </div>
 
-<!-- ========== MODAL: 新增接入系统 ========== -->
+<!-- ========== MODAL: 新增接入应用 ========== -->
 <div class="modal-backdrop" id="appModal">
   <div class="modal">
     <div class="modal-header">
-      <h3>新增接入系统</h3>
+      <h3>新增接入应用</h3>
       <button class="modal-close" onclick="closeModal('appModal')">×</button>
     </div>
     <div class="modal-body">
@@ -1837,7 +1837,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
           </div>
 
           <!-- 凭证说明（原「调用凭证（Bearer）」输入框已移除）
-               那里要的是接入系统凭证（mg_app_credential），属于业务流量那一跳，与模型无关；
+               那里要的是接入应用凭证（mg_app_credential），属于业务流量那一跳，与模型无关；
                模型的上游密钥（mg_model_credential）由服务端适配器注入，不下发浏览器。 -->
           <div>
             <div class="tsec-hd">🔑 上游鉴权</div>
@@ -1912,7 +1912,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
 //
 // ⚠️ 要等模型把整段结果生成完才返回，慢模型或 max tokens 调得大时会等很久
 //    （上限 120 秒）。超时不代表模型不可用——按真实流式链路验证请用
-//    「接入系统 → 凭证管理 → 接入示例 → 测试连通」</span>
+//    「接入应用 → 凭证管理 → 接入示例 → 测试连通」</span>
           </div>
           <!-- 原始请求体折叠 -->
           <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
@@ -1938,7 +1938,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
 
 <div class="modal-backdrop" id="paProfileModal">
   <div class="modal">
-    <div class="modal-header"><h3 id="paProfileTitle">新增个人用户</h3>
+    <div class="modal-header"><h3 id="paProfileTitle">新增用户</h3>
       <button class="modal-close" onclick="closeModal('paProfileModal')">×</button></div>
     <div class="modal-body">
       <div class="form-group"><label for="paUm">UM</label><input id="paUm" maxlength="64" placeholder="请输入 UM 号"
@@ -1958,8 +1958,8 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
     <div class="modal-body">
       <div id="paImportPanel">
         <p>上传 UTF-8 CSV，每行填写 UM 和姓名，最多 100 行。仅新增用户，已有 UM 跳过。</p>
-        <a href="data:text/csv;charset=utf-8,%EF%BB%BFUM%2C%E5%A7%93%E5%90%8D%0D%0A" download="个人用户导入模板.csv">下载模板</a>
-        <input type="file" id="paImportFile" accept=".csv,text/csv" aria-label="个人用户 CSV"/>
+        <a href="data:text/csv;charset=utf-8,%EF%BB%BFUM%2C%E5%A7%93%E5%90%8D%0D%0A" download="接入用户导入模板.csv">下载模板</a>
+        <input type="file" id="paImportFile" accept=".csv,text/csv" aria-label="接入用户 CSV"/>
       </div>
       <div id="paBatchGrantPanel">
         <p id="paBatchUsers"></p>
@@ -1987,7 +1987,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
 </div>
 <div class="modal-backdrop" id="paDetailModal">
   <div class="modal modal-wide">
-    <div class="modal-header"><h3 id="paDetailTitle">个人接入</h3>
+    <div class="modal-header"><h3 id="paDetailTitle">接入用户</h3>
       <button class="modal-close" onclick="closeModal('paDetailModal')">×</button></div>
     <div class="modal-body">
       <div class="flex gap-8" style="margin-bottom:14px;flex-wrap:wrap">
@@ -2094,11 +2094,11 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
 //    服务地址拼接
 //
 //  【模块层】—— 各自独立，不得互相调用对方的内部函数
-//    导航 / 模型管理 / 接入系统 / Drawer / 凭证管理
+//    导航 / 模型管理 / 接入应用 / Drawer / 凭证管理
 //    接入示例（请求报文） / 接入示例 · 连通性测试
-//    模型授权 / 服务授权（接入系统 × 通用服务） / 访问控制
+//    模型授权 / 服务授权（接入应用 × 通用服务） / 访问控制
 //    审计日志 & 统计摘要 / 报文记录 / 网关配置
-//    服务管理（通用服务接入 /svc/**） / 模型测试工具 / Demo Data / 个人接入 / 初始化
+//    服务管理（通用服务接入 /svc/**） / 模型测试工具 / Demo Data / 接入用户 / 初始化
 //
 //  为什么不拆成多个 html：见 spec/modelgate/05 §1（禁前端 SPA 路由）。
 //  另有实证理由——svcJoinUpstream 一个函数被服务管理页、服务测试工具、
@@ -2119,7 +2119,7 @@ let editingModelId = null; // null=新增, string=编辑
 let editingOriginalModelId = null;
 let currentStep = 1;
 
-const PAGE_TITLES = {models:'模型管理', services:'服务管理', apps:'接入系统', personal:'个人用户', audit:'审计日志', payload:'报文记录', settings:'网关配置'};
+const PAGE_TITLES = {models:'模型管理', services:'服务管理', apps:'接入应用', personal:'接入用户', audit:'审计日志', payload:'报文记录', settings:'网关配置'};
 
 // ============================================================
 // ===== 公共层 · 工具函数
@@ -2639,7 +2639,7 @@ function providerTag(p){
   return `<span class="tag ${map[p]||'tag-gray'}">${escapeHtml(label[p]||p)}</span>`;
 }
 
-// 反查某模型被哪些接入系统授权。列表页只显示数量（随 /models/page 一次性带回，
+// 反查某模型被哪些接入应用授权。列表页只显示数量（随 /models/page 一次性带回，
 // 不逐行查询），点数字才拉明细。
 async function viewModelAuthApps(modelId, modelName){
   $('authAppsModelName').textContent = modelName || modelId;
@@ -3217,21 +3217,21 @@ function onUpstreamPathContextChange(){
 }
 
 // ============================================================
-// ===== 模块 · 接入系统
+// ===== 模块 · 接入应用
 // ============================================================
 async function loadApps(){
   try{
     const qs = pageQuery('apps', {keyword: $('appSearch')?.value});
     const r = await fetch(apiUrl(`/apps/page?${qs}`), {headers:hdrs()});
     const j = await r.json();
-    if(!isOk(j)){ toast('加载接入系统失败: '+errMsg(j),'error'); return; }
+    if(!isOk(j)){ toast('加载接入应用失败: '+errMsg(j),'error'); return; }
     allApps = applyPage('apps', j.data || {});   // 同 allModels：只是当前页
     $('appCount').textContent = pageState.apps.total;
     renderApps(allApps);
     renderPager('apps', 'appsPager', 'apps');
     setStatus(true);
   }catch(e){
-    console.warn('[ModelGate] 接入系统加载异常', e);
+    console.warn('[ModelGate] 接入应用加载异常', e);
     allApps = DEMO_APPS;
     pageState.apps = {pageIndex:1, pageSize:DEMO_APPS.length||20, total:DEMO_APPS.length, pages:1};
     $('appCount').textContent = allApps.length;
@@ -3246,7 +3246,7 @@ const searchApps = debounce(()=>{ pageState.apps.pageIndex = 1; loadApps(); }, 3
 
 function renderApps(data){
   const tbody = $('appsTbody');
-  if(!data.length){ tbody.innerHTML=`<tr class="empty-row"><td colspan="10">暂无接入系统</td></tr>`; return; }
+  if(!data.length){ tbody.innerHTML=`<tr class="empty-row"><td colspan="10">暂无接入应用</td></tr>`; return; }
   tbody.innerHTML = data.map(a=>`
     <tr>
       <td><strong>${escapeHtml(a.systemName||'-')}</strong></td>
@@ -3314,7 +3314,7 @@ async function toggleApp(appId, currentEnabled){
 }
 
 async function deleteAppById(appId){
-  if(!confirm(`确认删除系统 ${appId}？将级联删除所有凭证、授权、访问规则！`)) return;
+  if(!confirm(`确认删除应用 ${appId}？将级联删除所有凭证、授权、访问规则！`)) return;
   try{
     const r = await fetch(apiUrl(`/apps/delete?appId=${appId}`), {method:'DELETE', headers:hdrs()});
     const j = await r.json();
@@ -3515,7 +3515,7 @@ async function openUsageModal(credId){
     modelHint:'正在读取模型对外接入地址…',modelAddressLoading:true};
   usageCtx=context;
 
-  // 服务下拉：effective 已由后端算好（接入系统启用 且 授权启用 且 未过期 且 服务启用），
+  // 服务下拉：effective 已由后端算好（接入应用启用 且 授权启用 且 未过期 且 服务启用），
   // 前端不再自己拼这四个条件——拼错了会把调不通的服务当成可用的给出去
   const svcUsable = (currentServiceAuths||[]).filter(a => a.effective !== false);
   const ssel = $('ug_service');
@@ -3682,7 +3682,7 @@ async function fillUsageSecret(){
     if(!j.data){ toast('后端未返回密钥','error'); return; }
     usageCtx.secret = j.data;
     $('ug_secretHint').firstElementChild.innerHTML =
-      '⚠️ 示例中已含<b>真实密钥明文</b>，只发给该接入系统的负责人；关闭本弹窗即从页面清除。';
+      '⚠️ 示例中已含<b>真实密钥明文</b>，只发给该接入应用的负责人；关闭本弹窗即从页面清除。';
     $('ug_fillBtn').disabled = true;
     renderUsage();
   }catch(e){
@@ -4035,7 +4035,7 @@ function diagnoseUsageTest(status, kind){
     return '';
   }
   if(status === 401) return '401：凭证无效/已禁用/已过期，或 Authorization 头格式不对（AKSK 还要看时间戳是否在 ±5 分钟内）。';
-  if(status === 403) return '403：三种可能——该系统未获此模型授权、授权已禁用或过期、来源 IP/域名不在访问规则白名单内；也可能是接入系统本身被禁用。';
+  if(status === 403) return '403：三种可能——该应用未获此模型授权、授权已禁用或过期、来源 IP/域名不在访问规则白名单内；也可能是接入应用本身被禁用。';
   if(status === 404) return '404：model 字段的值在「模型管理」里不存在（区分大小写），或该模型 api_spec 没有对应适配器。';
   if(status === 429) return '429：触发配额限制（QPS / 日调用量 / 月 Token 三者之一），见该授权的配额设置。';
   if(status === 502 || status === 503) return '502/503：网关到上游不通或上游熔断，与接入侧配置无关，请到「模型管理 → 🧪 测试」验证上游。';
@@ -4419,7 +4419,7 @@ async function revokeAuth(modelId){
 }
 
 // ============================================================
-// ===== 模块 · 服务授权（接入系统 × 通用服务）
+// ===== 模块 · 服务授权（接入应用 × 通用服务）
 // ============================================================
 let currentServiceAuths = [];
 // null = 新增授权；非空 = 正在编辑该 serviceId 的授权
@@ -4479,7 +4479,7 @@ function renderServiceAuths(data){
       <td>${fmt(a.qpsLimit)}/s</td>
       <td>${fmt(a.dailyLimit)}</td>
       <td>${a.expiresAt?fmtTime(a.expiresAt):'永久'}</td>
-      <td>${a.effective?'<span class="tag tag-green">生效</span>':'<span class="tag tag-red" title="接入系统已启用 且 授权已启用 且 未过期 且 服务已启用，四者缺一不可">未生效</span>'}</td>
+      <td>${a.effective?'<span class="tag tag-green">生效</span>':'<span class="tag tag-red" title="接入应用已启用 且 授权已启用 且 未过期 且 服务已启用，四者缺一不可">未生效</span>'}</td>
       <td>
         <div class="flex gap-8">
           <button class="btn btn-neutral btn-sm" title="编辑服务授权" onclick="openServiceAuthEditModal(${idArg})">编辑</button>
@@ -4838,7 +4838,7 @@ async function loadPayloadMeta(){
     const headerInfo = `<b style="color:#b45309">请求头全部留档</b>（包括 Authorization/Cookie/API Key/Token/JWT/签名等凭证字段，单条 ${headerLimit}）。`;
     bar.innerHTML = m.enabled === false
       ? `⛔ 报文记录<b>全局总开关已关闭</b>（modelgate.payload-log.enabled=false），当前不再产生新记录，下方只能查到历史数据。`
-      : `📨 报文<b>仅对开启了「报文记录」开关的「接入系统 × 模型」授权</b>产生（在接入系统的授权配置里开启）；
+      : `📨 报文<b>仅对开启了「报文记录」开关的「接入应用 × 模型」授权</b>产生（在接入应用的授权配置里开启）；
          记录保留 <b>${m.retentionDays} 天</b>，由定时任务 <code>${escHtml(m.cleanupCron||'')}</code> 分批物理删除，
          超期数据不可找回。单条响应采集上限 ${mb}，超出部分标记为「响应被截」。${headerInfo}`;
   }catch(e){
@@ -6560,7 +6560,7 @@ const DEMO_CONFIG = [
 ];
 
 // ============================================================
-// ===== 模块 · 个人接入
+// ===== 模块 · 接入用户
 // ============================================================
 const pa = {enabled:false, rows:[], person:null, grants:[], keys:[], editing:false, listVersion:0, modelVersion:0, detailVersion:0,
   addressVersion:0,addressEdited:false,addressLoading:false};
@@ -6613,7 +6613,7 @@ function loadPersonalAccess(){
       ')">编辑</button><button class="btn btn-neutral btn-sm" onclick="openPersonalAccess(' + i +
       ',\'usage\')">用量</button><button class="btn btn-warning btn-sm" onclick="togglePersonalAccount(' + i +
       ')">' + (p.enabled ? '停用' : '启用') + '</button></div></td></tr>'
-    ).join('') || '<tr class="empty-row"><td colspan="7">暂无个人用户</td></tr>';
+    ).join('') || '<tr class="empty-row"><td colspan="7">暂无接入用户</td></tr>';
     for(const row of pa.rows) if(paSelected.has(row.um)){
       if(row.enabled) paSelected.set(row.um,row);
       else paSelected.delete(row.um);
@@ -6631,7 +6631,7 @@ function openPersonalProfile(index){
   const row = pa.rows[index];
   pa.editing = !!row;
   if(!row && !pa.enabled) return toast('个人接入尚未启用','error');
-  $('paProfileTitle').textContent = row ? '编辑个人资料' : '新增个人用户';
+  $('paProfileTitle').textContent = row ? '编辑个人资料' : '新增用户';
   $('paUm').value = row?.um || '';
   $('paUm').disabled = !!row;
   $('paName').value = row?.name || '';
@@ -6737,7 +6737,7 @@ function openPersonalBatch(mode){
   paBatch.users=[...paSelected.values()];
   paBatch.models.clear();
   paBatch.options=[];
-  $('paBatchTitle').textContent=mode==='import' ? '批量导入个人用户' : '批量授权模型';
+  $('paBatchTitle').textContent=mode==='import' ? '批量导入用户' : '批量授权模型';
   $('paImportPanel').hidden=mode!=='import';
   $('paBatchGrantPanel').hidden=mode!=='grant';
   $('paImportFile').value='';
