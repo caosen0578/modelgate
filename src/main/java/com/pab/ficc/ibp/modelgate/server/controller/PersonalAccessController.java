@@ -137,6 +137,25 @@ public class PersonalAccessController {
         return write(() -> personal.toggleGrant(um, modelId, enabled));
     }
 
+    @Operation(summary = "按 UM 查询个人来源白名单")
+    @GetMapping("/access/list")
+    public Mono<Result<List<PersonalAccessViews.SourceRule>>> sourceRules(@RequestParam("um") String um) {
+        return read(() -> personal.sourceRules(um));
+    }
+
+    @Operation(summary = "按 UM 新增个人 IP / CIDR 白名单规则")
+    @PostMapping("/access/add")
+    public Mono<Result<PersonalAccessViews.SourceRule>> addSourceRule(
+            @RequestBody @Valid PersonalAccessRequests.SourceRule request) {
+        return read(() -> personal.addSourceRule(request));
+    }
+
+    @Operation(summary = "按 UM 删除个人来源规则")
+    @DeleteMapping("/access/delete")
+    public Mono<Result<Void>> deleteSourceRule(@RequestParam("um") String um, @RequestParam("id") Long id) {
+        return write(() -> personal.deleteSourceRule(um, id));
+    }
+
     @Operation(summary = "按 UM 和日期汇总个人 Token 用量")
     @GetMapping(UrlConstant.USAGE)
     public Mono<Result<PersonalAccessViews.Usage>> usage(@RequestParam("um") String um,

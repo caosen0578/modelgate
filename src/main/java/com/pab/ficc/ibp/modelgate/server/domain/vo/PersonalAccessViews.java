@@ -1,5 +1,6 @@
 package com.pab.ficc.ibp.modelgate.server.domain.vo;
 
+import com.pab.ficc.ibp.modelgate.server.domain.entity.AccessRuleEntity;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.AppInfoEntity;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.ModelInstanceEntity;
 
@@ -22,6 +23,12 @@ public final class PersonalAccessViews {
     }
 
     public record IssuedKey(Long id, String apiKey, LocalDateTime expiresAt) {}
+
+    public record SourceRule(Long id, String ruleType, String ruleValue, String remark) {
+        public static SourceRule of(AccessRuleEntity rule) {
+            return new SourceRule(rule.getId(), rule.getRuleType(), rule.getRuleValue(), rule.getRemark());
+        }
+    }
 
     public record BatchItem(String um, String modelId, String status, String message) {}
     public record BatchResult(int added, int skipped, int failed, List<BatchItem> items) {

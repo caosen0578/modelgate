@@ -292,6 +292,8 @@ modelgate:
   personal-access:
     # 个人接入默认关闭。完成数据库增量和管理权限配置后可启用。
     enabled: false
+    # 逗号分隔的 SLB / Ingress 对端 IP 或 CIDR。仅这些代理可转发 X-Forwarded-For。
+    trusted-proxies: "${MODELGATE_PERSONAL_ACCESS_TRUSTED_PROXIES:}"
 
   # 【已移除】modelgate.upstream.url
   # 该属性此前仅作为 GatewayConfigService.getUpstreamUrl() 的兜底值，而该方法无任何路由调用方，

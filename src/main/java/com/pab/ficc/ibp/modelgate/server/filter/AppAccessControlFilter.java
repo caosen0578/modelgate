@@ -4,6 +4,7 @@ import com.pab.ficc.ibp.modelgate.server.common.TrafficType;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.pab.ficc.ibp.modelgate.server.admin.IpMatcher;
+import com.pab.ficc.ibp.modelgate.server.admin.PersonalSourcePolicy;
 import com.pab.ficc.ibp.modelgate.server.common.ErrorCode;
 import com.pab.ficc.ibp.modelgate.server.common.Result;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.AccessRuleEntity;
@@ -17,10 +18,12 @@ import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.server.reactive.ServerHttpRequest;
+import org.springframework.http.server.reactive.ServerHttpRequestDecorator;
 import org.springframework.stereotype.Component;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
+import reactor.netty.http.server.HttpServerRequest;
 
 import java.net.URI;
 import java.util.List;
@@ -56,6 +59,7 @@ public class AppAccessControlFilter implements GlobalFilter, Ordered {
 
     private final AccessRuleService accessRuleService;
     private final IpMatcher ipMatcher;
+    private final PersonalSourcePolicy personalSourcePolicy;
     private final ObjectMapper objectMapper;
 
     @Override
@@ -76,8 +80,9 @@ public class AppAccessControlFilter implements GlobalFilter, Ordered {
             return chain.filter(exchange);
         }
 
-        String clientIp     = getClientIp(exchange.getRequest());
-        String clientDomain = getClientDomain(exchange.getRequest());
+        boolean personal = CredentialAuthFilter.isPersonal(exchange);
+        String clientIp = personal ? getPersonalClientIp(exchange.getRequest()) : getClientIp(exchange.getRequest());
+        String clientDomain = personal ? null : getClientDomain(exchange.getRequest());
 
         return Mono.fromCallable(() -> accessRuleService.listByAppIdCached(appId))
                 .subscribeOn(Schedulers.boundedElastic())
@@ -86,12 +91,19 @@ public class AppAccessControlFilter implements GlobalFilter, Ordered {
                         // 无规则 = 不限制来源。适合 K8s 动态 IP 且不需要来源校验的场景。
                         return chain.filter(exchange);
                     }
-                    if (isAllowed(clientIp, clientDomain, rules)) {
+                    if (personal ? personalSourcePolicy.allows(clientIp, rules) : isAllowed(clientIp, clientDomain, rules)) {
                         return chain.filter(exchange);
                     }
                     log.info("[AccessControl] 拒绝: 来源不在白名单, appId={}, clientIp={}, domain={}", appId, clientIp, clientDomain);
                     return reject(exchange, HttpStatus.FORBIDDEN, ErrorCode.ACCESS_DENIED);
                 });
+    }
+
+    private String getPersonalClientIp(ServerHttpRequest request) {
+        // Spring 的转发头处理可能已改写 remoteAddress，个人白名单必须以真实连接对端为起点。
+        HttpServerRequest nativeRequest = ServerHttpRequestDecorator.getNativeRequest(request);
+        return personalSourcePolicy.clientIp(nativeRequest.connectionRemoteAddress(),
+                nativeRequest.requestHeaders().getAll("X-Forwarded-For"));
     }
 
     /**

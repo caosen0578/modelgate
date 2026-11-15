@@ -1995,6 +1995,8 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
         <button class="btn btn-neutral btn-sm" onclick="showPersonalPanel('auth')">模型授权</button>
         <button class="btn btn-neutral btn-sm" onclick="showPersonalPanel('keys')">凭证管理</button>
         <button class="btn btn-neutral btn-sm" onclick="showPersonalPanel('example')">接入示例</button>
+        <button class="btn btn-neutral btn-sm" data-api="GET /modelgate/personal-access/access/list"
+                onclick="showPersonalPanel('access')">访问控制</button>
         <button class="btn btn-neutral btn-sm" onclick="showPersonalPanel('usage')">Token 用量</button>
       </div>
       <div data-pa-panel="info"><p id="paInfo"></p></div>
@@ -2043,6 +2045,18 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
         <pre id="paExample" style="white-space:pre-wrap;background:#f3f6fa;padding:12px;border-radius:6px"></pre>
         <button class="btn btn-neutral btn-sm" id="paCopyExample" onclick="copyText($('paExample').textContent)">复制接入示例</button>
         <p class="hint">示例不填真实 Key；只向老师交付网关接口、模型名和个人 Key。</p>
+      </div>
+      <div data-pa-panel="access" hidden>
+        <p class="hint">规则对该用户的所有 Key 生效。匹配任一 IP 或网段放行，其他来源返回 403。白名单为空时允许任意来源。</p>
+        <div class="flex gap-8" style="margin:8px 0">
+          <input id="paSourceValue" aria-label="来源 IP / CIDR" placeholder="192.168.1.100 或 10.20.30.0/24" maxlength="256"/>
+          <button id="paSourceAdd" class="btn btn-primary btn-sm" data-api="POST /modelgate/personal-access/access/add"
+                  onclick="addPersonalSourceRule()">添加</button>
+        </div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>类型</th><th>来源</th><th>操作</th></tr></thead>
+          <tbody id="paSourceRows"></tbody>
+        </table></div>
       </div>
       <div data-pa-panel="usage" hidden>
         <div class="flex gap-8" style="flex-wrap:wrap">
@@ -6876,6 +6890,9 @@ function openPersonalAccess(index, tab='info'){
     $('paUsageRows').textContent='';
     $('paIssue').disabled=!pa.enabled || !pa.person.enabled;
     $('paGrantSave').disabled=!pa.enabled;
+    $('paSourceValue').value='';
+    $('paSourceAdd').disabled=true;
+    $('paSourceRows').textContent='';
     openModal('paDetailModal');
     showPersonalPanel(tab);
   });
@@ -6886,7 +6903,64 @@ function showPersonalPanel(tab){
   if(tab==='auth'){ resetPersonalGrant(); loadPersonalGrants(); }
   if(tab==='example'){ refreshPersonalGatewayAddress(); loadPersonalGrants(true); }
   if(tab==='keys') loadPersonalKeys();
+  if(tab==='access') personalAccessAction(loadPersonalSourceRules);
   if(tab==='usage') loadPersonalUsage();
+}
+
+async function loadPersonalSourceRules(){
+  const version=pa.detailVersion;
+  $('paSourceAdd').disabled=true;
+  $('paSourceRows').innerHTML='<tr class="empty-row"><td colspan="3">加载中…</td></tr>';
+  try{
+    const rules=await personalAccessRequest('/access/list' + personalAccessQuery({um:pa.person.um}));
+    if(version!==pa.detailVersion) return;
+    $('paSourceRows').innerHTML=rules.map(rule=>`<tr><td>${escapeHtml(rule.ruleType.toUpperCase())}</td>
+      <td>${escapeHtml(rule.ruleValue)}</td><td><button class="btn btn-danger btn-sm"
+      data-api="DELETE /modelgate/personal-access/access/delete" ${pa.enabled?'':'disabled'}
+      onclick="deletePersonalSourceRule(${jsArg(String(rule.id))}, ${rules.length===1}, this)">删除</button></td></tr>`).join('')
+      || '<tr class="empty-row"><td colspan="3">暂无来源白名单</td></tr>';
+    $('paSourceAdd').disabled=!pa.enabled;
+  }catch(error){
+    if(version===pa.detailVersion) $('paSourceRows').innerHTML='<tr class="empty-row"><td colspan="3">加载失败，请重新打开访问控制</td></tr>';
+    throw error;
+  }
+}
+
+function addPersonalSourceRule(){
+  const button=$('paSourceAdd');
+  const ruleValue=$('paSourceValue').value.trim();
+  if(button.disabled || !ruleValue) return;
+  const version=pa.detailVersion;
+  button.disabled=true;
+  personalAccessAction(async()=>{
+    try{
+      await personalAccessRequest('/access/add', 'POST', {um:pa.person.um, ruleType:ruleValue.includes('/')?'cidr':'ip', ruleValue});
+    }catch(error){
+      if(version===pa.detailVersion) button.disabled=!pa.enabled;
+      throw error;
+    }
+    if(version!==pa.detailVersion) return;
+    $('paSourceValue').value='';
+    toast('规则已添加');
+    await loadPersonalSourceRules();
+  });
+}
+
+function deletePersonalSourceRule(id, last, button){
+  if(!confirm(last?'删除最后一条规则后，该用户的 Key 将允许任意来源调用。确认删除？':'确认删除这条访问规则？')) return;
+  const version=pa.detailVersion;
+  button.disabled=true;
+  personalAccessAction(async()=>{
+    try{
+      await personalAccessRequest('/access/delete' + personalAccessQuery({um:pa.person.um,id}), 'DELETE');
+    }catch(error){
+      if(version===pa.detailVersion) button.disabled=!pa.enabled;
+      throw error;
+    }
+    if(version!==pa.detailVersion) return;
+    toast('规则已删除');
+    await loadPersonalSourceRules();
+  });
 }
 
 function loadPersonalModelOptions(){

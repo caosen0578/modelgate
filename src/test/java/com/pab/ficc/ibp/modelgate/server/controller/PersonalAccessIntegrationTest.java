@@ -1,5 +1,7 @@
 package com.pab.ficc.ibp.modelgate.server.controller;
 
+import com.pab.ficc.ibp.modelgate.server.admin.PersonalSourcePolicy;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -244,6 +246,20 @@ class PersonalAccessIntegrationTest {
         client().delete().uri(PERSONAL + "/credentials/revoke?um=" + a + "&id=" + keyA.path("id").asLong())
                 .exchange().expectStatus().isOk();
         client().get().uri(revealA).exchange().expectStatus().isBadRequest();
+        client().post().uri(PERSONAL + "/access/add")
+                .bodyValue(Map.of("um", a, "ruleType", "cidr", "ruleValue", "127.0.0.1/33"))
+                .exchange().expectStatus().isBadRequest();
+        var localRule = json(client().post().uri(PERSONAL + "/access/add")
+                .bodyValue(Map.of("um", a, "ruleType", "cidr", "ruleValue", "127.0.0.0/24"))
+                .exchange().expectStatus().isOk());
+        long localRuleId = localRule.path("id").asLong();
+        client().get().uri(PERSONAL + "/access/list?um=" + a).exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.data[0].ruleValue").isEqualTo("127.0.0.0/24")
+                .jsonPath("$.data[0].appId").doesNotExist();
+        client().delete().uri(PERSONAL + "/access/delete?um=" + b + "&id=" + localRuleId)
+                .exchange().expectStatus().isBadRequest().expectBody().jsonPath("$.resultCode").isEqualTo("10004");
+        client().get().uri("/modelgate/access/list?appId=" + aId).exchange().expectStatus().isForbidden();
+
         call(rotated, model, true).expectStatus().isOk()
                 .expectHeader().contentTypeCompatibleWith(MediaType.TEXT_EVENT_STREAM)
                 .expectBody(String.class).value(content -> assertTrue(content.contains("[DONE]")));
@@ -253,6 +269,21 @@ class PersonalAccessIntegrationTest {
 
         int reached = upstreamCalls.get();
         assertEquals(4, reached);
+        client().post().uri(PERSONAL + "/access/add")
+                .bodyValue(Map.of("um", a, "ruleType", "ip", "ruleValue", "198.51.100.10"))
+                .exchange().expectStatus().isOk();
+        client().delete().uri(PERSONAL + "/access/delete?um=" + a + "&id=" + localRuleId)
+                .exchange().expectStatus().isOk();
+        call(rotated, model, false).expectStatus().isForbidden();
+        client().post().uri(CHAT).headers(h -> h.setBearerAuth(rotated))
+                .header("X-Forwarded-For", "198.51.100.10")
+                .header("X-Real-IP", "198.51.100.10")
+                .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("model", model, "stream", true))
+                .exchange().expectStatus().isForbidden();
+        var remainingRules = json(client().get().uri(PERSONAL + "/access/list?um=" + a)
+                .exchange().expectStatus().isOk());
+        client().delete().uri(PERSONAL + "/access/delete?um=" + a + "&id=" + remainingRules.get(0).path("id").asLong())
+                .exchange().expectStatus().isOk();
         call(oldA, model, false).expectStatus().isUnauthorized();
         call(rotated, ungranted, false).expectStatus().isForbidden();
         client().post().uri(CHAT).headers(h -> h.setBearerAuth(rotated))
@@ -351,7 +382,7 @@ class PersonalAccessIntegrationTest {
     @SpringBootConfiguration
     @EnableAutoConfiguration(exclude = {DataSourceAutoConfiguration.class, DataSourceTransactionManagerAutoConfiguration.class})
     @Import({TdsqlMybatisPlusConfig.class, AuditFieldMetaObjectHandler.class, DefaultOperatorProvider.class,
-            ApplicationPaths.class,
+            ApplicationPaths.class, PersonalSourcePolicy.class,
             JacksonConfig.class, CryptoService.class, GatewayCacheManager.class, RateLimitService.class,
             AppService.class, CredentialService.class, AccessRuleService.class, ModelAuthService.class,
             ServiceAuthService.class, ModelService.class, AppScopeResolver.class, PersonalAccessService.class,

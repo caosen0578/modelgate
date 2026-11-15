@@ -36,6 +36,12 @@ public final class PersonalAccessRequests {
 
     public record ImportUsers(@NotEmpty @Size(max = 100) List<@NotNull @Valid Profile> users) {}
 
+    public record SourceRule(
+            @NotBlank @Size(max = AppSubject.UM_MAX_LENGTH) String um,
+            @NotBlank @Size(max = 8) String ruleType,
+            @NotBlank @Size(max = 256) String ruleValue,
+            @Size(max = 256) String remark) {}
+
     public record BatchGrant(
             @NotEmpty @Size(max = 100) List<@NotBlank @Size(max = AppSubject.UM_MAX_LENGTH) String> ums,
             @NotEmpty @Size(max = 30) List<@NotBlank @Size(max = 64) String> modelIds,

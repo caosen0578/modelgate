@@ -4,12 +4,14 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.pab.ficc.ibp.modelgate.server.admin.PersonalSourcePolicy;
 import com.pab.ficc.ibp.modelgate.server.common.AppSubject;
 import com.pab.ficc.ibp.modelgate.server.common.BusinessException;
 import com.pab.ficc.ibp.modelgate.server.common.ErrorCode;
 import com.pab.ficc.ibp.modelgate.server.domain.bo.AppQueryBO;
 import com.pab.ficc.ibp.modelgate.server.domain.bo.ModelQueryBO;
 import com.pab.ficc.ibp.modelgate.server.domain.bo.PersonalAccessRequests;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.AccessRuleEntity;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.AppInfoEntity;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.AppModelAuthEntity;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.ModelInstanceEntity;
@@ -47,6 +49,7 @@ public class PersonalAccessService {
     private final CredentialService credentialService;
     private final ModelService modelService;
     private final ModelAuthService modelAuthService;
+    private final AccessRuleService accessRuleService;
 
     @Value(AppSubject.PERSONAL_ENABLED_PROPERTY)
     private boolean enabled;
@@ -254,6 +257,30 @@ public class PersonalAccessService {
         String appId = findPerson(um).getAppId();
         if (active) modelAuthService.enable(appId, modelId);
         else modelAuthService.disable(appId, modelId);
+    }
+
+    public List<PersonalAccessViews.SourceRule> sourceRules(String um) {
+        return accessRuleService.listByAppId(findPerson(um).getAppId()).stream()
+                .map(PersonalAccessViews.SourceRule::of).toList();
+    }
+
+    public PersonalAccessViews.SourceRule addSourceRule(PersonalAccessRequests.SourceRule request) {
+        requireEnabled();
+        String appId = findPerson(request.um()).getAppId();
+        var rule = new AccessRuleEntity();
+        rule.setRuleType(request.ruleType());
+        try {
+            rule.setRuleValue(PersonalSourcePolicy.normalizeRule(request.ruleType(), request.ruleValue()));
+        } catch (IllegalArgumentException e) {
+            throw new BusinessException(ErrorCode.INVALID_PARAMETER, e.getMessage());
+        }
+        rule.setRemark(request.remark());
+        return PersonalAccessViews.SourceRule.of(accessRuleService.add(appId, rule));
+    }
+
+    public void deleteSourceRule(String um, Long id) {
+        requireEnabled();
+        accessRuleService.delete(findPerson(um).getAppId(), id);
     }
 
     public PersonalAccessViews.Usage usage(String um, LocalDate start, LocalDate end) {
