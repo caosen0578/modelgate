@@ -179,6 +179,7 @@ textarea{resize:vertical;min-height:80px;font-family:monospace}
 .rule-tag button{background:none;border:none;cursor:pointer;color:#94a3b8;font-size:14px;line-height:1;padding:0}
 .rule-tag button:hover{color:#ef4444}
 .rule-add-row{display:flex;gap:8px;margin-top:12px;align-items:center;flex-wrap:wrap}
+.source-rule-list{min-height:60px;background:#f8fafc;border-radius:8px;padding:10px;overflow-wrap:anywhere}
 
 code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-family:monospace}
 .divider{height:1px;background:#f1f5f9;margin:16px 0}
@@ -831,7 +832,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
       <div class="form-grid form-grid-2" style="gap:20px">
         <div>
           <div style="font-size:13px;font-weight:600;margin-bottom:10px">IP / CIDR 白名单</div>
-          <div id="ipRules" style="min-height:60px;background:#f8fafc;border-radius:8px;padding:10px"></div>
+          <div id="ipRules" class="source-rule-list"></div>
           <div class="rule-add-row">
             <input type="text" id="newIpRule" placeholder="10.0.0.0/8 或 192.168.1.100" style="flex:1"/>
             <button class="btn btn-success btn-sm" data-api="POST /modelgate/access/add" onclick="addAccessRule('ip')">添加</button>
@@ -839,7 +840,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
         </div>
         <div>
           <div style="font-size:13px;font-weight:600;margin-bottom:10px">域名白名单</div>
-          <div id="domainRules" style="min-height:60px;background:#f8fafc;border-radius:8px;padding:10px"></div>
+          <div id="domainRules" class="source-rule-list"></div>
           <div class="rule-add-row">
             <input type="text" id="newDomainRule" placeholder="*.internal.com 或 app.corp.com" style="flex:1"/>
             <button class="btn btn-success btn-sm" data-api="POST /modelgate/access/add" onclick="addAccessRule('domain')">添加</button>
@@ -2047,16 +2048,27 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
         <p class="hint">示例不填真实 Key；只向老师交付网关接口、模型名和个人 Key。</p>
       </div>
       <div data-pa-panel="access" hidden>
-        <p class="hint">规则对该用户的所有 Key 生效。匹配任一 IP 或网段放行，其他来源返回 403。白名单为空时允许任意来源。</p>
-        <div class="flex gap-8" style="margin:8px 0">
-          <input id="paSourceValue" aria-label="来源 IP / CIDR" placeholder="192.168.1.100 或 10.20.30.0/24" maxlength="256"/>
-          <button id="paSourceAdd" class="btn btn-primary btn-sm" data-api="POST /modelgate/personal-access/access/add"
-                  onclick="addPersonalSourceRule()">添加</button>
+        <p style="font-size:13px;color:#374151;margin-bottom:16px">⚠️ IP 白名单和域名白名单均为空时，不限制来源。配置域名后须同时匹配 IP 和域名，只有域名规则时拒绝调用。</p>
+        <div class="form-grid form-grid-2" style="gap:20px">
+          <div>
+            <div style="font-size:13px;font-weight:600;margin-bottom:10px">IP / CIDR 白名单</div>
+            <div id="paSourceRules-ip" class="source-rule-list"></div>
+            <div class="rule-add-row">
+              <input id="paSourceValue-ip" aria-label="IP / CIDR 白名单" placeholder="10.0.0.0/8 或 192.168.1.100" maxlength="256" style="flex:1"/>
+              <button id="paSourceAdd-ip" class="btn btn-success btn-sm" data-api="POST /modelgate/personal-access/access/add"
+                      onclick="addPersonalSourceRule('ip')">添加</button>
+            </div>
+          </div>
+          <div>
+            <div style="font-size:13px;font-weight:600;margin-bottom:10px">域名白名单</div>
+            <div id="paSourceRules-domain" class="source-rule-list"></div>
+            <div class="rule-add-row">
+              <input id="paSourceValue-domain" aria-label="域名白名单" placeholder="*.internal.com 或 app.corp.com" maxlength="256" style="flex:1"/>
+              <button id="paSourceAdd-domain" class="btn btn-success btn-sm" data-api="POST /modelgate/personal-access/access/add"
+                      onclick="addPersonalSourceRule('domain')">添加</button>
+            </div>
+          </div>
         </div>
-        <div class="table-wrap"><table>
-          <thead><tr><th>类型</th><th>来源</th><th>操作</th></tr></thead>
-          <tbody id="paSourceRows"></tbody>
-        </table></div>
       </div>
       <div data-pa-panel="usage" hidden>
         <div class="flex gap-8" style="flex-wrap:wrap">
@@ -6890,9 +6902,11 @@ function openPersonalAccess(index, tab='info'){
     $('paUsageRows').textContent='';
     $('paIssue').disabled=!pa.enabled || !pa.person.enabled;
     $('paGrantSave').disabled=!pa.enabled;
-    $('paSourceValue').value='';
-    $('paSourceAdd').disabled=true;
-    $('paSourceRows').textContent='';
+    for(const kind of ['ip','domain']){
+      $('paSourceValue-' + kind).value='';
+      $('paSourceAdd-' + kind).disabled=true;
+      $('paSourceRules-' + kind).textContent='';
+    }
     openModal('paDetailModal');
     showPersonalPanel(tab);
   });
@@ -6909,45 +6923,59 @@ function showPersonalPanel(tab){
 
 async function loadPersonalSourceRules(){
   const version=pa.detailVersion;
-  $('paSourceAdd').disabled=true;
-  $('paSourceRows').innerHTML='<tr class="empty-row"><td colspan="3">加载中…</td></tr>';
+  for(const kind of ['ip','domain']){
+    $('paSourceAdd-' + kind).disabled=true;
+    $('paSourceRules-' + kind).textContent='加载中…';
+  }
   try{
     const rules=await personalAccessRequest('/access/list' + personalAccessQuery({um:pa.person.um}));
     if(version!==pa.detailVersion) return;
-    $('paSourceRows').innerHTML=rules.map(rule=>`<tr><td>${escapeHtml(rule.ruleType.toUpperCase())}</td>
-      <td>${escapeHtml(rule.ruleValue)}</td><td><button class="btn btn-danger btn-sm"
-      data-api="DELETE /modelgate/personal-access/access/delete" ${pa.enabled?'':'disabled'}
-      onclick="deletePersonalSourceRule(${jsArg(String(rule.id))}, ${rules.length===1}, this)">删除</button></td></tr>`).join('')
-      || '<tr class="empty-row"><td colspan="3">暂无来源白名单</td></tr>';
-    $('paSourceAdd').disabled=!pa.enabled;
+    const ipRules=rules.filter(rule=>rule.ruleType==='ip' || rule.ruleType==='cidr');
+    const domains=rules.filter(rule=>rule.ruleType==='domain' || rule.ruleType==='domain_wildcard');
+    for(const [kind, entries, empty] of [
+      ['ip', ipRules, domains.length ? '空（请添加 IP 或网段）' : '空（不限制 IP）'],
+      ['domain', domains, '空（不限制域名）']
+    ]){
+      $('paSourceRules-' + kind).innerHTML=entries.map(rule=>`<span class="rule-tag"><span>${escapeHtml(rule.ruleValue)}</span>
+        <button type="button" aria-label="删除来源规则" data-api="DELETE /modelgate/personal-access/access/delete" ${pa.enabled?'':'disabled'}
+        onclick="deletePersonalSourceRule(${jsArg(String(rule.id))}, ${rules.length===1}, ${kind==='ip' && ipRules.length===1 && domains.length>0}, this)">×</button></span>`).join('')
+        || `<span class="hint">${empty}</span>`;
+      $('paSourceAdd-' + kind).disabled=!pa.enabled;
+    }
   }catch(error){
-    if(version===pa.detailVersion) $('paSourceRows').innerHTML='<tr class="empty-row"><td colspan="3">加载失败，请重新打开访问控制</td></tr>';
+    if(version===pa.detailVersion){
+      for(const kind of ['ip','domain']) $('paSourceRules-' + kind).textContent='加载失败，请重新打开访问控制';
+    }
     throw error;
   }
 }
 
-function addPersonalSourceRule(){
-  const button=$('paSourceAdd');
-  const ruleValue=$('paSourceValue').value.trim();
+function addPersonalSourceRule(kind){
+  const button=$('paSourceAdd-' + kind);
+  const input=$('paSourceValue-' + kind);
+  const ruleValue=input.value.trim();
   if(button.disabled || !ruleValue) return;
+  const ruleType=kind==='ip' ? (ruleValue.includes('/')?'cidr':'ip') : (ruleValue.startsWith('*.')?'domain_wildcard':'domain');
   const version=pa.detailVersion;
   button.disabled=true;
   personalAccessAction(async()=>{
     try{
-      await personalAccessRequest('/access/add', 'POST', {um:pa.person.um, ruleType:ruleValue.includes('/')?'cidr':'ip', ruleValue});
+      await personalAccessRequest('/access/add', 'POST', {um:pa.person.um, ruleType, ruleValue});
     }catch(error){
       if(version===pa.detailVersion) button.disabled=!pa.enabled;
       throw error;
     }
     if(version!==pa.detailVersion) return;
-    $('paSourceValue').value='';
+    input.value='';
     toast('规则已添加');
     await loadPersonalSourceRules();
   });
 }
 
-function deletePersonalSourceRule(id, last, button){
-  if(!confirm(last?'删除最后一条规则后，该用户的 Key 将允许任意来源调用。确认删除？':'确认删除这条访问规则？')) return;
+function deletePersonalSourceRule(id, last, lastIpWithDomains, button){
+  const message=last?'删除最后一条规则后，该用户的 Key 将允许任意来源调用。确认删除？'
+    :lastIpWithDomains?'删除最后一条 IP 规则后，只剩域名规则，该用户的所有调用将被拒绝。确认删除？':'确认删除这条访问规则？';
+  if(!confirm(message)) return;
   const version=pa.detailVersion;
   button.disabled=true;
   personalAccessAction(async()=>{

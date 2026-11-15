@@ -143,7 +143,7 @@ public class PersonalAccessController {
         return read(() -> personal.sourceRules(um));
     }
 
-    @Operation(summary = "按 UM 新增个人 IP / CIDR 白名单规则")
+    @Operation(summary = "按 UM 新增个人 IP / CIDR 或域名白名单规则")
     @PostMapping("/access/add")
     public Mono<Result<PersonalAccessViews.SourceRule>> addSourceRule(
             @RequestBody @Valid PersonalAccessRequests.SourceRule request) {

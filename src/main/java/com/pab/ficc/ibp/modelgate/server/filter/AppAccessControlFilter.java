@@ -82,7 +82,7 @@ public class AppAccessControlFilter implements GlobalFilter, Ordered {
 
         boolean personal = CredentialAuthFilter.isPersonal(exchange);
         String clientIp = personal ? getPersonalClientIp(exchange.getRequest()) : getClientIp(exchange.getRequest());
-        String clientDomain = personal ? null : getClientDomain(exchange.getRequest());
+        String clientDomain = getClientDomain(exchange.getRequest());
 
         return Mono.fromCallable(() -> accessRuleService.listByAppIdCached(appId))
                 .subscribeOn(Schedulers.boundedElastic())
@@ -91,7 +91,7 @@ public class AppAccessControlFilter implements GlobalFilter, Ordered {
                         // 无规则 = 不限制来源。适合 K8s 动态 IP 且不需要来源校验的场景。
                         return chain.filter(exchange);
                     }
-                    if (personal ? personalSourcePolicy.allows(clientIp, rules) : isAllowed(clientIp, clientDomain, rules)) {
+                    if (personal ? personalSourcePolicy.allows(clientIp, clientDomain, rules) : isAllowed(clientIp, clientDomain, rules)) {
                         return chain.filter(exchange);
                     }
                     log.info("[AccessControl] 拒绝: 来源不在白名单, appId={}, clientIp={}, domain={}", appId, clientIp, clientDomain);

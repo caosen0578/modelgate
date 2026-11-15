@@ -260,7 +260,16 @@ class PersonalAccessIntegrationTest {
                 .exchange().expectStatus().isBadRequest().expectBody().jsonPath("$.resultCode").isEqualTo("10004");
         client().get().uri("/modelgate/access/list?appId=" + aId).exchange().expectStatus().isForbidden();
 
-        call(rotated, model, true).expectStatus().isOk()
+        client().post().uri(PERSONAL + "/access/add")
+                .bodyValue(Map.of("um", a, "ruleType", "domain", "ruleValue", "https://staff.internal.com/path"))
+                .exchange().expectStatus().isBadRequest();
+        var domainRule = json(client().post().uri(PERSONAL + "/access/add")
+                .bodyValue(Map.of("um", a, "ruleType", "domain_wildcard", "ruleValue", "*.Internal.COM"))
+                .exchange().expectStatus().isOk());
+        assertEquals("*.internal.com", domainRule.path("ruleValue").asText());
+        call(rotated, model, false).expectStatus().isForbidden();
+        call(rotated, model, false, "https://elsewhere.example").expectStatus().isForbidden();
+        call(rotated, model, true, "https://staff.internal.com").expectStatus().isOk()
                 .expectHeader().contentTypeCompatibleWith(MediaType.TEXT_EVENT_STREAM)
                 .expectBody(String.class).value(content -> assertTrue(content.contains("[DONE]")));
         call(bearerB, model, false).expectStatus().isOk().expectBody().jsonPath("$.usage.total_tokens").isEqualTo(20);
@@ -276,13 +285,21 @@ class PersonalAccessIntegrationTest {
                 .exchange().expectStatus().isOk();
         call(rotated, model, false).expectStatus().isForbidden();
         client().post().uri(CHAT).headers(h -> h.setBearerAuth(rotated))
+                .header("Origin", "https://staff.internal.com")
                 .header("X-Forwarded-For", "198.51.100.10")
                 .header("X-Real-IP", "198.51.100.10")
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("model", model, "stream", true))
                 .exchange().expectStatus().isForbidden();
         var remainingRules = json(client().get().uri(PERSONAL + "/access/list?um=" + a)
                 .exchange().expectStatus().isOk());
-        client().delete().uri(PERSONAL + "/access/delete?um=" + a + "&id=" + remainingRules.get(0).path("id").asLong())
+        for (var rule : remainingRules) {
+            if ("ip".equals(rule.path("ruleType").asText())) {
+                client().delete().uri(PERSONAL + "/access/delete?um=" + a + "&id=" + rule.path("id").asLong())
+                        .exchange().expectStatus().isOk();
+            }
+        }
+        call(rotated, model, false, "https://staff.internal.com").expectStatus().isForbidden();
+        client().delete().uri(PERSONAL + "/access/delete?um=" + a + "&id=" + domainRule.path("id").asLong())
                 .exchange().expectStatus().isOk();
         call(oldA, model, false).expectStatus().isUnauthorized();
         call(rotated, ungranted, false).expectStatus().isForbidden();
@@ -362,7 +379,14 @@ class PersonalAccessIntegrationTest {
     }
 
     private WebTestClient.ResponseSpec call(String key, String model, boolean stream) {
-        return client().post().uri(CHAT).headers(h -> h.setBearerAuth(key))
+        return call(key, model, stream, null);
+    }
+
+    private WebTestClient.ResponseSpec call(String key, String model, boolean stream, String origin) {
+        return client().post().uri(CHAT).headers(h -> {
+                    h.setBearerAuth(key);
+                    if (origin != null) h.setOrigin(origin);
+                })
                 .header("X-Mg-App", "00012001").header("X-UM", "FORGED_UM")
                 .contentType(MediaType.APPLICATION_JSON).bodyValue(Map.of("model", model, "stream", stream,
                         "messages", new Object[]{Map.of("role", "user", "content", "隔离验收")}))

@@ -38,7 +38,7 @@ public final class PersonalAccessRequests {
 
     public record SourceRule(
             @NotBlank @Size(max = AppSubject.UM_MAX_LENGTH) String um,
-            @NotBlank @Size(max = 8) String ruleType,
+            @NotBlank @Size(max = 15) String ruleType,
             @NotBlank @Size(max = 256) String ruleValue,
             @Size(max = 256) String remark) {}
 
