@@ -19,6 +19,8 @@ public class PayloadDetailVO {
     private Long          id;
     private String        traceId;
     private String        appId;
+    private String        um;
+    private String        personName;
     /** 流量类型：model=模型流量 service=通用服务流量 */
     private String        trafficType;
     private String        modelId;

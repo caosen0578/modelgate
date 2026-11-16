@@ -54,11 +54,12 @@ public final class PersonalAccessViews {
     }
 
     public record Grant(String modelId, String modelName, String modelType, boolean enabled,
-                        Integer qpsLimit, Integer dailyLimit, Long monthlyTokens, LocalDateTime expiresAt) {
+                        Integer qpsLimit, Integer dailyLimit, Long monthlyTokens, LocalDateTime expiresAt,
+                        boolean payloadLogEnabled) {
         public static Grant of(AppModelAuthVO auth) {
             return new Grant(auth.getModelId(), auth.getModelName(), auth.getModelType(),
                     Boolean.TRUE.equals(auth.getEnabled()), auth.getQpsLimit(), auth.getDailyLimit(),
-                    auth.getMonthlyTokens(), auth.getExpiresAt());
+                    auth.getMonthlyTokens(), auth.getExpiresAt(), Boolean.TRUE.equals(auth.getPayloadLogEnabled()));
         }
     }
 

@@ -2,6 +2,7 @@ package com.pab.ficc.ibp.modelgate.server.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.pab.ficc.ibp.modelgate.server.common.BusinessException;
+import com.pab.ficc.ibp.modelgate.server.common.AppSubject;
 import com.pab.ficc.ibp.modelgate.server.common.ErrorCode;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.AppInfoEntity;
 import com.pab.ficc.ibp.modelgate.server.mapper.AppMapper;
@@ -41,6 +42,15 @@ import java.util.Map;
 public class AppScopeResolver {
 
     private final AppMapper appMapper;
+
+    public AppInfoEntity requirePersonalByUm(String um) {
+        String normalized = AppSubject.normalizeUm(um);
+        AppInfoEntity user = appMapper.selectOne(new LambdaQueryWrapper<AppInfoEntity>()
+                .eq(AppInfoEntity::getSubjectType, AppSubject.PERSONAL)
+                .eq(AppInfoEntity::getPersonUm, normalized));
+        if (user == null) throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "未开通个人接入: " + normalized);
+        return user;
+    }
 
     /**
      * 单个应用编码最多允许解析出多少个 appId。

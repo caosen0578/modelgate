@@ -32,6 +32,8 @@ import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.CacheControl;
+import org.springframework.http.server.reactive.ServerHttpResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -97,10 +99,41 @@ public class PayloadController {
         PayloadQueryBO q = query != null ? query : new PayloadQueryBO();
         // 校验放在 Mono 外：参数错误应当立刻返回，不必占用 boundedElastic 线程
         validate(q);
-        return Mono.fromCallable(() -> toPageVo(doQuery(q)))
+        return Mono.fromCallable(() -> toPageVo(doQuery(q, null)))
                 .subscribeOn(AdminScheduler.get())
                 .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .map(Result::success);
+    }
+
+    @GetMapping("/personal/query")
+    public Mono<Result<PageVo<PayloadListVO>>> personalQuery(@RequestParam("um") String um, PayloadQueryBO query,
+                                                              ServerHttpResponse response) {
+        validate(query);
+        response.getHeaders().setCacheControl(CacheControl.noStore());
+        return Mono.fromCallable(() -> {
+                    var user = appScopeResolver.requirePersonalByUm(um);
+                    return PageVo.of(doQuery(query, user.getAppId()), item -> {
+                        item.setAppId(null);
+                        item.setUm(user.getPersonUm());
+                        item.setPersonName(user.getAppName());
+                        return item;
+                    });
+                }).subscribeOn(AdminScheduler.get()).timeout(AdminScheduler.REQUEST_TIMEOUT).map(Result::success);
+    }
+
+    @GetMapping("/personal/detail")
+    public Mono<Result<PayloadDetailVO>> personalDetail(@RequestParam("um") String um, @RequestParam("id") Long id,
+                                                         ServerHttpResponse response) {
+        response.getHeaders().setCacheControl(CacheControl.noStore());
+        return Mono.fromCallable(() -> {
+                    var user = appScopeResolver.requirePersonalByUm(um);
+                    var item = payloadMapper.selectScopedDetail(id, user.getAppId());
+                    if (item == null) throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "该用户的报文不存在或已清理");
+                    item.setAppId(null);
+                    item.setUm(user.getPersonUm());
+                    item.setPersonName(user.getAppName());
+                    return item;
+                }).subscribeOn(AdminScheduler.get()).timeout(AdminScheduler.REQUEST_TIMEOUT).map(Result::success);
     }
 
     @Operation(summary = "查询单条报文全文（含全部请求头、请求报文、响应原文、响应正文）")
@@ -386,7 +419,7 @@ public class PayloadController {
      * 同一毫秒可写入多条，只按 create_time 排会在翻页时出现重复行/漏行，
      * 必须补一个唯一列做次级排序。
      */
-    private IPage<PayloadListVO> doQuery(PayloadQueryBO q) {
+    private IPage<PayloadListVO> doQuery(PayloadQueryBO q, String personalAppId) {
         String modelId      = q.getModelId();
         String traceId      = q.getTraceId();
         String finishReason = q.getFinishReason();
@@ -397,7 +430,9 @@ public class PayloadController {
 
         // appId + 应用编码 → 报文表上可执行的条件。报文表没有 app_code 列，
         // 由 AppScopeResolver 先在小表 mg_app 解析，理由见该类注释。
-        AppScopeResolver.AppScope scope = appScopeResolver.resolve(q.getAppId(), q.getAppCode());
+        boolean personal = personalAppId != null;
+        AppScopeResolver.AppScope scope = personal ? new AppScopeResolver.AppScope(false, personalAppId, null)
+                : appScopeResolver.resolve(q.getAppId(), q.getAppCode());
         if (scope.matchNothing()) {
             // 条件注定命中不了任何行。⚠️ 必须直接返回空页：漏掉这一分支等于"不加 app 过滤"，
             // 会把全部系统的报文当成该应用编码的报文返回——报文里是用户原始 prompt，
@@ -406,14 +441,15 @@ public class PayloadController {
         }
 
         LambdaQueryWrapper<RequestPayloadEntity> w = new LambdaQueryWrapper<RequestPayloadEntity>()
+                .apply(!personal, RequestPayloadMapper.APPLICATION_PAYLOAD_SCOPE)
                 .eq(scope.eqAppId() != null,  RequestPayloadEntity::getAppId,          scope.eqAppId())
                 .in(scope.inAppIds() != null, RequestPayloadEntity::getAppId,          scope.inAppIds())
                 .eq(notBlank(modelId),      RequestPayloadEntity::getModelId,        modelId)
                 .eq(notBlank(finishReason), RequestPayloadEntity::getFinishReason,   finishReason)
                 .eq(notBlank(truncated),    RequestPayloadEntity::getTruncated,      truncated)
                 // 流量类型与服务编码：等值匹配，为空不过滤（两类流量都返回）
-                .eq(notBlank(q.getTrafficType()), RequestPayloadEntity::getTrafficType, q.getTrafficType())
-                .eq(notBlank(q.getServiceId()),   RequestPayloadEntity::getServiceId,   q.getServiceId())
+                .eq(personal || notBlank(q.getTrafficType()), RequestPayloadEntity::getTrafficType, personal ? "model" : q.getTrafficType())
+                .eq(!personal && notBlank(q.getServiceId()), RequestPayloadEntity::getServiceId, q.getServiceId())
                 .eq(q.getIsStream() != null,       RequestPayloadEntity::getIsStream,       q.getIsStream())
                 .eq(q.getUpstreamStatus() != null, RequestPayloadEntity::getUpstreamStatus, q.getUpstreamStatus())
                 .ge(q.getStartTime() != null,      RequestPayloadEntity::getCreateTime,     q.getStartTime())

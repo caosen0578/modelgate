@@ -207,7 +207,10 @@ public class PersonalAccessService {
         requireActiveModel(modelId);
         if (request.expiresAt() != null) requireFuture(request.expiresAt());
         var values = grantValues(request.qpsLimit(), request.dailyLimit(), request.monthlyTokens(), request.expiresAt());
-        if (modelAuthService.listByAppId(appId).stream().anyMatch(a -> modelId.equals(a.getModelId()))) {
+        var existing = modelAuthService.listByAppId(appId).stream().filter(a -> modelId.equals(a.getModelId())).findFirst();
+        values.setPayloadLogEnabled(request.payloadLogEnabled() != null ? request.payloadLogEnabled()
+                : existing.map(AppModelAuthEntity::getPayloadLogEnabled).orElse(false));
+        if (existing.isPresent()) {
             // 修改配额不会隐式启用一条已停用的授权。
             modelAuthService.update(appId, modelId, values);
         } else {

@@ -465,7 +465,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
       <!-- 统计摘要卡片（GET /stats/usage） -->
       <div class="stats-row" id="statsRow">
         <div class="stat-card">
-          <div class="stat-label">📊 总请求数（近30天）</div>
+          <div class="stat-label">📊 所选时段请求数</div>
           <div class="stat-val" id="statTotal">-</div>
           <div class="stat-sub" id="statRange"></div>
         </div>
@@ -493,6 +493,8 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
                  下拉一次只拉 200 个应用（pageSize=200），应用多了之后想筛的那个可能压根不在里面；
                  而排查时手上通常直接就有 appId / 应用编码。两个控件同时提交同一个参数会互相打架，
                  所以这里把下拉做成"选了就回填输入框"，输入框是唯一的提交来源。 -->
+            <select id="auditScope" aria-label="审计接入范围" onchange="switchAuditScope()"><option value="app">接入应用</option><option value="personal">接入用户</option></select>
+            <input id="auditUm" aria-label="审计 UM" placeholder="输入完整 UM" hidden/>
             <select id="auditApp" style="width:140px" onchange="pickAuditApp(this.value)"><option value="">全部系统</option></select>
             <input type="text" id="auditAppId" placeholder="appId（精确）" style="width:150px"
                    oninput="syncAuditAppSelect()" title="接入应用 appId，精确匹配"/>
@@ -517,6 +519,11 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
               <option value="500">500 错误</option>
             </select>
             <input type="text" id="auditTrace" placeholder="TraceID" style="width:160px"/>
+            <select id="auditPeriod" aria-label="审计快捷时间范围" onchange="setAuditPeriod(this.value);loadAudit()">
+              <option value="">自定义</option><option value="week">本周</option><option value="month">本月</option><option value="quarter">本季度</option>
+            </select>
+            <input type="datetime-local" step="1" id="auditStart" aria-label="审计开始时间" onchange="$('auditPeriod').value=''"/>
+            <input type="datetime-local" step="1" id="auditEnd" aria-label="审计结束时间" onchange="$('auditPeriod').value=''"/>
           </div>
           <button class="btn btn-primary" data-api="GET /modelgate/audit/query" onclick="loadAudit()">查询</button>
         </div>
@@ -528,8 +535,8 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
               <tr>
                 <th>时间</th>
                 <th>TraceID</th>
-                <th>应用 appId</th>
-                <th>应用编码</th>
+                <th id="auditColumnSubject">应用 appId</th>
+                <th id="auditColumnName">应用编码</th>
                 <th>模型 / 服务</th>
                 <th>客户端 IP</th>
                 <th>状态</th>
@@ -562,6 +569,8 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
         <div class="toolbar">
           <div class="toolbar-left" style="flex-wrap:wrap;gap:8px">
             <!-- 与审计页同一套逻辑：下拉只负责回填 appId 输入框，输入框才是提交来源。理由见审计页注释。 -->
+            <select id="pl_scope" aria-label="报文接入范围" onchange="switchPayloadScope()"><option value="app">接入应用</option><option value="personal">接入用户</option></select>
+            <input id="pl_um" aria-label="报文 UM" placeholder="输入完整 UM" hidden/>
             <select id="pl_app" style="width:150px" onchange="pickPayloadApp(this.value)"><option value="">全部系统</option></select>
             <input type="text" id="pl_appId" placeholder="appId（精确）" style="width:150px"
                    oninput="syncPayloadAppSelect()" title="接入应用 appId，精确匹配"/>
@@ -625,7 +634,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
         <!-- 关键字为何有约束：大文本列上的 LIKE '%x%' 走不了索引，单独使用就是全表扫描。
              后端会直接拒绝这种请求，这里提前把规则说清楚，免得用户点了才吃报错。 -->
         <div class="hint" style="margin-top:8px">
-          请求报文/请求头关键字均为<b>全模糊匹配</b>；请求头搜索全部入站 Header（包含 Authorization、Cookie、Token 等凭证字段）。
+          请求报文/请求头关键字均为<b>全模糊匹配</b>；个人请求头搜索仅覆盖 Content-Type 和 Accept。
           两种检索都<b>必须</b>搭配「TraceID（≥8 位）」或「两端齐全且跨度 ≤24 小时的时间范围」——
           单独按关键字查会在大文本列上全表扫描，后端会拒绝该请求。
           「系统 / 模型」<b>不算</b>收窄条件：主力系统常占全表七成以上，加上它仍是近乎全表扫描；
@@ -641,8 +650,8 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
               <tr>
                 <th>时间</th>
                 <th>TraceID</th>
-                <th>应用 appId</th>
-                <th>应用编码</th>
+                <th id="payloadColumnSubject">应用 appId</th>
+                <th id="payloadColumnName">应用编码</th>
                 <th>模型 / 服务</th>
                 <th>类型</th>
                 <th>上游状态</th>
@@ -2010,6 +2019,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
           <label>QPS <input id="paQps" type="number" min="0" value="2" style="width:80px"/></label>
           <label>日请求 <input id="paDaily" type="number" min="0" value="200" style="width:95px"/></label>
           <label>月 Token <input id="paMonthly" type="number" min="0" value="100000" style="width:115px"/></label>
+          <label>请求/响应报文记录 <select id="paPayloadLog"><option value="false">关闭</option><option value="true">开启</option></select></label>
           <label>有效期 <input id="paGrantExpiry" type="datetime-local"/></label>
         </div>
         <p class="hint">0 表示不限，空有效期表示长期授权。</p>
@@ -2019,7 +2029,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
           <button class="btn btn-neutral btn-sm" onclick="resetPersonalGrant()">清空表单</button>
         </div>
         <div class="table-wrap"><table>
-          <thead><tr><th>模型</th><th>状态</th><th>QPS / 日请求 / 月 Token</th><th>有效期</th><th>操作</th></tr></thead>
+          <thead><tr><th>模型</th><th>状态</th><th>QPS / 日请求 / 月 Token</th><th>报文记录</th><th>有效期</th><th>操作</th></tr></thead>
           <tbody id="paGrantRows"></tbody>
         </table></div>
       </div>
@@ -2603,7 +2613,7 @@ function navTo(page, skipLoad = false){
   if(page==='services') loadServices();
   if(page==='apps')     loadApps();
   if(page==='personal'){ loadPersonalAccessMeta(); loadPersonalAccess(); }
-  if(page==='audit')  { fillAuditFilters(); loadStats(); loadAudit(); }
+  if(page==='audit')  { fillAuditFilters(); loadAudit(); }
   if(page==='payload'){ fillPayloadFilters(); loadPayloadMeta(); loadPayload(); }
   if(page==='settings') loadConfig();
 }
@@ -4715,30 +4725,48 @@ async function deleteAccessRule(id){
  * 统计卡片。**必须与下方审计列表同口径**：卡片少传一个筛选条件，
  * 用户就会拿"全量汇总"去解释"按应用编码筛出来的列表"。appCode 是 2026-08-24 补上的。
  */
-async function loadStats(appId, appCode, modelId){
+async function loadStats(filters, personal, version){
+  for(const id of ['statTotal','statTokens','statLatency','statSuccess']) $(id).textContent='-';
+  $('statRange').textContent=filters.startTime && filters.endTime ? fmtTime(filters.startTime)+' 至 '+fmtTime(filters.endTime) : '';
+  if(personal && !filters.um) return;
   try{
-    const params = new URLSearchParams();
-    if(appId)   params.set('appId',   appId);
-    if(appCode) params.set('appCode', appCode);
-    if(modelId) params.set('modelId', modelId);
-    const r = await fetch(apiUrl('/stats/usage?')+params, {headers:hdrs()});
-    const j = await r.json();
-    if(!isOk(j)) return;
-    const d = j.data;
-    $('statTotal').textContent   = fmtNum(d.totalRequests);
-    $('statTokens').textContent  = fmtNum((d.totalInputTokens||0)+(d.totalOutputTokens||0));
-    $('statLatency').textContent = d.avgLatencyMs!=null ? Math.round(d.avgLatencyMs)+'ms' : '-';
-    $('statSuccess').textContent = d.successRate!=null  ? (d.successRate*100).toFixed(1)+'%' : '-';
-    $('statRange').textContent   = '近30天';
-  }catch(e){
-    // 后端未连接时显示演示数据
-    $('statTotal').textContent   = '12,480';
-    $('statTokens').textContent  = '3,204,560';
-    $('statLatency').textContent = '287ms';
-    $('statSuccess').textContent = '98.2%';
-    $('statRange').textContent   = '近30天（演示）';
-  }
+    const params = new URLSearchParams(Object.entries(filters).filter(([,value])=>value!==''));
+    const path=personal?'/stats/personal/usage':'/stats/usage';
+    const r=await fetch(apiUrl(path+'?'+params), {headers:hdrs()});
+    const j=await r.json();
+    if(version!==auditRequestVersion || !isOk(j)) return;
+    const d=j.data;
+    $('statTotal').textContent=fmtNum(d.totalRequests);
+    $('statTokens').textContent=fmtNum((d.totalInputTokens||0)+(d.totalOutputTokens||0));
+    $('statLatency').textContent=d.avgLatencyMs!=null?Math.round(d.avgLatencyMs)+'ms':'-';
+    $('statSuccess').textContent=d.successRate!=null?(d.successRate*100).toFixed(1)+'%':'-';
+  }catch(e){ console.warn('[ModelGate] 审计统计查询异常',e); }
 }
+
+function setAuditPeriod(period){
+  const end=new Date();
+  const year=end.getFullYear(), month=end.getMonth(), day=end.getDate();
+  const start=period==='week'?new Date(year,month,day-(end.getDay()+6)%7)
+    :period==='month'?new Date(year,month,1)
+    :period==='quarter'?new Date(year,Math.floor(month/3)*3,1):new Date(year,month,day-30);
+  const local=date=>new Date(date.getTime()-date.getTimezoneOffset()*60000).toISOString().slice(0,19);
+  $('auditPeriod').value=period;
+  $('auditStart').value=local(start);
+  $('auditEnd').value=local(end);
+}
+
+function switchAuditScope(reload=true){
+  const personal=$('auditScope').value==='personal';
+  for(const id of ['auditApp','auditAppId','auditAppCode','auditTraffic','auditServiceId']) $(id).hidden=personal;
+  $('auditUm').hidden=!personal;
+  $('auditColumnSubject').textContent=personal?'UM':'应用 appId';
+  $('auditColumnName').textContent=personal?'姓名':'应用编码';
+  $('auditTbody').textContent='';
+  $('auditPager').textContent='';
+  if(reload) loadAudit();
+}
+
+let auditRequestVersion=0;
 
 function fmtNum(n){
   if(n==null||n===0) return '0';
@@ -4753,30 +4781,48 @@ function fmtNum(n){
  *                  否则在第 5 页改条件会查到一个多半为空的页。翻页时传 false。
  */
 async function loadAudit(resetPage = true){
-  if(resetPage) pageState.audit.pageIndex = 1;
-  // 查询时同步刷新统计摘要（按当前筛选条件）
-  loadStats($('auditAppId').value.trim(), $('auditAppCode').value.trim(), $('auditModel').value);
+  if(resetPage) pageState.audit.pageIndex=1;
+  const version=++auditRequestVersion;
+  const personal=$('auditScope').value==='personal';
+  const filters={
+    modelId:$('auditModel').value,
+    status:$('auditStatus').value,
+    traceId:$('auditTrace').value.trim(),
+    startTime:$('auditStart').value,
+    endTime:$('auditEnd').value
+  };
+  if(personal) filters.um=$('auditUm').value.trim();
+  else Object.assign(filters,{appId:$('auditAppId').value.trim(),appCode:$('auditAppCode').value.trim(),
+    trafficType:$('auditTraffic').value,serviceId:$('auditServiceId').value.trim()});
+  if(!filters.startTime || !filters.endTime || new Date(filters.startTime)>new Date(filters.endTime)){
+    toast('请选择完整且有效的审计时间范围','error');
+    return;
+  }
+  loadStats(filters,personal,version);
+  if(personal && !filters.um){
+    renderAudit([]);
+    $('auditPager').textContent='';
+    return;
+  }
   try{
-    const qs = pageQuery('audit', {
-      // appId 取输入框而非下拉：下拉只是回填输入框的挑选器，见筛选区注释
-      appId:   $('auditAppId').value.trim(),
-      appCode: $('auditAppCode').value.trim(),
-      modelId: $('auditModel').value,
-      trafficType: $('auditTraffic').value,
-      serviceId:   $('auditServiceId').value.trim(),
-      status:  $('auditStatus').value,
-      traceId: $('auditTrace').value,
-    });
-    const r = await fetch(apiUrl(`/audit/query?${qs}`), {headers:hdrs()});
-    const j = await r.json();
-    if(!isOk(j)){ toast('查询审计日志失败: '+errMsg(j),'error'); return; }
-    renderAudit(applyPage('audit', j.data || {}));
-    renderPager('audit', 'auditPager', 'audit');
+    const qs=pageQuery('audit',filters);
+    const path=personal?'/audit/personal/query':'/audit/query';
+    const r=await fetch(apiUrl(path+'?'+qs),{headers:hdrs()});
+    const j=await r.json();
+    if(version!==auditRequestVersion) return;
+    if(!isOk(j)){
+      renderAudit([]);
+      $('auditPager').textContent='';
+      toast('查询审计日志失败: '+errMsg(j),'error');
+      return;
+    }
+    renderAudit(applyPage('audit',j.data || {}));
+    renderPager('audit','auditPager','audit');
   }catch(e){
-    console.warn('[ModelGate] 审计查询异常', e);
-    pageState.audit = {pageIndex:1, pageSize:DEMO_AUDIT.length||20, total:DEMO_AUDIT.length, pages:1};
-    renderAudit(DEMO_AUDIT);
-    renderPager('audit', 'auditPager', 'audit');
+    if(version!==auditRequestVersion) return;
+    renderAudit([]);
+    $('auditPager').textContent='';
+    console.warn('[ModelGate] 审计查询异常',e);
   }
 }
 
@@ -4837,15 +4883,15 @@ function renderAudit(data){
     <tr>
       <td style="font-size:12px;white-space:nowrap">${fmtTime(a.createTime)}</td>
       <td><code style="font-size:11px" title="${escHtml(a.traceId||'')}">${(a.traceId||'').slice(0,12)}...</code></td>
-      <td>${escHtml(a.appId||'-')}</td>
-      <td style="font-size:12px">${escHtml(a.appCode||'-')}</td>
+      <td>${escHtml((a.um||a.appId)||'-')}</td>
+      <td style="font-size:12px">${escHtml((a.personName||a.appCode)||'-')}</td>
       <td>${targetCell(a)}</td>
       <td style="font-size:12px">${escHtml(a.clientIp||'-')}</td>
       <td>${statusTag(a.httpStatus)}</td>
       <td>${a.latencyMs!=null?a.latencyMs+'ms':'-'}</td>
       <td>${(a.inputTokens||0)+(a.outputTokens||0)||'-'}</td>
       <td><button class="btn btn-neutral btn-sm" title="按 traceId 查这次调用的请求/响应报文"
-                  onclick="payloadOfTrace(${jsArg(a.traceId||'')})">📨 报文</button></td>
+                  onclick="payloadOfTrace(${jsArg(a.traceId||'')},${jsArg(a.um||'')})">📨 报文</button></td>
     </tr>
   `).join('');
 }
@@ -4856,9 +4902,12 @@ function renderAudit(data){
  * navTo 传 skipLoad=true：不这么做会先发一次无条件查询，与随后带 traceId 的查询并发，
  * 无条件那次更慢、往往后到并把结果盖掉（详见 navTo 注释）。这里只发一次请求。
  */
-function payloadOfTrace(traceId){
+function payloadOfTrace(traceId, um=''){
   navTo('payload', true);
   resetPayloadFilters(false);
+  $('pl_scope').value=um?'personal':'app';
+  $('pl_um').value=um;
+  switchPayloadScope(false);
   $('pl_trace').value = traceId || '';
   loadPayload();
 }
@@ -4978,9 +5027,18 @@ function renderPayloadNeedNarrow(kw){
   $('payloadPager').innerHTML = '';
 }
 
+let payloadRequestVersion=0;
 async function loadPayload(resetPage = true){
   if(resetPage) pageState.payload.pageIndex = 1;
+  const version=++payloadRequestVersion;
   const tbody = $('payloadTbody');
+  const personal=$('pl_scope').value==='personal';
+  const um=$('pl_um').value.trim();
+  if(personal && !um){
+    tbody.innerHTML='<tr class="empty-row"><td colspan="13">请输入 UM 后查询</td></tr>';
+    $('payloadPager').textContent='';
+    return;
+  }
   // 前置拦截：条件不合法就不发请求，直接给出可点击的补救路径
   const kw = $('pl_keyword').value.trim();
   if(kw && !payloadNarrowed()){ renderPayloadNeedNarrow(kw); return; }
@@ -4994,11 +5052,12 @@ async function loadPayload(resetPage = true){
     const searchHeaders = $('pl_keyword_scope').value === 'headers';
     const qs = pageQuery('payload', {
       // appId 取输入框而非下拉：下拉只是回填输入框的挑选器，见筛选区注释
-      appId:          $('pl_appId').value.trim(),
-      appCode:        $('pl_appCode').value.trim(),
+      um:             personal?um:'',
+      appId:          personal?'':$('pl_appId').value.trim(),
+      appCode:        personal?'':$('pl_appCode').value.trim(),
       modelId:        $('pl_model').value,
-      trafficType:    $('pl_traffic').value,
-      serviceId:      $('pl_serviceId').value.trim(),
+      trafficType:    personal?'':$('pl_traffic').value,
+      serviceId:      personal?'':$('pl_serviceId').value.trim(),
       traceId:        $('pl_trace').value,
       isStream:       $('pl_stream').value,
       upstreamStatus: $('pl_status').value,
@@ -5011,8 +5070,10 @@ async function loadPayload(resetPage = true){
       requestKeyword: searchHeaders ? '' : $('pl_keyword').value,
       headerKeyword:  searchHeaders ? $('pl_keyword').value : '',
     });
-    const r = await fetch(apiUrl(`/payload/query?${qs}`), {headers:hdrs()});
+    const path=personal?'/payload/personal/query':'/payload/query';
+    const r = await fetch(apiUrl(path+'?'+qs), {headers:hdrs()});
     const j = await r.json();
+    if(version!==payloadRequestVersion) return;
     if(!isOk(j)){
       // 关键字缺少收窄条件时后端会拒绝，错误文案本身就是操作指引，原样弹出来
       toast('查询报文失败: '+errMsg(j),'error');
@@ -5026,10 +5087,22 @@ async function loadPayload(resetPage = true){
     renderPager('payload', 'payloadPager', 'payload');
     setStatus(true);
   }catch(e){
+    if(version!==payloadRequestVersion) return;
     console.warn('[ModelGate] 报文查询异常', e);
     tbody.innerHTML = `<tr class="empty-row"><td colspan="13" style="color:#f59e0b">请求异常: ${escHtml(e.message)}</td></tr>`;
     $('payloadPager').innerHTML = '';
   }
+}
+
+function switchPayloadScope(reload=true){
+  const personal=$('pl_scope').value==='personal';
+  for(const id of ['pl_app','pl_appId','pl_appCode','pl_traffic','pl_serviceId']) $(id).hidden=personal;
+  $('pl_um').hidden=!personal;
+  $('payloadColumnSubject').textContent=personal?'UM':'应用 appId';
+  $('payloadColumnName').textContent=personal?'姓名':'应用编码';
+  $('payloadTbody').textContent='';
+  $('payloadPager').textContent='';
+  if(reload) loadPayload();
 }
 
 function payloadGo(p){ pageState.payload.pageIndex = Math.max(1, p); loadPayload(false); }
@@ -5038,7 +5111,7 @@ function payloadSize(n){ pageState.payload.pageSize = parseInt(n)||20; loadPaylo
 /** 清空全部筛选条件。reload=false 时只清不查（供 payloadOfTrace 先清后填再查）。 */
 function resetPayloadFilters(reload = true){
   ['pl_app','pl_appId','pl_appCode','pl_model','pl_trace','pl_stream','pl_status','pl_finish','pl_truncated',
-   'pl_start','pl_end','pl_keyword'].forEach(id => { const el = $(id); if(el) el.value = ''; });
+   'pl_start','pl_end','pl_keyword','pl_um','pl_traffic','pl_serviceId'].forEach(id => { const el = $(id); if(el) el.value = ''; });
   $('pl_keyword_scope').value = 'request';
   updatePayloadKeywordUi();
   if(reload) loadPayload();
@@ -5076,8 +5149,8 @@ function renderPayload(data){
       <td><code style="font-size:11px" title="${escHtml(p.traceId||'')}">${escHtml((p.traceId||'').slice(0,12))}…</code>
           <span onclick="copyText('${escHtml(p.traceId||'')}')" style="cursor:pointer;color:#6366f1;font-size:11px"
                 title="复制完整 TraceID">复制</span></td>
-      <td style="font-size:12px">${escHtml(p.appId||'-')}</td>
-      <td style="font-size:12px">${escHtml(p.appCode||'-')}</td>
+      <td style="font-size:12px">${escHtml((p.um||p.appId)||'-')}</td>
+      <td style="font-size:12px">${escHtml((p.personName||p.appCode)||'-')}</td>
       <td style="font-size:12px">${targetCell(p)}</td>
       <td>${p.isStream ? '<span class="tag tag-purple">流式</span>' : '<span class="tag tag-gray">非流式</span>'}</td>
       <td>${statusTag(p.upstreamStatus)}</td>
@@ -5090,9 +5163,9 @@ function renderPayload(data){
       <td style="font-size:12px;color:#475569;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
           title="${escHtml(p.responsePreview||'')}${p.responseTextLen?`（共 ${fmtLen(p.responseTextLen)}）`:''}">${escHtml(p.responsePreview||'-')}${truncTag(p.truncated)}</td>
       <td style="white-space:nowrap">
-        <button class="btn btn-neutral btn-sm" onclick="openPayloadDetail(${p.id})">查看</button>
-        <button class="btn btn-warning btn-sm" title="把这一发请求重新打给上游复现问题（会真实调用上游）"
-                onclick="openPayloadReplay(${p.id})">▶ 回放</button>
+        <button class="btn btn-neutral btn-sm" onclick="openPayloadDetail(${jsArg(String(p.id))},${jsArg(p.um||'')})">查看</button>
+        ${p.um?'':`<button class="btn btn-warning btn-sm" title="把这一发请求重新打给上游复现问题（会真实调用上游）"
+                onclick="openPayloadReplay(${p.id})">▶ 回放</button>`}
       </td>
     </tr>
   `).join('');
@@ -5176,7 +5249,7 @@ let _payloadTab = 'request';
 // 响应分析只在用户查看“响应正文”时执行一次；结果含工具调用与基础协议校验，不进入网关热路径。
 let _payloadResponseAnalysis = null;
 
-async function openPayloadDetail(id){
+async function openPayloadDetail(id, um=''){
   _payloadDetail = null;
   _payloadResponseAnalysis = null;
   $('pd_trace').textContent = '';
@@ -5185,22 +5258,24 @@ async function openPayloadDetail(id){
   $('pd_response_structured').innerHTML = '';
   openModal('payloadDetailModal');
   try{
-    const r = await fetch(apiUrl(`/payload/detail?id=${encodeURIComponent(id)}`), {headers:hdrs()});
+    const params=new URLSearchParams({id});
+    if(um) params.set('um',um);
+    const r = await fetch(apiUrl((um?'/payload/personal/detail':'/payload/detail')+'?'+params), {headers:hdrs()});
     const j = await r.json();
     if(!isOk(j)){ $('pd_meta').textContent = '加载失败: ' + errMsg(j); return; }
     _payloadDetail = j.data || {};
     $('pd_trace').textContent = _payloadDetail.traceId || '-';
     $('pd_meta').innerHTML = `
       <span>${fmtTime(_payloadDetail.createTime)}</span>
-      <span>${escHtml(_payloadDetail.appId||'-')} → ${escHtml(_payloadDetail.modelId||'-')}</span>
+      <span>${escHtml((_payloadDetail.um||_payloadDetail.appId)||'-')} → ${escHtml(_payloadDetail.modelId||'-')}</span>
       <span>${_payloadDetail.isStream?'流式 SSE':'非流式'}</span>
       <span>上游 ${statusTag(_payloadDetail.upstreamStatus)}</span>
       <span>${finishTag(_payloadDetail.finishReason)}</span>
       <span>Token ${tokenCell(_payloadDetail)}</span>
       <span>${truncTag(_payloadDetail.truncated) || '<span class="tag tag-green">完整</span>'}</span>
       <span style="flex:1"></span>
-      <button class="btn btn-neutral btn-sm" onclick="payloadToAudit('${escHtml(_payloadDetail.traceId||'')}')">看审计记录</button>
-      <button class="btn btn-warning btn-sm" onclick="openPayloadReplay(${_payloadDetail.id})">▶ 回放</button>`;
+      <button class="btn btn-neutral btn-sm" onclick="payloadToAudit(${jsArg(_payloadDetail.traceId||'')},${jsArg(_payloadDetail.um||'')},${jsArg(_payloadDetail.createTime||'')})">看审计记录</button>
+      ${_payloadDetail.um?'':`<button class="btn btn-warning btn-sm" onclick="openPayloadReplay(${_payloadDetail.id})">▶ 回放</button>`}`;
     setPayloadTab('request');
   }catch(e){
     console.warn('[ModelGate] 报文详情异常', e);
@@ -5446,7 +5521,7 @@ function replayFontStep(delta){
  * navTo 的 loadStats + loadAudit，加上这里的 loadAudit 又内部再调一次 loadStats。
  * 现在只剩 loadAudit 一次（它内部自带 loadStats）。
  */
-function payloadToAudit(traceId){
+function payloadToAudit(traceId, um='', recordTime=''){
   closeModal('payloadDetailModal');
   navTo('audit', true);
   // 按 traceId 精确定位这一条，其余筛选必须全清——漏清 appId/应用编码会与 traceId 取交集，
@@ -5455,6 +5530,15 @@ function payloadToAudit(traceId){
   $('auditModel').value = ''; $('auditStatus').value = '';
   $('auditTraffic').value = ''; $('auditServiceId').value = '';
   $('auditTrace').value = traceId || '';
+  $('auditScope').value=um?'personal':'app';
+  $('auditUm').value=um;
+  const day=recordTime.slice(0,10);
+  if(day){
+    $('auditPeriod').value='';
+    $('auditStart').value=day+'T00:00:00';
+    $('auditEnd').value=day+'T23:59:59';
+  }
+  switchAuditScope(false);
   loadAudit();
 }
 
@@ -5483,7 +5567,7 @@ function setPayloadTab(tab){
     hint = '请求原文（含用户 prompt）';
   }else if(tab==='headers'){
     content = prettyJson(d.requestHeaders);
-    hint = '全部入站请求头（包含 Authorization/Cookie/API Key/Token/JWT/签名等凭证字段）';
+    hint = _payloadDetail.um?'个人报文仅记录 Content-Type 和 Accept':'全部入站请求头（包含 Authorization/Cookie/API Key/Token/JWT/签名等凭证字段）';
   }else if(tab==='text'){
     const analysis = payloadResponseAnalysis(d);
     const formatted = formatPayloadResponse(d, analysis.calls);
@@ -7046,6 +7130,7 @@ function resetPersonalGrant(){
   $('paQps').value=2;
   $('paDaily').value=200;
   $('paMonthly').value=100000;
+  $('paPayloadLog').value='false';
   $('paGrantExpiry').value='';
   loadPersonalModelOptions();
 }
@@ -7059,6 +7144,7 @@ function editPersonalGrant(index){
   $('paQps').value=row.qpsLimit ?? 0;
   $('paDaily').value=row.dailyLimit ?? 0;
   $('paMonthly').value=row.monthlyTokens ?? 0;
+  $('paPayloadLog').value=String(row.payloadLogEnabled===true);
   $('paGrantExpiry').value=(row.expiresAt || '').replace(' ','T');
 }
 
@@ -7077,10 +7163,10 @@ function loadPersonalGrants(forExample=false){
       $('paGrantRows').innerHTML=pa.grants.map((a,i)=>
         '<tr><td>' + escapeHtml(a.modelName || a.modelId) + '<br/><code>' + escapeHtml(a.modelId) +
         '</code></td><td>' + (a.enabled ? '启用' : '停用') + '</td><td>' +
-        [a.qpsLimit,a.dailyLimit,a.monthlyTokens].map(fmt).join(' / ') + '</td><td>' + escapeHtml(fmtTime(a.expiresAt)) +
+        [a.qpsLimit,a.dailyLimit,a.monthlyTokens].map(fmt).join(' / ') + '</td><td>' + (a.payloadLogEnabled?'开启':'关闭') + '</td><td>' + escapeHtml(fmtTime(a.expiresAt)) +
         '</td><td><button class="btn btn-neutral btn-sm" onclick="editPersonalGrant(' + i + ')">编辑</button> ' +
         '<button class="btn btn-warning btn-sm" onclick="togglePersonalGrant(' + i + ')">' + (a.enabled ? '停用' : '启用') +
-        '</button></td></tr>').join('') || '<tr class="empty-row"><td colspan="5">暂无授权</td></tr>';
+        '</button></td></tr>').join('') || '<tr class="empty-row"><td colspan="6">暂无授权</td></tr>';
     }
   });
 }
@@ -7096,7 +7182,8 @@ function savePersonalGrant(){
   if(!pa.enabled || !pa.person) return;
   return personalAccessAction(async()=>{
     const body={um:pa.person.um, modelId:$('paGrantModel').value, qpsLimit:$('paQps').valueAsNumber,
-      dailyLimit:$('paDaily').valueAsNumber, monthlyTokens:$('paMonthly').valueAsNumber, expiresAt:personalAccessTime('paGrantExpiry')};
+      dailyLimit:$('paDaily').valueAsNumber, monthlyTokens:$('paMonthly').valueAsNumber,
+      payloadLogEnabled:$('paPayloadLog').value==='true', expiresAt:personalAccessTime('paGrantExpiry')};
     if(!body.modelId || ![body.qpsLimit,body.dailyLimit,body.monthlyTokens].every(n=>Number.isSafeInteger(n)&&n>=0)){
       throw new Error('请选择模型并填写非负整数额度');
     }
@@ -7379,7 +7466,7 @@ document.querySelectorAll('.modal-backdrop').forEach(el=>{
 window.onload = () => {
   loadModels();
   loadApps();
-  loadStats();   // 统计卡片初始加载（审计页）
+  setAuditPeriod('');
 };
 </script>
 </body>

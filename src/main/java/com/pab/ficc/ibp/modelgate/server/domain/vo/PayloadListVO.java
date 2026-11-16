@@ -24,6 +24,8 @@ public class PayloadListVO {
     private Long          id;
     private String        traceId;
     private String        appId;
+    private String        um;
+    private String        personName;
     /**
      * 应用编码（{@code mg_app.app_code}）。
      *

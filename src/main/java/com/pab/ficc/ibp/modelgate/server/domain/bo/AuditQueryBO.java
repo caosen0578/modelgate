@@ -3,6 +3,9 @@ package com.pab.ficc.ibp.modelgate.server.domain.bo;
 import com.pab.ficc.ibp.domain.base.bo.BaseBo;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
+import org.springframework.format.annotation.DateTimeFormat;
+
+import java.time.LocalDateTime;
 
 /**
  * 审计日志查询入参：行内分页字段（pageIndex / pageSize）+ 原有四个过滤条件。
@@ -48,5 +51,11 @@ public class AuditQueryBO extends BaseBo {
 
     /** 服务编码，为空不过滤。<b>精确匹配</b>，与 modelId 互斥使用（一条记录只会有其中一个）。 */
     private String serviceId;
+
+    @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
+    private LocalDateTime startTime;
+
+    @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME)
+    private LocalDateTime endTime;
 
 }

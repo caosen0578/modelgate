@@ -32,6 +32,7 @@ public final class PersonalAccessRequests {
             @PositiveOrZero Integer qpsLimit,
             @PositiveOrZero Integer dailyLimit,
             @PositiveOrZero @Max(9_007_199_254_740_991L) Long monthlyTokens,
+            Boolean payloadLogEnabled,
             LocalDateTime expiresAt) {}
 
     public record ImportUsers(@NotEmpty @Size(max = 100) List<@NotNull @Valid Profile> users) {}

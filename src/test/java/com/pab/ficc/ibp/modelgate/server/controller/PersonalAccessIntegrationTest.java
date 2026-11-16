@@ -371,9 +371,9 @@ class PersonalAccessIntegrationTest {
                 .expectBody().jsonPath("$.data[0].secretRetrievable").isEqualTo(true)
                 .jsonPath("$.data[0].secretEncrypted").doesNotExist()
                 .jsonPath("$.data[0].apiKey").doesNotExist();
-        assertTrue(mockingDetails(payload).getInvocations().stream()
-                .noneMatch(invocation -> invocation.getMethod().getName().equals("submit")),
-                "网关不得提交个人报文留档");
+        payload.flush();
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM mg_request_payload WHERE app_id = ?", Integer.class, aId),
+                "未开启的个人授权不落报文");
 
         var systemMonthlyKey = "quota:monthly:" + system + ":" + model + ":" + YearMonth.now();
         var personalMonthlyKey = "quota:monthly:" + aId + ":" + model + ":" + YearMonth.now();
@@ -398,6 +398,58 @@ class PersonalAccessIntegrationTest {
         }
         verify(cacheProvider, never()).del(systemMonthlyKey);
         verify(cacheProvider, never()).del(personalMonthlyKey);
+
+        var grant = new java.util.HashMap<>(Map.<String, Object>of("um", a, "modelId", model, "qpsLimit", 0,
+                "dailyLimit", 0, "monthlyTokens", 200));
+        grant.put("payloadLogEnabled", true);
+        client().put().uri(PERSONAL + "/auth/save").bodyValue(grant).exchange().expectStatus().isOk();
+        grant.remove("payloadLogEnabled");
+        client().put().uri(PERSONAL + "/auth/save").bodyValue(grant).exchange().expectStatus().isOk();
+        client().get().uri(PERSONAL + "/auth/list?um=" + a).exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data[0].payloadLogEnabled").isEqualTo(true);
+
+        String trace = "8888777766665555";
+        client().post().uri(CHAT + "?sensitive=skip-me").headers(h -> h.setBearerAuth(rotated))
+                .header("X-Trace-Id", trace).header("Cookie", "ignore-this-cookie")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(Map.of("model", model, "stream", true, "messages", List.of(Map.of("role", "user", "content", "录制测试"))))
+                .exchange().expectStatus().isOk().expectBody(String.class).value(body -> assertTrue(body.contains("[DONE]")));
+        assertTimeoutPreemptively(Duration.ofSeconds(5), () -> {
+            while (jdbc.queryForObject("SELECT COUNT(*) FROM mg_request_payload WHERE trace_id = ?", Integer.class, trace) == 0) {
+                payload.flush();
+                Thread.sleep(50);
+            }
+        });
+        audit.flush();
+        long payloadId = jdbc.queryForObject("SELECT id FROM mg_request_payload WHERE trace_id = ?", Long.class, trace);
+        client().get().uri("/modelgate/payload/personal/query?um=" + a + "&traceId=" + trace)
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.items[0].um").isEqualTo(a).jsonPath("$.data.items[0].appId").doesNotExist();
+        client().get().uri("/modelgate/payload/personal/detail?um=" + a + "&id=" + payloadId)
+                .exchange().expectStatus().isOk().expectHeader().valueEquals("Cache-Control", "no-store").expectBody()
+                .jsonPath("$.data.requestPath").isEqualTo(CHAT)
+                .jsonPath("$.data.requestHeaders").value((String value) -> {
+                    assertFalse(value.toLowerCase(java.util.Locale.ROOT).contains("authorization"));
+                    assertFalse(value.contains("ignore-this-cookie"));
+                }).jsonPath("$.data.responseRaw").value((String value) -> assertTrue(value.contains("[DONE]")));
+        client().get().uri("/modelgate/payload/personal/detail?um=" + b + "&id=" + payloadId)
+                .exchange().expectStatus().isBadRequest();
+        client().get().uri("/modelgate/payload/query?traceId=" + trace).exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.total").isEqualTo(0);
+        client().get().uri("/modelgate/payload/detail?id=" + payloadId).exchange().expectStatus().isBadRequest();
+        client().post().uri("/modelgate/payload/replay?id=" + payloadId).exchange().expectStatus().isBadRequest();
+
+        String range = "&startTime=" + LocalDate.now().minusDays(1) + "T00:00:00&endTime="
+                + LocalDate.now().plusDays(1) + "T00:00:00";
+        client().get().uri("/modelgate/audit/personal/query?um=" + a + "&traceId=" + trace + range)
+                .exchange().expectStatus().isOk().expectBody().jsonPath("$.data.items[0].um").isEqualTo(a);
+        client().get().uri("/modelgate/stats/personal/usage?um=" + a + "&traceId=" + trace + range)
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.totalInputTokens").isEqualTo(12).jsonPath("$.data.totalOutputTokens").isEqualTo(8);
+        client().get().uri("/modelgate/stats/personal/usage?um=" + a + "&endTime=2001-01-02T00:00:00&startTime=2001-01-01T00:00:00")
+                .exchange().expectStatus().isOk().expectBody().jsonPath("$.data.totalRequests").isEqualTo(0);
+        client().get().uri("/modelgate/stats/usage?appId=" + system + "&endTime=2001-01-02T00:00:00&startTime=2001-01-01T00:00:00")
+                .exchange().expectStatus().isOk().expectBody().jsonPath("$.data.totalRequests").isEqualTo(0);
     }
 
     private WebTestClient client() {
@@ -450,7 +502,7 @@ class PersonalAccessIntegrationTest {
             AuditService.class, RequestHeaderSnapshotter.class, UpstreamResponseParser.class, GatewayConfigService.class,
             PersonalAccessController.class, AppController.class, CredentialController.class, ModelAuthController.class,
             ServiceAuthController.class, AccessRuleController.class, AuditLogController.class, UsageStatsController.class,
-            GatewayConfigController.class,
+            GatewayConfigController.class, AuditQueryService.class, PayloadController.class, PayloadService.class,
             GlobalExceptionHandler.class, TraceWebFilter.class, TraceFilter.class, CredentialAuthFilter.class,
             AppAccessControlFilter.class, BodyParseFilter.class, ModelAuthFilter.class, QuotaFilter.class,
             PayloadCaptureFilter.class, ModelRouteFilter.class,
@@ -474,7 +526,8 @@ class PersonalAccessIntegrationTest {
         }
 
         @Bean CacheProvider isolatedRedis() { return mock(CacheProvider.class); }
-        @Bean PayloadService ignoredPayload() { return mock(PayloadService.class); }
+        @Bean ModelConnectivityService mockModelConnectivity() { return mock(ModelConnectivityService.class); }
+        @Bean ServiceConnectivityService mockServiceConnectivity() { return mock(ServiceConnectivityService.class); }
         @Bean ServiceRegistryService noServiceUpstream() { return mock(ServiceRegistryService.class); }
         @Bean com.pab.ficc.ibp.modelgate.server.admin.IpMatcher ipMatcher() {
             return new com.pab.ficc.ibp.modelgate.server.admin.IpMatcher();

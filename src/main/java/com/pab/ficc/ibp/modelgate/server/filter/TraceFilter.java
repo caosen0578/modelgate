@@ -12,6 +12,7 @@ import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
 import org.springframework.core.Ordered;
 import org.springframework.http.HttpStatusCode;
+import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Component;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
@@ -155,13 +156,23 @@ public class TraceFilter implements GlobalFilter, Ordered {
                                                 PayloadCaptureFilter.ATTR_RESPONSE_TRUNCATED)),
                                         httpStatus);
                             }
-                        } else if (!CredentialAuthFilter.isPersonal(exchange)
-                                && appId != null && modelId != null && responseBytes != null
+                        } else if (appId != null && modelId != null && responseBytes != null
                                 && capture.isFullMode()
                                 && modelAuthService.isPayloadLogEnabled(appId, modelId)) {
+                            var request = exchange.getRequest();
+                            boolean personal = CredentialAuthFilter.isPersonal(exchange);
+                            // 个人报文只保存协议所需的请求头与路径，避免把个人 Key 或 URL 参数写入留档。
+                            HttpHeaders headers = request.getHeaders();
+                            if (personal) {
+                                headers = new HttpHeaders();
+                                for (String name : java.util.List.of(HttpHeaders.CONTENT_TYPE, HttpHeaders.ACCEPT)) {
+                                    var values = request.getHeaders().get(name);
+                                    if (values != null) headers.addAll(name, values);
+                                }
+                            }
                             payloadService.submit(traceId, appId, modelId,
-                                    exchange.getRequest().getMethod().name(), fullPath(exchange),
-                                    exchange.getRequest().getHeaders(), requestBytes, responseBytes,
+                                    request.getMethod().name(), personal ? request.getURI().getRawPath() : fullPath(exchange),
+                                    headers, requestBytes, responseBytes,
                                     stream, Boolean.TRUE.equals(exchange.getAttribute(
                                             PayloadCaptureFilter.ATTR_RESPONSE_TRUNCATED)),
                                     httpStatus);

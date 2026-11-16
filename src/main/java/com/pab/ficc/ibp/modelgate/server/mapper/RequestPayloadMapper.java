@@ -29,6 +29,9 @@ public interface RequestPayloadMapper extends BaseMapper<RequestPayloadEntity> {
      * Druid 连接与线程的<b>上界</b>——没有它，上界是无穷。
      */
     int QUERY_TIMEOUT_SECONDS = 30;
+    String APPLICATION_PAYLOAD_SCOPE = "NOT EXISTS (SELECT 1 FROM mg_app p WHERE p.app_id = mg_request_payload.app_id "
+            + "AND p.subject_type = 'PERSONAL')";
+    String AUDIT_MATCH = "WHERE a.trace_id = mg_request_payload.trace_id AND a.app_id = mg_request_payload.app_id ";
 
     /** 批量插入，与 {@code AuditLogMapper.batchInsert} 同一套写法（每 1000 条一批）。 */
     default boolean batchInsert(List<RequestPayloadEntity> list) {
@@ -117,16 +120,16 @@ public interface RequestPayloadMapper extends BaseMapper<RequestPayloadEntity> {
             "       LEFT(request_body,  160)   AS request_preview, " +
             "       LEFT(response_text, 160)   AS response_preview, " +
             "       (SELECT a.input_tokens  FROM mg_audit_log a " +
-            "         WHERE a.trace_id = mg_request_payload.trace_id " +
+            AUDIT_MATCH +
             "         ORDER BY a.id LIMIT 1) AS input_tokens, " +
             "       (SELECT a.output_tokens FROM mg_audit_log a " +
-            "         WHERE a.trace_id = mg_request_payload.trace_id " +
+            AUDIT_MATCH +
             "         ORDER BY a.id LIMIT 1) AS output_tokens, " +
             "       (SELECT a.token_source  FROM mg_audit_log a " +
-            "         WHERE a.trace_id = mg_request_payload.trace_id " +
+            AUDIT_MATCH +
             "         ORDER BY a.id LIMIT 1) AS token_source, " +
             "       (SELECT COUNT(*)        FROM mg_audit_log a " +
-            "         WHERE a.trace_id = mg_request_payload.trace_id) AS audit_match_count " +
+            AUDIT_MATCH + ") AS audit_match_count " +
             "  FROM mg_request_payload ${ew.customSqlSegment}")
     IPage<PayloadListVO> selectListPage(IPage<PayloadListVO> page,
                                         @Param(Constants.WRAPPER) Wrapper<RequestPayloadEntity> wrapper);
@@ -138,22 +141,28 @@ public interface RequestPayloadMapper extends BaseMapper<RequestPayloadEntity> {
      * 详情页要显示的 Token 在 {@code mg_audit_log} 里（报文表按设计不冗余存）。
      * 同样用标量子查询，理由见 {@link #selectListPage}。
      */
+    default PayloadDetailVO selectDetailById(Long id) {
+        return selectScopedDetail(id, null);
+    }
+
     @Options(timeout = QUERY_TIMEOUT_SECONDS)
-    @Select("SELECT id, trace_id, app_id, traffic_type, model_id, service_id, is_stream, request_method, request_path, request_headers, request_body, response_raw, " +
+    @Select("<script>SELECT id, trace_id, app_id, traffic_type, model_id, service_id, is_stream, request_method, request_path, request_headers, request_body, response_raw, " +
             "       response_text, finish_reason, upstream_status, truncated, create_time, " +
             "       (SELECT a.input_tokens  FROM mg_audit_log a " +
-            "         WHERE a.trace_id = mg_request_payload.trace_id " +
+            AUDIT_MATCH +
             "         ORDER BY a.id LIMIT 1) AS input_tokens, " +
             "       (SELECT a.output_tokens FROM mg_audit_log a " +
-            "         WHERE a.trace_id = mg_request_payload.trace_id " +
+            AUDIT_MATCH +
             "         ORDER BY a.id LIMIT 1) AS output_tokens, " +
             "       (SELECT a.token_source  FROM mg_audit_log a " +
-            "         WHERE a.trace_id = mg_request_payload.trace_id " +
+            AUDIT_MATCH +
             "         ORDER BY a.id LIMIT 1) AS token_source, " +
             "       (SELECT COUNT(*)        FROM mg_audit_log a " +
-            "         WHERE a.trace_id = mg_request_payload.trace_id) AS audit_match_count " +
-            "  FROM mg_request_payload WHERE id = #{id}")
-    PayloadDetailVO selectDetailById(@Param("id") Long id);
+            AUDIT_MATCH + ") AS audit_match_count " +
+            "  FROM mg_request_payload WHERE id = #{id} AND " +
+            "<choose><when test='personalAppId != null'>app_id = #{personalAppId} AND traffic_type = 'model'</when>" +
+            "<otherwise>" + APPLICATION_PAYLOAD_SCOPE + "</otherwise></choose></script>")
+    PayloadDetailVO selectScopedDetail(@Param("id") Long id, @Param("personalAppId") String personalAppId);
 
     /**
      * 某个服务最近实际被调用过的入站路径（去重、按最后一次调用时间倒序）。
