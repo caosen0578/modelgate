@@ -219,6 +219,8 @@ class PersonalAccessIntegrationTest {
         assertTrue(oldA.matches("mgp_[0-9a-f]{48}"));
         assertFalse(oldA.contains(aId));
         long keyAId = keyA.path("id").asLong();
+        String deleteKeyA = PERSONAL + "/credentials/delete?um=" + a + "&id=" + keyAId;
+        client().delete().uri(deleteKeyA).exchange().expectStatus().isBadRequest();
         String encrypted = jdbc.queryForObject("SELECT secret_encrypted FROM mg_app_credential WHERE id = ?",
                 String.class, keyAId);
         assertNotNull(encrypted);
@@ -241,11 +243,20 @@ class PersonalAccessIntegrationTest {
         call(oldA, model, false).expectStatus().isOk().expectHeader().doesNotExist("X-Mg-App")
                 .expectBody().jsonPath("$.usage.total_tokens").isEqualTo(20);
         String rotated = issue(a).path("apiKey").asText();
+        client().get().uri(PERSONAL + "/page?keyword=" + a).exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.items[0].authCount").isEqualTo(1)
+                .jsonPath("$.data.items[0].credCount").isEqualTo(2)
+                .jsonPath("$.data.items[0].appId").doesNotExist();
         client().delete().uri(PERSONAL + "/credentials/revoke?um=" + b + "&id=" + keyA.path("id").asLong())
                 .exchange().expectStatus().isBadRequest();
         client().delete().uri(PERSONAL + "/credentials/revoke?um=" + a + "&id=" + keyA.path("id").asLong())
                 .exchange().expectStatus().isOk();
         client().get().uri(revealA).exchange().expectStatus().isBadRequest();
+        client().delete().uri(PERSONAL + "/credentials/delete?um=" + b + "&id=" + keyAId)
+                .exchange().expectStatus().isBadRequest();
+        client().delete().uri(deleteKeyA).exchange().expectStatus().isOk();
+        client().get().uri(PERSONAL + "/page?keyword=" + a).exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.items[0].credCount").isEqualTo(1);
         client().post().uri(PERSONAL + "/access/add")
                 .bodyValue(Map.of("um", a, "ruleType", "cidr", "ruleValue", "127.0.0.1/33"))
                 .exchange().expectStatus().isBadRequest();

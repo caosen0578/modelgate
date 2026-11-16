@@ -15,10 +15,14 @@ public final class PersonalAccessViews {
     public record Meta(boolean enabled) {}
 
     public record Profile(String um, String name, String remark, boolean enabled,
-                          LocalDateTime createTime, LocalDateTime updateTime) {
+                          LocalDateTime createTime, LocalDateTime updateTime, Long authCount, Long credCount) {
         public static Profile of(AppInfoEntity app) {
+            return of(app, null, null);
+        }
+
+        public static Profile of(AppInfoEntity app, Long authCount, Long credCount) {
             return new Profile(app.getPersonUm(), app.getAppName(), app.getRemark(),
-                    Boolean.TRUE.equals(app.getEnabled()), app.getCreateTime(), app.getUpdateTime());
+                    Boolean.TRUE.equals(app.getEnabled()), app.getCreateTime(), app.getUpdateTime(), authCount, credCount);
         }
     }
 

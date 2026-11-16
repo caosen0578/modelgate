@@ -112,6 +112,13 @@ public class ModelAuthService {
                 .collect(Collectors.groupingBy(AppModelAuthEntity::getAppId, Collectors.counting()));
     }
 
+    public Map<String, Long> countByAppId(List<String> appIds) {
+        if (appIds.isEmpty()) return Map.of();
+        return authMapper.selectList(new LambdaQueryWrapper<AppModelAuthEntity>()
+                        .select(AppModelAuthEntity::getAppId).in(AppModelAuthEntity::getAppId, appIds)).stream()
+                .collect(Collectors.groupingBy(AppModelAuthEntity::getAppId, Collectors.counting()));
+    }
+
     /**
      * 该 (接入系统, 模型) 是否开启了报文记录。
      *

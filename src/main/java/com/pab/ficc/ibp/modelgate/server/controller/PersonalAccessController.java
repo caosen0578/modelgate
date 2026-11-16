@@ -42,7 +42,7 @@ public class PersonalAccessController {
     @GetMapping(UrlConstant.PAGE)
     public Mono<Result<PageVo<PersonalAccessViews.Profile>>> page(AppQueryBO query) {
         PageSupport.validate(query, "个人接入");
-        return read(() -> PageVo.of(personal.page(query), PersonalAccessViews.Profile::of));
+        return read(() -> personal.page(query));
     }
 
     @Operation(summary = "按 UM 查看个人接入详情")
@@ -109,6 +109,12 @@ public class PersonalAccessController {
     @DeleteMapping(UrlConstant.PERSONAL_CREDENTIAL_REVOKE)
     public Mono<Result<Void>> revoke(@RequestParam("um") String um, @RequestParam("id") Long id) {
         return write(() -> personal.revoke(um, id));
+    }
+
+    @Operation(summary = "删除已禁用的个人 API Key")
+    @DeleteMapping(UrlConstant.PERSONAL_CREDENTIAL_DELETE)
+    public Mono<Result<Void>> deleteCredential(@RequestParam("um") String um, @RequestParam("id") Long id) {
+        return write(() -> personal.deleteCredential(um, id));
     }
 
     @Operation(summary = "分页查询个人可授权的已启用模型")

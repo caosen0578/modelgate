@@ -146,6 +146,13 @@ public class CredentialService {
                 .collect(Collectors.groupingBy(AppCredentialEntity::getAppId, Collectors.counting()));
     }
 
+    public Map<String, Long> countByAppId(List<String> appIds) {
+        if (appIds.isEmpty()) return Map.of();
+        return credentialMapper.selectList(new LambdaQueryWrapper<AppCredentialEntity>()
+                        .select(AppCredentialEntity::getAppId).in(AppCredentialEntity::getAppId, appIds)).stream()
+                .collect(Collectors.groupingBy(AppCredentialEntity::getAppId, Collectors.counting()));
+    }
+
     /**
      * 解密并返回凭证明文。
      *
@@ -243,11 +250,22 @@ public class CredentialService {
 
     /** 删除凭证并失效缓存，删除后该凭证下次请求立即 401。 */
     public void delete(String appId, Long credId) {
+        delete(getCredentialByIdAndApp(appId, credId));
+    }
+
+    public void deleteRevokedPersonalKey(String appId, Long credId) {
         AppCredentialEntity cred = getCredentialByIdAndApp(appId, credId);
-        credentialMapper.deleteById(credId);
+        if (!"api_key".equals(cred.getCredType()) || Boolean.TRUE.equals(cred.getEnabled())) {
+            throw new BusinessException(ErrorCode.INVALID_PARAMETER, "请先禁用个人 API Key，再删除凭证");
+        }
+        delete(cred);
+    }
+
+    private void delete(AppCredentialEntity cred) {
+        credentialMapper.deleteById(cred.getId());
         if (cred.getSecretHash() != null) cacheManager.evictCredentialCache(cred.getSecretHash());
         log.info("[Credential] 删除凭证: appId={}, credId={}, credName={}, type={}",
-                appId, credId, cred.getCredName(), cred.getCredType());
+                cred.getAppId(), cred.getId(), cred.getCredName(), cred.getCredType());
     }
 
     /**

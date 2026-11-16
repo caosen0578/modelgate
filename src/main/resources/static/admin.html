@@ -451,8 +451,8 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
       <div class="card" style="padding:0">
         <div class="table-wrap">
           <table>
-            <thead><tr><th><input type="checkbox" id="paSelectPage" aria-label="选择本页用户" onchange="selectPersonalPage(this.checked)"/></th><th>UM</th><th>姓名</th><th>状态</th><th>备注</th><th>开通时间</th><th>操作</th></tr></thead>
-            <tbody id="paRows"><tr class="empty-row"><td colspan="7">加载中…</td></tr></tbody>
+            <thead><tr><th><input type="checkbox" id="paSelectPage" aria-label="选择本页用户" onchange="selectPersonalPage(this.checked)"/></th><th>UM</th><th>姓名</th><th>已授权模型</th><th>凭证数</th><th>状态</th><th>备注</th><th>开通时间</th><th>操作</th></tr></thead>
+            <tbody id="paRows"><tr class="empty-row"><td colspan="9">加载中…</td></tr></tbody>
           </table>
           <div id="paPager"></div>
         </div>
@@ -2037,6 +2037,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
         </table></div>
       </div>
       <div data-pa-panel="example" hidden>
+        <p class="hint" id="paExampleCredential"></p>
         <div class="form-group"><label for="paGatewayBase">网关地址</label>
           <input id="paGatewayBase" oninput="editPersonalGatewayAddress()"/>
           <span class="hint" id="paGatewayAddressHint"></span>
@@ -2044,8 +2045,17 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
         <div class="form-group"><label for="paExampleModel">已授权模型</label>
           <select id="paExampleModel" onchange="renderPersonalExample()"></select></div>
         <pre id="paExample" style="white-space:pre-wrap;background:#f3f6fa;padding:12px;border-radius:6px"></pre>
-        <button class="btn btn-neutral btn-sm" id="paCopyExample" onclick="copyText($('paExample').textContent)">复制接入示例</button>
-        <p class="hint">示例不填真实 Key；只向老师交付网关接口、模型名和个人 Key。</p>
+        <div class="form-group"><label for="paTestKey">测试用 Key</label>
+          <input id="paTestKey" type="password" autocomplete="off" placeholder="输入个人 API Key"/></div>
+        <div class="flex gap-8">
+          <button class="btn btn-warning btn-sm" id="paRunTest" onclick="runPersonalConnectionTest()">测试连通</button>
+          <button class="btn btn-primary btn-sm" id="paCopyExample" onclick="copyText($('paExample').textContent)">复制示例</button>
+        </div>
+        <p class="hint">测试请求经过网关的鉴权、来源白名单、模型授权和配额。复制示例时使用占位符。</p>
+        <div id="paTestResult" hidden>
+          <p id="paTestMeta"></p>
+          <pre id="paTestBody" style="white-space:pre-wrap;overflow-wrap:anywhere;background:#f3f6fa;padding:12px;border-radius:6px"></pre>
+        </div>
       </div>
       <div data-pa-panel="access" hidden>
         <p style="font-size:13px;color:#374151;margin-bottom:16px">⚠️ IP 白名单和域名白名单均为空时，不限制来源。配置域名后须同时匹配 IP 和域名，只有域名规则时拒绝调用。</p>
@@ -2522,6 +2532,11 @@ function closeModal(id){
   $(id).classList.remove('open');
   if(id==='credShowModal') $('credShowBody').replaceChildren();
   if(id==='secretViewModal') $('secretViewValue').textContent='';
+  if(id==='paDetailModal'){
+    $('paTestKey').value='';
+    $('paTestBody').textContent='';
+    $('paTestResult').hidden=true;
+  }
 }
 
 // ============================================================
@@ -6632,6 +6647,9 @@ function loadPersonalAccess(){
       '<tr><td><input type="checkbox" data-pa-select aria-label="选择 ' + escapeHtml(p.um) + '" ' +
       (p.enabled ? (paSelected.has(p.um) ? 'checked ' : '') : 'disabled ') +
       'onchange="selectPersonalUser(' + i + ',this.checked)"/></td><td><code>' + escapeHtml(p.um) + '</code></td><td>' + escapeHtml(p.name) +
+      '</td><td><button class="btn btn-neutral btn-sm" onclick="openPersonalAccess(' + i + ',\'auth\')">' + Number(p.authCount || 0) +
+      ' 个</button></td><td><button class="btn btn-neutral btn-sm" onclick="openPersonalAccess(' + i + ',\'keys\')">' +
+      Number(p.credCount || 0) + ' 个</button>' +
       '</td><td>' + (p.enabled ? '启用' : '停用') + '</td><td>' + escapeHtml(p.remark || '-') +
       '</td><td>' + escapeHtml(fmtTime(p.createTime)) +
       '</td><td><div class="flex gap-8"><button class="btn btn-neutral btn-sm" onclick="openPersonalAccess(' + i +
@@ -6639,7 +6657,7 @@ function loadPersonalAccess(){
       ')">编辑</button><button class="btn btn-neutral btn-sm" onclick="openPersonalAccess(' + i +
       ',\'usage\')">用量</button><button class="btn btn-warning btn-sm" onclick="togglePersonalAccount(' + i +
       ')">' + (p.enabled ? '停用' : '启用') + '</button></div></td></tr>'
-    ).join('') || '<tr class="empty-row"><td colspan="7">暂无接入用户</td></tr>';
+    ).join('') || '<tr class="empty-row"><td colspan="9">暂无接入用户</td></tr>';
     for(const row of pa.rows) if(paSelected.has(row.um)){
       if(row.enabled) paSelected.set(row.um,row);
       else paSelected.delete(row.um);
@@ -6883,6 +6901,10 @@ function openPersonalAccess(index, tab='info'){
     pa.person=person;
     pa.grants=[];
     pa.keys=[];
+    pa.exampleKey=null;
+    $('paExampleCredential').textContent='';
+    $('paTestKey').value='';
+    $('paTestResult').hidden=true;
     $('paGrantRows').textContent='';
     $('paKeyRows').textContent='';
     $('paKeyName').value='';
@@ -6916,6 +6938,10 @@ function showPersonalPanel(tab){
   document.querySelectorAll('[data-pa-panel]').forEach(el=>el.hidden=el.dataset.paPanel!==tab);
   if(tab==='auth'){ resetPersonalGrant(); loadPersonalGrants(); }
   if(tab==='example'){ refreshPersonalGatewayAddress(); loadPersonalGrants(true); }
+  else {
+    $('paTestKey').value='';
+    $('paTestResult').hidden=true;
+  }
   if(tab==='keys') loadPersonalKeys();
   if(tab==='access') personalAccessAction(loadPersonalSourceRules);
   if(tab==='usage') loadPersonalUsage();
@@ -7070,6 +7096,7 @@ function savePersonalGrant(){
       await personalAccessRequest('/auth/save','PUT',body);
       toast('模型授权已保存');
       await loadPersonalGrants();
+      await loadPersonalAccess();
     }finally{ $('paGrantSave').disabled=!pa.enabled; }
   });
 }
@@ -7093,18 +7120,20 @@ function loadPersonalKeys(){
     if(pa.person?.um!==um) return;
     pa.keys=rows || [];
     $('paKeyRows').innerHTML=pa.keys.map((key,index)=>{
-      let actions='—';
+      let actions='<button class="btn btn-neutral btn-sm" onclick="openPersonalCredentialExample(' + index + ')">接入示例</button> ';
       if(key.enabled){
-        actions='<button class="btn btn-danger btn-sm" onclick="revokePersonalAccessKey(' + index + ')">撤销</button>';
+        actions+='<button class="btn btn-warning btn-sm" data-api="DELETE /modelgate/personal-access/credentials/revoke" onclick="revokePersonalAccessKey(' + index + ')">禁用</button> ';
         const expired=key.expiresAt && Date.parse(key.expiresAt.replace(' ','T'))<=Date.now();
         if(pa.enabled && pa.person.enabled && !expired){
           const unavailable=key.secretRetrievable ? '' : 'disabled title="该 Key 仅存哈希，请重新签发" ';
-          actions='<button class="btn btn-neutral btn-sm" data-api="GET /modelgate/personal-access/credentials/secret" '
-            + unavailable + 'onclick="revealPersonalAccessKey(' + index + ')">查看密钥</button> ' + actions;
+          actions+='<button class="btn btn-neutral btn-sm" data-api="GET /modelgate/personal-access/credentials/secret" '
+            + unavailable + 'onclick="revealPersonalAccessKey(' + index + ')">查看密钥</button>';
         }
+      }else{
+        actions+='<button class="btn btn-danger btn-sm" data-api="DELETE /modelgate/personal-access/credentials/delete" onclick="deletePersonalAccessKey(' + index + ')">删除</button>';
       }
       return '<tr><td>' + escapeHtml(key.credName) + '</td><td><code>****' + escapeHtml(key.accessKey || '') +
-        '</code></td><td>' + (key.enabled ? '启用' : '已撤销') + '</td><td>' + escapeHtml(fmtTime(key.expiresAt)) +
+        '</code></td><td>' + (key.enabled ? '启用' : '已禁用') + '</td><td>' + escapeHtml(fmtTime(key.expiresAt)) +
         '</td><td>' + actions + '</td></tr>';
     }).join('') ||
       '<tr class="empty-row"><td colspan="5">暂无凭证</td></tr>';
@@ -7141,6 +7170,7 @@ function issuePersonalAccessKey(){
       $('paIssuedDialog').showModal();
       $('paKeyName').value='';
       await loadPersonalKeys();
+      await loadPersonalAccess();
     }finally{ $('paIssue').disabled=!pa.enabled || !pa.person?.enabled; }
   });
 }
@@ -7151,12 +7181,31 @@ $('paIssuedDialog').addEventListener('close',()=>{
 
 function revokePersonalAccessKey(index){
   const key=pa.keys[index];
-  if(!pa.person || !key || !confirm('确认撤销该个人 Key？撤销后不可恢复。')) return;
+  if(!pa.person || !key || !confirm('确认禁用该个人 Key？禁用后不可恢复。')) return;
   return personalAccessAction(async()=>{
     await personalAccessRequest('/credentials/revoke' + personalAccessQuery({um:pa.person.um,id:key.id}),'DELETE');
-    toast('Key 已撤销');
+    toast('Key 已禁用');
     await loadPersonalKeys();
   });
+}
+
+function deletePersonalAccessKey(index){
+  const key=pa.keys[index];
+  if(!pa.person || !key || key.enabled || !confirm('确认删除这个已禁用的凭证？历史用量仍保留。')) return;
+  return personalAccessAction(async()=>{
+    await personalAccessRequest('/credentials/delete' + personalAccessQuery({um:pa.person.um,id:key.id}),'DELETE');
+    toast('凭证已删除');
+    await loadPersonalKeys();
+    await loadPersonalAccess();
+  });
+}
+
+function openPersonalCredentialExample(index){
+  pa.exampleKey=pa.keys[index];
+  $('paExampleCredential').textContent=pa.exampleKey?.credName || '';
+  $('paTestKey').value='';
+  $('paTestResult').hidden=true;
+  showPersonalPanel('example');
 }
 
 async function refreshPersonalGatewayAddress(){
@@ -7182,21 +7231,63 @@ function editPersonalGatewayAddress(){
 }
 
 function renderPersonalExample(){
+  const request=personalConnectionRequest();
+  $('paCopyExample').disabled=pa.addressLoading || !request;
+  $('paRunTest').disabled=pa.addressLoading || !request || pa.testing;
+  $('paRequestAddress').textContent=request ? '请求地址：' + request.url : '';
+  $('paTestResult').hidden=true;
+  if(!request){ $('paExample').textContent='请先配置有效的模型授权。'; return; }
+  $('paExample').textContent=['curl -X POST ' + shellSingleQuoted(request.url),
+    "  -H 'Authorization: Bearer <个人 API Key>'","  -H 'Content-Type: application/json'",
+    '  -d ' + shellSingleQuoted(request.body)].join(' \\\n');
+}
+
+function personalConnectionRequest(){
   const model=$('paExampleModel').value;
   const grant=pa.grants.find(a=>a.modelId===model);
-  $('paCopyExample').disabled=pa.addressLoading || !grant;
-  $('paRequestAddress').textContent='';
-  if(!grant){ $('paExample').textContent='请先配置有效的模型授权。'; return; }
+  if(!grant) return null;
   const type=grant.modelType;
   const path=type==='embedding' ? '/v1/embeddings' : type==='image' ? '/v1/images/generations' :
     type==='audio' ? '/v1/audio/speech' : '/v1/chat/completions';
   const body=type==='embedding' ? {model,input:'你好'} : type==='image' ? {model,prompt:'一幅山水画'} :
     type==='audio' ? {model,input:'你好',voice:'alloy'} : {model,messages:[{role:'user',content:'你好'}],stream:false};
-  const requestUrl=$('paGatewayBase').value.trim().replace(/\/+$/,'') + path;
-  $('paRequestAddress').textContent='请求地址：' + requestUrl;
-  $('paExample').textContent=['curl -X POST ' + shellSingleQuoted(requestUrl),
-    "  -H 'Authorization: Bearer <个人 API Key>'","  -H 'Content-Type: application/json'",
-    '  -d ' + shellSingleQuoted(JSON.stringify(body,null,2))].join(' \\\n');
+  return {url:$('paGatewayBase').value.trim().replace(/\/+$/,'') + path, body:JSON.stringify(body,null,2)};
+}
+
+async function runPersonalConnectionTest(){
+  const request=personalConnectionRequest();
+  const person=pa.person;
+  const cred=pa.exampleKey;
+  const version=pa.detailVersion;
+  if(!request || pa.testing || pa.addressLoading) return;
+  pa.testing=true;
+  $('paRunTest').disabled=true;
+  const started=Date.now();
+  const isCurrent=()=>pa.detailVersion===version && $('paDetailModal').classList.contains('open')
+    && !document.querySelector('[data-pa-panel="example"]').hidden && personalConnectionRequest()?.url===request.url
+    && personalConnectionRequest()?.body===request.body;
+  try{
+    let key=$('paTestKey').value.trim();
+    if(!key && cred?.secretRetrievable && cred.enabled && !pa.addressEdited){
+      key=await personalAccessRequest('/credentials/secret' + personalAccessQuery({um:person.um,id:cred.id}));
+    }
+    if(!isCurrent()) return;
+    if(!key){ toast('请输入测试用个人 API Key','error'); return; }
+    const response=await fetch(request.url,{method:'POST',redirect:'error',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+key},body:request.body});
+    const body=await response.text();
+    if(!isCurrent()) return;
+    const trace=response.headers.get('X-Trace-Id');
+    $('paTestMeta').textContent=(response.ok && body.trim()?'连通':'失败') + ' · HTTP ' + response.status +
+      ' · ' + (Date.now()-started) + 'ms' + (trace?' · traceId='+trace:'');
+    $('paTestBody').textContent=body;
+    $('paTestResult').hidden=false;
+  }catch(error){
+    if(isCurrent()) toast(error.message || '测试请求失败','error');
+  }finally{
+    pa.testing=false;
+    $('paRunTest').disabled=pa.addressLoading || !personalConnectionRequest();
+  }
 }
 
 function loadPersonalUsage(){

@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.pab.ficc.ibp.domain.base.vo.PageVo;
 import com.pab.ficc.ibp.modelgate.server.admin.PersonalSourcePolicy;
 import com.pab.ficc.ibp.modelgate.server.common.AppSubject;
 import com.pab.ficc.ibp.modelgate.server.common.BusinessException;
@@ -58,15 +59,20 @@ public class PersonalAccessService {
         return new PersonalAccessViews.Meta(enabled);
     }
 
-    public IPage<AppInfoEntity> page(AppQueryBO query) {
+    public PageVo<PersonalAccessViews.Profile> page(AppQueryBO query) {
         String keyword = query.getKeyword() == null ? "" : query.getKeyword().strip();
-        return appMapper.selectPage(new Page<>(query.getPageIndex(), query.getPageSize()),
+        IPage<AppInfoEntity> page = appMapper.selectPage(new Page<>(query.getPageIndex(), query.getPageSize()),
                 new LambdaQueryWrapper<AppInfoEntity>()
                         .eq(AppInfoEntity::getSubjectType, AppSubject.PERSONAL)
                         .and(!keyword.isEmpty(), w -> w.like(AppInfoEntity::getPersonUm, keyword)
                                 .or().like(AppInfoEntity::getAppName, keyword))
                         .eq(query.getEnabled() != null, AppInfoEntity::getEnabled, query.getEnabled())
                         .orderByDesc(AppInfoEntity::getId));
+        List<String> ids = page.getRecords().stream().map(AppInfoEntity::getAppId).toList();
+        Map<String, Long> authCounts = modelAuthService.countByAppId(ids);
+        Map<String, Long> credCounts = credentialService.countByAppId(ids);
+        return PageVo.of(page, app -> PersonalAccessViews.Profile.of(app, authCounts.getOrDefault(app.getAppId(), 0L),
+                credCounts.getOrDefault(app.getAppId(), 0L)));
     }
 
     public PersonalAccessViews.Profile detail(String um) {
@@ -178,6 +184,10 @@ public class PersonalAccessService {
     public void revoke(String um, Long id) {
         // 禁用而非删除，保留签发、撤销的元数据；个人接口不提供重新启用已撤销 Key。
         credentialService.disable(findPerson(um).getAppId(), id);
+    }
+
+    public void deleteCredential(String um, Long id) {
+        credentialService.deleteRevokedPersonalKey(findPerson(um).getAppId(), id);
     }
 
     public IPage<ModelInstanceEntity> models(ModelQueryBO query) {
