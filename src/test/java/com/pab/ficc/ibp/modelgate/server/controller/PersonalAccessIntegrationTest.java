@@ -51,6 +51,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -76,6 +77,7 @@ class PersonalAccessIntegrationTest {
     @Autowired PayloadService payload;
     @Autowired CredentialAuthFilter credentialAuthFilter;
     @Autowired PersonalAccessService personalAccessService;
+    @Autowired CacheProvider cacheProvider;
 
     @Test
     void applicationYamlExposesPersonalAccessSwitch() throws Exception {
@@ -372,6 +374,30 @@ class PersonalAccessIntegrationTest {
         assertTrue(mockingDetails(payload).getInvocations().stream()
                 .noneMatch(invocation -> invocation.getMethod().getName().equals("submit")),
                 "网关不得提交个人报文留档");
+
+        var systemMonthlyKey = "quota:monthly:" + system + ":" + model + ":" + YearMonth.now();
+        var personalMonthlyKey = "quota:monthly:" + aId + ":" + model + ":" + YearMonth.now();
+        when(cacheProvider.get(systemMonthlyKey)).thenReturn("100");
+        when(cacheProvider.get(personalMonthlyKey)).thenReturn("100");
+        for (int monthlyLimit : new int[]{100, 200}) {
+            client().put().uri("/modelgate/auth/update").bodyValue(Map.of("appId", system, "modelId", model,
+                            "qpsLimit", 0, "dailyLimit", 0, "monthlyTokens", monthlyLimit))
+                    .exchange().expectStatus().isOk();
+            client().put().uri(PERSONAL + "/auth/save").bodyValue(Map.of("um", a, "modelId", model,
+                            "qpsLimit", 0, "dailyLimit", 0, "monthlyTokens", monthlyLimit))
+                    .exchange().expectStatus().isOk();
+            for (String bearer : List.of(sysBearer, rotated)) {
+                var response = call(bearer, model, false);
+                if (monthlyLimit == 100) {
+                    response.expectStatus().isEqualTo(429).expectBody()
+                            .jsonPath("$.message").isEqualTo("Monthly token quota exceeded for this app");
+                } else {
+                    response.expectStatus().isOk().expectBody().jsonPath("$.usage.total_tokens").isEqualTo(20);
+                }
+            }
+        }
+        verify(cacheProvider, never()).del(systemMonthlyKey);
+        verify(cacheProvider, never()).del(personalMonthlyKey);
     }
 
     private WebTestClient client() {
