@@ -2044,6 +2044,12 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
           <span class="hint" id="paRequestAddress"></span></div>
         <div class="form-group"><label for="paExampleModel">已授权模型</label>
           <select id="paExampleModel" onchange="renderPersonalExample()"></select></div>
+        <div class="flex gap-8" style="align-items:center;margin-bottom:10px">
+          <span class="hint" id="paExampleSecretHint">示例默认使用密钥占位符，避免误发到公共渠道。</span>
+          <button class="btn btn-neutral btn-sm" id="paFillExampleSecret" hidden
+                  data-api="GET /modelgate/personal-access/credentials/secret"
+                  onclick="fillPersonalExampleSecret()">填入真实密钥</button>
+        </div>
         <pre id="paExample" style="white-space:pre-wrap;background:#f3f6fa;padding:12px;border-radius:6px"></pre>
         <div class="form-group"><label for="paTestKey">测试用 Key</label>
           <input id="paTestKey" type="password" autocomplete="off" placeholder="输入个人 API Key"/></div>
@@ -2051,7 +2057,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
           <button class="btn btn-warning btn-sm" id="paRunTest" onclick="runPersonalConnectionTest()">测试连通</button>
           <button class="btn btn-primary btn-sm" id="paCopyExample" onclick="copyText($('paExample').textContent)">复制示例</button>
         </div>
-        <p class="hint">测试请求经过网关的鉴权、来源白名单、模型授权和配额。复制示例时使用占位符。</p>
+        <p class="hint">测试请求经过网关的鉴权、来源白名单、模型授权和配额。</p>
         <div id="paTestResult" hidden>
           <p id="paTestMeta"></p>
           <pre id="paTestBody" style="white-space:pre-wrap;overflow-wrap:anywhere;background:#f3f6fa;padding:12px;border-radius:6px"></pre>
@@ -2533,6 +2539,7 @@ function closeModal(id){
   if(id==='credShowModal') $('credShowBody').replaceChildren();
   if(id==='secretViewModal') $('secretViewValue').textContent='';
   if(id==='paDetailModal'){
+    clearPersonalExampleSecret();
     $('paTestKey').value='';
     $('paTestBody').textContent='';
     $('paTestResult').hidden=true;
@@ -6902,6 +6909,7 @@ function openPersonalAccess(index, tab='info'){
     pa.grants=[];
     pa.keys=[];
     pa.exampleKey=null;
+    clearPersonalExampleSecret();
     $('paExampleCredential').textContent='';
     $('paTestKey').value='';
     $('paTestResult').hidden=true;
@@ -6939,6 +6947,7 @@ function showPersonalPanel(tab){
   if(tab==='auth'){ resetPersonalGrant(); loadPersonalGrants(); }
   if(tab==='example'){ refreshPersonalGatewayAddress(); loadPersonalGrants(true); }
   else {
+    clearPersonalExampleSecret();
     $('paTestKey').value='';
     $('paTestResult').hidden=true;
   }
@@ -7202,10 +7211,47 @@ function deletePersonalAccessKey(index){
 
 function openPersonalCredentialExample(index){
   pa.exampleKey=pa.keys[index];
+  clearPersonalExampleSecret();
   $('paExampleCredential').textContent=pa.exampleKey?.credName || '';
   $('paTestKey').value='';
   $('paTestResult').hidden=true;
   showPersonalPanel('example');
+}
+
+function clearPersonalExampleSecret(){
+  pa.exampleVersion=(pa.exampleVersion || 0)+1;
+  pa.exampleSecret='';
+  pa.fillingExampleSecret=false;
+  renderPersonalExample();
+}
+
+function canRevealPersonalExampleSecret(){
+  const key=pa.exampleKey;
+  return pa.enabled && pa.person?.enabled && key?.enabled && key.secretRetrievable
+    && (!key.expiresAt || Date.parse(key.expiresAt.replace(' ','T'))>Date.now());
+}
+
+async function fillPersonalExampleSecret(){
+  if(!canRevealPersonalExampleSecret() || pa.addressLoading || pa.fillingExampleSecret || pa.exampleSecret) return;
+  const version=pa.exampleVersion;
+  const {um}=pa.person;
+  const {id}=pa.exampleKey;
+  pa.fillingExampleSecret=true;
+  renderPersonalExample();
+  try{
+    const key=await personalAccessRequest('/credentials/secret' + personalAccessQuery({um,id}));
+    if(version!==pa.exampleVersion) return;
+    if(!key) throw new Error('后端未返回密钥');
+    pa.exampleSecret=key;
+    toast('真实密钥已填入示例');
+  }catch(error){
+    if(version===pa.exampleVersion) toast(error.message || '获取密钥失败','error');
+  }finally{
+    if(version===pa.exampleVersion){
+      pa.fillingExampleSecret=false;
+      renderPersonalExample();
+    }
+  }
 }
 
 async function refreshPersonalGatewayAddress(){
@@ -7232,13 +7278,20 @@ function editPersonalGatewayAddress(){
 
 function renderPersonalExample(){
   const request=personalConnectionRequest();
+  const fillButton=$('paFillExampleSecret');
+  fillButton.hidden=!pa.exampleKey;
+  fillButton.disabled=!canRevealPersonalExampleSecret() || pa.addressLoading || pa.fillingExampleSecret || !!pa.exampleSecret;
+  $('paExampleSecretHint').textContent=pa.exampleSecret
+    ? '示例已包含真实密钥，复制后请通过行内渠道发给申请人。关闭详情后清除页面明文。'
+    : '示例默认使用密钥占位符，避免误发到公共渠道。';
   $('paCopyExample').disabled=pa.addressLoading || !request;
   $('paRunTest').disabled=pa.addressLoading || !request || pa.testing;
   $('paRequestAddress').textContent=request ? '请求地址：' + request.url : '';
   $('paTestResult').hidden=true;
   if(!request){ $('paExample').textContent='请先配置有效的模型授权。'; return; }
   $('paExample').textContent=['curl -X POST ' + shellSingleQuoted(request.url),
-    "  -H 'Authorization: Bearer <个人 API Key>'","  -H 'Content-Type: application/json'",
+    '  -H ' + shellSingleQuoted('Authorization: Bearer ' + (pa.exampleSecret || '<个人 API Key>')),
+    "  -H 'Content-Type: application/json'",
     '  -d ' + shellSingleQuoted(request.body)].join(' \\\n');
 }
 
@@ -7268,8 +7321,8 @@ async function runPersonalConnectionTest(){
     && personalConnectionRequest()?.body===request.body;
   try{
     let key=$('paTestKey').value.trim();
-    if(!key && cred?.secretRetrievable && cred.enabled && !pa.addressEdited){
-      key=await personalAccessRequest('/credentials/secret' + personalAccessQuery({um:person.um,id:cred.id}));
+    if(!key && canRevealPersonalExampleSecret() && !pa.addressEdited){
+      key=pa.exampleSecret || await personalAccessRequest('/credentials/secret' + personalAccessQuery({um:person.um,id:cred.id}));
     }
     if(!isCurrent()) return;
     if(!key){ toast('请输入测试用个人 API Key','error'); return; }
