@@ -120,12 +120,21 @@ public class AuditService {
                     String requestPath, int httpStatus, long latencyMs,
                     int inputTokens, int outputTokens, String tokenSource,
                     String errorMsg, String traceId, String trafficType, String serviceId) {
+        log(appId, modelId, credType, clientIp, requestPath, httpStatus, latencyMs, inputTokens,
+                outputTokens, tokenSource, errorMsg, traceId, trafficType, serviceId, null);
+    }
+
+    public void log(String appId, String modelId, String credType, String clientIp,
+                    String requestPath, int httpStatus, long latencyMs, int inputTokens,
+                    int outputTokens, String tokenSource, String errorMsg, String traceId,
+                    String trafficType, String serviceId, String codebuddyUserId) {
         if (!auditEnabled) return;
 
         AuditLogEntity entry = buildEntry(traceId, appId, modelId, credType, clientIp,
                 requestPath, httpStatus, latencyMs, inputTokens, outputTokens, tokenSource, errorMsg);
         entry.setTrafficType(trafficType == null ? "model" : trafficType);
         entry.setServiceId(serviceId);
+        entry.setCodebuddyUserId(codebuddyUserId);
 
         // 无论 dbWriteEnabled 是否开启，都必须入队：
         // flush() 依赖队列内容来累计月度 Token 计数；若 dbWriteEnabled=false 时跳过入队，

@@ -39,7 +39,9 @@
     "sql/upgrade_20260829_payload_replay.sql",
     "sql/upgrade_20260910_hex_encoding.sql",
     "sql/upgrade_20261007_provider_adapter_v2.sql",
-    "sql/upgrade_20261112_personal_access.sql"
+    "sql/upgrade_20261112_personal_access.sql",
+    "sql/upgrade_20261117_codebuddy_usage_identity.sql",
+    "sql/repair_20261117_codebuddy_usage_identity.sql"
   ],
   "readOnlyExternal": null,
   "sourceRoot": "src/main/java",

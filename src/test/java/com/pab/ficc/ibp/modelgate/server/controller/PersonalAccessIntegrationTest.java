@@ -67,6 +67,7 @@ import static org.mockito.Mockito.*;
 class PersonalAccessIntegrationTest {
     private static final String PERSONAL = "/modelgate/personal-access";
     private static final String CHAT = "/modelgate/v1/chat/completions";
+    private static final String CODEBUDDY_UUID = "11112222-3333-4444-5555-666677778888";
 
     @LocalServerPort int port;
     @Autowired ObjectMapper mapper;
@@ -514,6 +515,28 @@ class PersonalAccessIntegrationTest {
         }
         client().get().uri("/modelgate/audit/query?modelId=mgqa-filter-a")
                 .exchange().expectStatus().isOk().expectBody().jsonPath("$.data.total").isEqualTo(1);
+
+        jdbc.update("INSERT INTO mg_audit_log (trace_id, app_id, model_id, input_tokens, token_source, codebuddy_user_id)"
+                        + " VALUES (?, '95731', 'mgqa-filter-a', 11, 'usage', ?)", trace, CODEBUDDY_UUID);
+        jdbc.update("INSERT INTO mg_audit_log (trace_id, app_id, model_id, output_tokens, token_source)"
+                        + " VALUES (?, '95731', 'mgqa-filter-a', 3, 'estimated')", trace);
+        client().get().uri("/modelgate/stats/model-usage?modelId=mgqa-filter-a&pageSize=1")
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.total").isEqualTo(1)
+                .jsonPath("$.data.totals.requests").isEqualTo(4)
+                .jsonPath("$.data.totals.totalTokens").isEqualTo(28)
+                .jsonPath("$.data.totals.upstreamTokens").isEqualTo(11)
+                .jsonPath("$.data.totals.estimatedTokens").isEqualTo(3);
+        client().get().uri("/modelgate/stats/user-usage?modelId=mgqa-filter-a&pageSize=1")
+                .exchange().expectStatus().isOk().expectHeader().valueEquals("Cache-Control", "no-store").expectBody()
+                .jsonPath("$.data.total").isEqualTo(2)
+                .jsonPath("$.data.items[0].um").isEqualTo(a)
+                .jsonPath("$.data.items[0].usage.totalTokens").isEqualTo(18)
+                .jsonPath("$.data.items[0].models.length()").isEqualTo(2)
+                .jsonPath("$.data.totals.totalTokens").isEqualTo(21);
+        client().get().uri("/modelgate/stats/user-usage?modelId=mgqa-filter-a&source=codebuddy&um=" + a)
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.total").isEqualTo(1).jsonPath("$.data.totals.totalTokens").isEqualTo(11);
     }
 
     private WebTestClient client() {
@@ -567,6 +590,7 @@ class PersonalAccessIntegrationTest {
             PersonalAccessController.class, AppController.class, CredentialController.class, ModelAuthController.class,
             ServiceAuthController.class, AccessRuleController.class, AuditLogController.class, UsageStatsController.class,
             GatewayConfigController.class, AuditQueryService.class, PayloadController.class, PayloadService.class,
+            UsageStatsService.class,
             GlobalExceptionHandler.class, TraceWebFilter.class, TraceFilter.class, CredentialAuthFilter.class,
             AppAccessControlFilter.class, BodyParseFilter.class, ModelAuthFilter.class, QuotaFilter.class,
             PayloadCaptureFilter.class, ModelRouteFilter.class,
@@ -598,10 +622,21 @@ class PersonalAccessIntegrationTest {
         }
         @Bean AtomicInteger upstreamCalls() { return new AtomicInteger(); }
 
+        @Bean CodeBuddyUsageIdentity codeBuddyIdentity(ObjectMapper mapper, DisposableServer server) {
+            return new CodeBuddyUsageIdentity(mapper, "95731", "http://127.0.0.1:" + server.port() + "/identity", "fixture");
+        }
+
         @Bean(destroyMethod = "disposeNow")
         DisposableServer simulatedModel(AtomicInteger upstreamCalls) {
             return HttpServer.create().host("127.0.0.1").port(0).handle((req, res) ->
                     req.receive().aggregate().asString().flatMap(body -> {
+                        if (req.uri().equals("/identity")) {
+                            if (!"Bearer fixture".equals(req.requestHeaders().get("Authorization"))
+                                    || !body.contains(CODEBUDDY_UUID)) return res.status(401).send().then();
+                            return res.header("Content-Type", "application/json").sendString(Flux.just(
+                                    "{\"resultCode\":\"00000000\",\"data\":{\"" + CODEBUDDY_UUID + "\":\""
+                                            + "MGQA_TEACHER_A" + "\"}}")).then();
+                        }
                         upstreamCalls.incrementAndGet();
                         if (body.replace(" ", "").contains("\"stream\":true")) {
                             return res.sse().sendString(Flux.just(

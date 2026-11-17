@@ -3,14 +3,20 @@ import com.pab.ficc.ibp.modelgate.server.constant.UrlConstant;
 
 import com.pab.ficc.ibp.modelgate.server.domain.Result;
 import com.pab.ficc.ibp.modelgate.server.domain.bo.AuditQueryBO;
+import com.pab.ficc.ibp.modelgate.server.domain.bo.UsageQueryBO;
+import com.pab.ficc.ibp.modelgate.server.domain.vo.UsageReportViews;
+import com.pab.ficc.ibp.modelgate.server.common.AdminScheduler;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.AuditLogEntity;
 import com.pab.ficc.ibp.modelgate.server.mapper.AuditLogMapper;
 import com.pab.ficc.ibp.modelgate.server.service.AuditQueryService;
+import com.pab.ficc.ibp.modelgate.server.service.UsageStatsService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.CacheControl;
+import org.springframework.http.server.reactive.ServerHttpResponse;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -31,6 +37,20 @@ public class UsageStatsController {
 
     private final AuditLogMapper auditLogMapper;
     private final AuditQueryService auditQueryService;
+    private final UsageStatsService usageStatsService;
+
+    @GetMapping("/model-usage")
+    public Mono<Result<UsageReportViews.Report<UsageReportViews.Model>>> modelUsage(UsageQueryBO query) {
+        return Mono.fromCallable(() -> usageStatsService.modelUsage(query)).subscribeOn(AdminScheduler.get())
+                .timeout(AdminScheduler.REQUEST_TIMEOUT).map(Result::success);
+    }
+
+    @GetMapping("/user-usage")
+    public Mono<Result<UsageReportViews.Report<UsageReportViews.User>>> userUsage(UsageQueryBO query, ServerHttpResponse response) {
+        response.getHeaders().setCacheControl(CacheControl.noStore());
+        return Mono.fromCallable(() -> usageStatsService.userUsage(query)).subscribeOn(AdminScheduler.get())
+                .timeout(AdminScheduler.REQUEST_TIMEOUT).map(Result::success);
+    }
 
     @Operation(summary = "用量统计汇总（总请求数 / Token 消耗 / 平均延迟 / 成功率）")
     @GetMapping(UrlConstant.USAGE)

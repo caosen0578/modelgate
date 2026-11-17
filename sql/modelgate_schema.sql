@@ -266,6 +266,7 @@ CREATE TABLE IF NOT EXISTS mg_audit_log (
     cred_type      VARCHAR(32)                                   COMMENT '凭证类型：api_key|ak_sk',
     client_ip      VARCHAR(64)                                   COMMENT '客户端 IP（X-Forwarded-For 优先）',
     caller_app_id  VARCHAR(64)                                   COMMENT '调用方系统标识（X-App-Id 请求头声明，非鉴权字段）',
+    codebuddy_user_id VARCHAR(36)                                COMMENT '获准进行个人归属的 CodeBuddy 应用所提供的 UUID',
     request_path   VARCHAR(512)                                  COMMENT '请求路径，如 /v1/chat/completions',
     http_status    INT                                           COMMENT '响应 HTTP 状态码',
     latency_ms     INT                                           COMMENT '请求耗时（毫秒）',

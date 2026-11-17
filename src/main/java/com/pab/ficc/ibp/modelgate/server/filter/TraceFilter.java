@@ -2,6 +2,7 @@ package com.pab.ficc.ibp.modelgate.server.filter;
 
 import com.pab.ficc.ibp.modelgate.server.common.TrafficType;
 import com.pab.ficc.ibp.modelgate.server.service.AuditService;
+import com.pab.ficc.ibp.modelgate.server.service.CodeBuddyUsageIdentity;
 import com.pab.ficc.ibp.modelgate.server.service.ModelAuthService;
 import com.pab.ficc.ibp.modelgate.server.service.PayloadService;
 import com.pab.ficc.ibp.modelgate.server.service.UpstreamResponseParser;
@@ -45,6 +46,7 @@ public class TraceFilter implements GlobalFilter, Ordered {
     private final PayloadService payloadService;
     private final ModelAuthService modelAuthService;
     private final UpstreamResponseParser responseParser;
+    private final CodeBuddyUsageIdentity codeBuddyUsageIdentity;
 
     @Override
     public int getOrder() {
@@ -135,7 +137,9 @@ public class TraceFilter implements GlobalFilter, Ordered {
                         auditService.log(appId, modelId, credType, clientIp,
                                 requestPath, httpStatus, latencyMs,
                                 parsed.inputTokens(), parsed.outputTokens(), parsed.tokenSource(),
-                                errorMsg, traceId, trafficTypeCode, serviceId);
+                                errorMsg, traceId, trafficTypeCode, serviceId,
+                                trafficType == TrafficType.SERVICE ? null : codeBuddyUsageIdentity.readUserId(
+                                        appId, exchange.getRequest().getHeaders()));
 
                         // 报文留档：仅当该 (appId, modelId) 授权行开了开关。
                         // submit 只入队不解析，O(1)，不阻塞

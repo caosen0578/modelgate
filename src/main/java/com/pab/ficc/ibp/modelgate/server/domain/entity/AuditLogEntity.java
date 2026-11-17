@@ -32,6 +32,7 @@ public class AuditLogEntity {
     private String credType;
     private String clientIp;
     private String callerAppId;
+    private String codebuddyUserId;
     private String requestPath;
     private Integer httpStatus;
     private Integer latencyMs;
