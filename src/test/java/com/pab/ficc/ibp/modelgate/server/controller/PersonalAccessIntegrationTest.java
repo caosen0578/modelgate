@@ -560,6 +560,40 @@ class PersonalAccessIntegrationTest {
                     assertFalse(csv.contains("未归属"));
                     assertFalse(csv.contains("个人 Key"));
                 });
+
+        String exportModel = "mgqa-export";
+        for (String appId : List.of(system, aId)) {
+            for (int i = 0; i < 205; i++) {
+                String exportTrace = "export-" + appId + "-" + i;
+                jdbc.update("INSERT INTO mg_audit_log (trace_id, app_id, model_id, http_status) VALUES (?, ?, ?, 200)",
+                        exportTrace, appId, exportModel);
+                jdbc.update("INSERT INTO mg_request_payload (trace_id, app_id, model_id, request_body) VALUES (?, ?, ?, ?)",
+                        exportTrace, appId, exportModel, "export fixture");
+            }
+        }
+        for (String path : List.of("/modelgate/audit/query", "/modelgate/audit/personal/query",
+                "/modelgate/payload/query", "/modelgate/payload/personal/query")) {
+            boolean personal = path.contains("/personal/");
+            String expectedAppId = personal ? aId : system;
+            String excludedAppId = personal ? system : aId;
+            client().get().uri(path + "?format=csv&modelIds=" + exportModel + "&pageSize=1&pageIndex=200")
+                    .exchange().expectStatus().isOk()
+                    .expectHeader().contentType("text/csv;charset=UTF-8")
+                    .expectHeader().valueEquals("Cache-Control", "no-store")
+                    .expectBody(String.class).value(csv -> {
+                        assertTrue(csv.startsWith("\uFEFF时间,TraceID,"));
+                        assertEquals(205, csv.split("export-" + expectedAppId + "-", -1).length - 1);
+                        assertFalse(csv.contains("export-" + excludedAppId + "-"));
+                        if (personal) {
+                            assertTrue(csv.contains(a));
+                            assertFalse(csv.contains("\"" + aId + "\""));
+                        }
+                    });
+        }
+        client().get().uri("/modelgate/payload/personal/query?format=csv&requestKeyword=fixture")
+                .exchange().expectStatus().isBadRequest();
+        client().get().uri("/modelgate/audit/personal/query?format=csv&um=UNKNOWN_UM")
+                .exchange().expectStatus().isOk().expectBody(String.class).value(csv -> assertEquals(2, csv.split("\r\n", -1).length));
     }
 
     private WebTestClient client() {

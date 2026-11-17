@@ -6,10 +6,12 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.pab.ficc.ibp.domain.base.vo.PageVo;
 import com.pab.ficc.ibp.modelgate.server.common.AdminScheduler;
 import com.pab.ficc.ibp.modelgate.server.common.PageSupport;
+import com.pab.ficc.ibp.modelgate.server.common.RecordCsv;
 import com.pab.ficc.ibp.modelgate.server.domain.Result;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.pab.ficc.ibp.modelgate.server.domain.bo.AuditQueryBO;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.AuditLogEntity;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.AppInfoEntity;
 import com.pab.ficc.ibp.modelgate.server.domain.vo.AuditLogVO;
 import com.pab.ficc.ibp.modelgate.server.domain.vo.PersonalAccessViews;
 import com.pab.ficc.ibp.modelgate.server.mapper.AuditLogMapper;
@@ -22,6 +24,8 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.http.ResponseEntity;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.util.Map;
@@ -40,6 +44,45 @@ public class AuditLogController {
     private final AuditLogMapper auditLogMapper;
     private final AppScopeResolver appScopeResolver;
     private final AuditQueryService auditQueryService;
+
+    @GetMapping(value = UrlConstant.QUERY, params = "format=csv")
+    public Mono<ResponseEntity<Flux<byte[]>>> export(AuditQueryBO query) {
+        return export(query, null, false);
+    }
+
+    @GetMapping(value = "/personal/query", params = "format=csv")
+    public Mono<ResponseEntity<Flux<byte[]>>> exportPersonal(AuditQueryBO query,
+            @RequestParam(value = "um", required = false) String um) {
+        return export(query, um, true);
+    }
+
+    private Mono<ResponseEntity<Flux<byte[]>>> export(AuditQueryBO query, String um, boolean personal) {
+        return Mono.fromCallable(() -> {
+            var base = personal ? auditQueryService.personalFilters(query, um) : auditQueryService.applicationFilters(query);
+            // 先解析并校验筛选条件，再发送下载响应。
+            return RecordCsv.response(personal ? "personal-audit.csv" : "audit.csv", RecordCsv.AUDIT_HEADER, before -> {
+                if (base.isEmpty()) return List.<AuditLogVO>of();
+                var filters = base.get().clone().lt(before != null, AuditLogEntity::getId, before)
+                        .orderByDesc(AuditLogEntity::getId);
+                var page = auditLogMapper.selectPage(new Page<>(1, RecordCsv.BATCH_SIZE, false), filters);
+                var ids = page.getRecords().stream().map(AuditLogEntity::getAppId).toList();
+                var users = personal ? appScopeResolver.personalUsersByAppId(ids) : Map.<String, AppInfoEntity>of();
+                var codes = personal ? Map.<String, String>of() : appScopeResolver.appCodeByAppId(ids);
+                return page.getRecords().stream().map(entry -> {
+                    var row = AuditLogVO.of(entry);
+                    if (personal) {
+                        var user = users.get(entry.getAppId());
+                        row.setAppId(null);
+                        if (user != null) {
+                            row.setUm(user.getPersonUm());
+                            row.setPersonName(user.getAppName());
+                        }
+                    } else row.setAppCode(codes.get(entry.getAppId()));
+                    return row;
+                }).toList();
+            }, AuditLogVO::getId, RecordCsv::audit);
+        }).subscribeOn(AdminScheduler.get()).timeout(AdminScheduler.REQUEST_TIMEOUT);
+    }
 
     @Operation(summary = "分页查询审计日志（pageIndex 从 1 开始，pageSize 上限 200；按时间倒序）")
     @GetMapping(UrlConstant.QUERY)

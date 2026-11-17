@@ -8,11 +8,13 @@ import com.pab.ficc.ibp.modelgate.server.common.AdminScheduler;
 import com.pab.ficc.ibp.modelgate.server.common.BusinessException;
 import com.pab.ficc.ibp.modelgate.server.common.ErrorCode;
 import com.pab.ficc.ibp.modelgate.server.common.PageSupport;
+import com.pab.ficc.ibp.modelgate.server.common.RecordCsv;
 import com.pab.ficc.ibp.modelgate.server.constant.UrlConstant;
 import com.pab.ficc.ibp.modelgate.server.domain.Result;
 import com.pab.ficc.ibp.modelgate.server.domain.bo.PayloadQueryBO;
 import com.pab.ficc.ibp.modelgate.server.domain.bo.ReplayPayloadRequestBO;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.RequestPayloadEntity;
+import com.pab.ficc.ibp.modelgate.server.domain.entity.AppInfoEntity;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.ModelCredentialEntity;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.ModelInstanceEntity;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.ServiceCredentialEntity;
@@ -34,6 +36,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.CacheControl;
+import org.springframework.http.ResponseEntity;
 import org.springframework.util.CollectionUtils;
 import org.springframework.http.server.reactive.ServerHttpResponse;
 import lombok.extern.slf4j.Slf4j;
@@ -44,6 +47,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.Flux;
 
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
@@ -94,6 +98,44 @@ public class PayloadController {
 
     @Value("${modelgate.payload-log.max-capture-bytes:67108864}")
     private long maxCaptureBytes;
+
+    @GetMapping(value = UrlConstant.QUERY, params = "format=csv")
+    public Mono<ResponseEntity<Flux<byte[]>>> export(PayloadQueryBO query) {
+        return export(query, null, false);
+    }
+
+    @GetMapping(value = "/personal/query", params = "format=csv")
+    public Mono<ResponseEntity<Flux<byte[]>>> exportPersonal(PayloadQueryBO query,
+            @RequestParam(value = "um", required = false) String um) {
+        return export(query, um, true);
+    }
+
+    private Mono<ResponseEntity<Flux<byte[]>>> export(PayloadQueryBO query, String um, boolean personal) {
+        query.setPageIndex(1);
+        query.setPageSize(RecordCsv.BATCH_SIZE);
+        validate(query);
+        return Mono.fromCallable(() -> {
+            var scope = personal ? appScopeResolver.resolvePersonal(um)
+                    : appScopeResolver.resolve(query.getAppId(), query.getAppCode());
+            return RecordCsv.response(personal ? "personal-payload.csv" : "payload.csv", RecordCsv.PAYLOAD_HEADER, before -> {
+                var page = doQuery(query, personal, scope, before);
+                var ids = page.getRecords().stream().map(PayloadListVO::getAppId).toList();
+                var users = personal ? appScopeResolver.personalUsersByAppId(ids) : Map.<String, AppInfoEntity>of();
+                var codes = personal ? Map.<String, String>of() : appScopeResolver.appCodeByAppId(ids);
+                for (var row : page.getRecords()) {
+                    if (personal) {
+                        var user = users.get(row.getAppId());
+                        row.setAppId(null);
+                        if (user != null) {
+                            row.setUm(user.getPersonUm());
+                            row.setPersonName(user.getAppName());
+                        }
+                    } else row.setAppCode(codes.get(row.getAppId()));
+                }
+                return page.getRecords();
+            }, PayloadListVO::getId, RecordCsv::payload);
+        }).subscribeOn(AdminScheduler.get()).timeout(AdminScheduler.REQUEST_TIMEOUT);
+    }
 
     @Operation(summary = "分页查询报文记录（不含正文全文；pageIndex 从 1 开始，按时间倒序）")
     @GetMapping(UrlConstant.QUERY)
@@ -436,6 +478,15 @@ public class PayloadController {
      * 必须补一个唯一列做次级排序。
      */
     private IPage<PayloadListVO> doQuery(PayloadQueryBO q, boolean personal, AppScopeResolver.AppScope scope) {
+        return doQuery(q, personal, scope, null, false);
+    }
+
+    private IPage<PayloadListVO> doQuery(PayloadQueryBO q, boolean personal, AppScopeResolver.AppScope scope, Long before) {
+        return doQuery(q, personal, scope, before, true);
+    }
+
+    private IPage<PayloadListVO> doQuery(PayloadQueryBO q, boolean personal, AppScopeResolver.AppScope scope,
+                                        Long before, boolean exporting) {
         String modelId      = q.getModelId();
         String traceId      = q.getTraceId();
         String finishReason = q.getFinishReason();
@@ -450,6 +501,7 @@ public class PayloadController {
         }
 
         LambdaQueryWrapper<RequestPayloadEntity> w = new LambdaQueryWrapper<RequestPayloadEntity>()
+                .lt(before != null, RequestPayloadEntity::getId, before)
                 .apply(!personal, RequestPayloadMapper.APPLICATION_PAYLOAD_SCOPE)
                 .apply(personal && scope.eqAppId() == null, RequestPayloadMapper.PERSONAL_PAYLOAD_SCOPE)
                 .eq(scope.eqAppId() != null,  RequestPayloadEntity::getAppId,          scope.eqAppId())
@@ -497,10 +549,10 @@ public class PayloadController {
             w.apply("request_headers LIKE {0} ESCAPE '" + LIKE_ESCAPE + "'", kw);
         }
 
-        w.orderByDesc(RequestPayloadEntity::getCreateTime)
+        w.orderByDesc(!exporting, RequestPayloadEntity::getCreateTime)
          .orderByDesc(RequestPayloadEntity::getId);
 
-        return payloadMapper.selectListPage(new Page<>(q.getPageIndex(), q.getPageSize()), w);
+        return payloadMapper.selectListPage(new Page<>(q.getPageIndex(), q.getPageSize(), !exporting), w);
     }
 
     /** 列表 VO 已是最终形态，无需再映射，这里只做 PageVo 包装。 */

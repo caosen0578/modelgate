@@ -542,6 +542,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
             </div>
           </div>
           <button class="btn btn-primary" data-api="GET /modelgate/audit/query" onclick="loadAudit()">查询</button>
+          <button class="btn btn-neutral" onclick="exportRecordList('audit',this)">导出列表 CSV</button>
         </div>
       </div>
       <div class="card" style="padding:0;overflow:hidden">
@@ -655,6 +656,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
           <div class="toolbar-right">
             <button class="btn btn-neutral" onclick="resetPayloadFilters()">重置</button>
             <button class="btn btn-primary" data-api="GET /modelgate/payload/query" onclick="loadPayload()">查询</button>
+            <button class="btn btn-neutral" title="导出列表中的请求头及正文预览" onclick="exportRecordList('payload',this)">导出列表 CSV</button>
           </div>
         </div>
         <!-- 关键字为何有约束：大文本列上的 LIKE '%x%' 走不了索引，单独使用就是全表扫描。
@@ -4879,6 +4881,31 @@ function switchAuditScope(reload=true){
 }
 
 let auditRequestVersion=0;
+const recordExportUrls={};
+
+async function exportRecordList(scene,button){
+  const path=recordExportUrls[scene];
+  if(!path){toast('请先查询需要导出的记录','error');return;}
+  button.disabled=true;
+  try{
+    const url=new URL(apiUrl(path),location.href);
+    url.searchParams.set('format','csv');
+    const response=await fetch(url,{headers:hdrs()});
+    if(!response.ok || !response.headers.get('content-type')?.startsWith('text/csv')){
+      const failure=await response.json();
+      throw new Error(errMsg(failure));
+    }
+    const blobUrl=URL.createObjectURL(await response.blob());
+    const link=document.createElement('a');
+    link.href=blobUrl;
+    link.download=(scene==='audit'?'审计日志':'报文记录')+'.csv';
+    document.body.append(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(blobUrl);
+  }catch(e){toast('导出失败: '+e.message,'error');}
+  finally{button.disabled=false;}
+}
 
 function fmtNum(n){
   if(n==null||n===0) return '0';
@@ -4895,6 +4922,7 @@ function fmtNum(n){
 async function loadAudit(resetPage = true){
   if(resetPage) pageState.audit.pageIndex=1;
   const version=++auditRequestVersion;
+  delete recordExportUrls.audit;
   const personal=$('auditScope').value==='personal';
   const filters={
     ...recordModelParams('auditModel'),
@@ -4924,6 +4952,7 @@ async function loadAudit(resetPage = true){
       return;
     }
     renderAudit(applyPage('audit',j.data || {}));
+    recordExportUrls.audit=path+'?'+qs;
     renderPager('audit','auditPager','audit');
   }catch(e){
     if(version!==auditRequestVersion) return;
@@ -5131,6 +5160,7 @@ let payloadRequestVersion=0;
 async function loadPayload(resetPage = true){
   if(resetPage) pageState.payload.pageIndex = 1;
   const version=++payloadRequestVersion;
+  delete recordExportUrls.payload;
   const tbody = $('payloadTbody');
   const personal=$('pl_scope').value==='personal';
   const um=$('pl_um').value.trim();
@@ -5179,6 +5209,7 @@ async function loadPayload(resetPage = true){
       return;
     }
     renderPayload(applyPage('payload', j.data || {}));
+    recordExportUrls.payload=path+'?'+qs;
     renderPager('payload', 'payloadPager', 'payload');
     setStatus(true);
   }catch(e){
