@@ -34,18 +34,37 @@ public class UsageStatsService {
     private final CodeBuddyUsageIdentity identities;
 
     public Report<Model> modelUsage(UsageQueryBO query) {
-        validate(query);
-        var rows = mapper.modelUsage(query).stream()
-                .map(row -> new Model(row.modelId(), row.amount()))
-                .sorted(Comparator.<Model>comparingLong(row -> row.usage().getTotalTokens()).reversed()
-                        .thenComparing(Model::modelId))
-                .toList();
+        PageSupport.validate(query, "用量统计");
+        var rows = modelRows(query);
         var totals = rows.stream().map(Model::usage).reduce(ZERO, Amount::plus);
         return report(query, rows, totals);
     }
 
     public Report<User> userUsage(UsageQueryBO query) {
-        validate(query);
+        PageSupport.validate(query, "用量统计");
+        var rows = userRows(query);
+        return report(query, rows, rows.stream().map(User::usage).reduce(ZERO, Amount::plus));
+    }
+
+    public byte[] exportModelUsage(UsageQueryBO query) {
+        return UsageReportCsv.models(modelRows(query));
+    }
+
+    public byte[] exportUserUsage(UsageQueryBO query, boolean detail) {
+        return UsageReportCsv.users(userRows(query), detail);
+    }
+
+    private List<Model> modelRows(UsageQueryBO query) {
+        validateDates(query);
+        return mapper.modelUsage(query).stream()
+                .map(row -> new Model(row.modelId(), row.amount()))
+                .sorted(Comparator.<Model>comparingLong(row -> row.usage().getTotalTokens()).reversed()
+                        .thenComparing(Model::modelId))
+                .toList();
+    }
+
+    private List<User> userRows(UsageQueryBO query) {
+        validateDates(query);
         String selectedUm = query.getUm() == null || query.getUm().isBlank() ? null : AppSubject.normalizeUm(query.getUm());
         if (query.getSource() != null && !query.getSource().isBlank()
                 && !Set.of(PERSONAL_KEY, CODEBUDDY).contains(query.getSource())) {
@@ -65,11 +84,10 @@ public class UsageStatsService {
             users.computeIfAbsent(um, ignored -> new HashMap<>()).merge(key, group.amount(), Amount::plus);
         }
 
-        var rows = users.entrySet().stream().map(entry -> user(entry.getKey(), entry.getValue()))
+        return users.entrySet().stream().map(entry -> user(entry.getKey(), entry.getValue()))
                 .sorted(Comparator.<User>comparingLong(row -> row.usage().getTotalTokens()).reversed()
                         .thenComparing(User::um, Comparator.nullsLast(Comparator.naturalOrder())))
                 .toList();
-        return report(query, rows, rows.stream().map(User::usage).reduce(ZERO, Amount::plus));
     }
 
     private static User user(String um, Map<BreakdownKey, Amount> groups) {
@@ -88,8 +106,7 @@ public class UsageStatsService {
         return new Report<>(rows.subList(first, last), rows.size(), totals, identities.mappingConfigured());
     }
 
-    private static void validate(UsageQueryBO query) {
-        PageSupport.validate(query, "用量统计");
+    private static void validateDates(UsageQueryBO query) {
         LocalDateTime now = LocalDateTime.now();
         if (query.getStartTime() == null) query.setStartTime(now.toLocalDate().minusDays(30).atStartOfDay());
         if (query.getEndTime() == null) query.setEndTime(now);

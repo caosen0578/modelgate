@@ -16,6 +16,9 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.CacheControl;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.http.server.reactive.ServerHttpResponse;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -24,6 +27,7 @@ import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.HashMap;
@@ -50,6 +54,27 @@ public class UsageStatsController {
         response.getHeaders().setCacheControl(CacheControl.noStore());
         return Mono.fromCallable(() -> usageStatsService.userUsage(query)).subscribeOn(AdminScheduler.get())
                 .timeout(AdminScheduler.REQUEST_TIMEOUT).map(Result::success);
+    }
+
+    @GetMapping(value = "/model-usage", params = "format=csv")
+    public Mono<ResponseEntity<byte[]>> exportModelUsage(UsageQueryBO query) {
+        return Mono.fromCallable(() -> csv("model-usage.csv", usageStatsService.exportModelUsage(query)))
+                .subscribeOn(AdminScheduler.get()).timeout(AdminScheduler.REQUEST_TIMEOUT);
+    }
+
+    @GetMapping(value = "/user-usage", params = "format=csv")
+    public Mono<ResponseEntity<byte[]>> exportUserUsage(UsageQueryBO query,
+            @RequestParam(value = "detail", defaultValue = "false") boolean detail) {
+        String filename = detail ? "user-usage-detail.csv" : "user-usage.csv";
+        return Mono.fromCallable(() -> csv(filename, usageStatsService.exportUserUsage(query, detail)))
+                .subscribeOn(AdminScheduler.get()).timeout(AdminScheduler.REQUEST_TIMEOUT);
+    }
+
+    private static ResponseEntity<byte[]> csv(String filename, byte[] content) {
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore())
+                .contentType(new MediaType("text", "csv", StandardCharsets.UTF_8))
+                .headers(headers -> headers.setContentDisposition(ContentDisposition.attachment().filename(filename).build()))
+                .body(content);
     }
 
     @Operation(summary = "用量统计汇总（总请求数 / Token 消耗 / 平均延迟 / 成功率）")

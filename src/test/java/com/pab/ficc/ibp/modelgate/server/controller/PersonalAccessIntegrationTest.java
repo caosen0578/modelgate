@@ -537,6 +537,29 @@ class PersonalAccessIntegrationTest {
         client().get().uri("/modelgate/stats/user-usage?modelId=mgqa-filter-a&source=codebuddy&um=" + a)
                 .exchange().expectStatus().isOk().expectBody()
                 .jsonPath("$.data.total").isEqualTo(1).jsonPath("$.data.totals.totalTokens").isEqualTo(11);
+
+        client().get().uri("/modelgate/stats/model-usage" + modelFilter + "&format=csv&pageSize=1")
+                .exchange().expectStatus().isOk().expectHeader().contentType("text/csv;charset=UTF-8")
+                .expectHeader().valueMatches("Content-Disposition", "attachment;.*model-usage.csv.*")
+                .expectBody(String.class).value(csv -> {
+                    assertTrue(csv.startsWith("\uFEFF模型 ID,请求数"));
+                    assertTrue(csv.contains("\"mgqa-filter-a\",4,25,3,28,11,3,2"));
+                    assertTrue(csv.contains("\"mgqa-filter-b\",2,14,0,14,0,0,2"));
+                    assertFalse(csv.contains("mgqa-filter-excluded"));
+                });
+        client().get().uri("/modelgate/stats/user-usage?modelId=mgqa-filter-a&format=csv&pageSize=1")
+                .exchange().expectStatus().isOk().expectHeader().valueEquals("Cache-Control", "no-store")
+                .expectBody(String.class).value(csv -> {
+                    assertTrue(csv.contains("\"" + a + "\",2,18,0,18,11,0,1"));
+                    assertTrue(csv.contains("\"未归属\",1,0,3,3,0,3,0"));
+                });
+        client().get().uri("/modelgate/stats/user-usage?modelId=mgqa-filter-a&format=csv&detail=true&source=codebuddy&um=" + a)
+                .exchange().expectStatus().isOk().expectBody(String.class).value(csv -> {
+                    assertTrue(csv.startsWith("\uFEFFUM,模型 ID,来源,请求数"));
+                    assertTrue(csv.contains("\"" + a + "\",\"mgqa-filter-a\",CodeBuddy,1,11,0,11,11,0,0"));
+                    assertFalse(csv.contains("未归属"));
+                    assertFalse(csv.contains("个人 Key"));
+                });
     }
 
     private WebTestClient client() {
