@@ -5,7 +5,6 @@ import com.pab.ficc.ibp.modelgate.server.domain.Result;
 import com.pab.ficc.ibp.modelgate.server.domain.bo.AuditQueryBO;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.AuditLogEntity;
 import com.pab.ficc.ibp.modelgate.server.mapper.AuditLogMapper;
-import com.pab.ficc.ibp.modelgate.server.service.AppScopeResolver;
 import com.pab.ficc.ibp.modelgate.server.service.AuditQueryService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -31,7 +30,6 @@ import java.util.Map;
 public class UsageStatsController {
 
     private final AuditLogMapper auditLogMapper;
-    private final AppScopeResolver appScopeResolver;
     private final AuditQueryService auditQueryService;
 
     @Operation(summary = "用量统计汇总（总请求数 / Token 消耗 / 平均延迟 / 成功率）")
@@ -56,13 +54,12 @@ public class UsageStatsController {
     }
 
     @GetMapping("/personal/usage")
-    public Mono<Result<Map<String, Object>>> personalUsage(@RequestParam("um") String um, AuditQueryBO query) {
+    public Mono<Result<Map<String, Object>>> personalUsage(@RequestParam(value = "um", required = false) String um,
+                                                           AuditQueryBO query) {
         setDefaultDates(query, null, null);
-        return Mono.fromCallable(() -> {
-                    var user = appScopeResolver.requirePersonalByUm(um);
-                    return buildStats(auditLogMapper.selectFilteredUsageStats(
-                            auditQueryService.personalFilters(query, user.getAppId())));
-                })
+        return Mono.fromCallable(() -> auditQueryService.personalFilters(query, um)
+                        .map(filters -> buildStats(auditLogMapper.selectFilteredUsageStats(filters)))
+                        .orElseGet(this::zeroStats))
                 .subscribeOn(Schedulers.boundedElastic())
                 .map(Result::success);
     }

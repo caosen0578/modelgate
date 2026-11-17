@@ -460,6 +460,26 @@ class PersonalAccessIntegrationTest {
                 .exchange().expectStatus().isOk().expectBody().jsonPath("$.data.totalRequests").isEqualTo(0);
         client().get().uri("/modelgate/stats/usage?appId=" + system + "&endTime=2001-01-02T00:00:00&startTime=2001-01-01T00:00:00")
                 .exchange().expectStatus().isOk().expectBody().jsonPath("$.data.totalRequests").isEqualTo(0);
+
+        String personalList = "/modelgate/audit/personal/query?pageSize=200&modelId=" + model + range;
+        JsonNode all = json(client().get().uri(personalList).exchange().expectStatus().isOk());
+        long total = 0;
+        for (String um : List.of(a, b)) {
+            JsonNode byUm = json(client().get().uri(personalList + "&um=" + um).exchange().expectStatus().isOk());
+            assertTrue(byUm.path("total").asLong() > 0);
+            total += byUm.path("total").asLong();
+        }
+        assertEquals(total, all.path("total").asLong());
+        for (JsonNode item : all.path("items")) {
+            assertTrue(List.of(a, b).contains(item.path("um").asText()));
+            assertTrue(item.path("appId").isMissingNode() || item.path("appId").isNull());
+        }
+        client().get().uri("/modelgate/stats/personal/usage?modelId=" + model + range)
+                .exchange().expectStatus().isOk().expectBody().jsonPath("$.data.totalRequests").isEqualTo(total);
+        client().get().uri(personalList + "&um=UNKNOWN_UM")
+                .exchange().expectStatus().isOk().expectBody().jsonPath("$.data.total").isEqualTo(0);
+        client().get().uri("/modelgate/payload/personal/query?um=UNKNOWN_UM")
+                .exchange().expectStatus().isOk().expectBody().jsonPath("$.data.total").isEqualTo(0);
     }
 
     private WebTestClient client() {

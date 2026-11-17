@@ -118,7 +118,9 @@ public class PayloadController {
         validate(query);
         response.getHeaders().setCacheControl(CacheControl.noStore());
         return Mono.fromCallable(() -> {
-                    var user = appScopeResolver.requirePersonalByUm(um);
+                    var user = appScopeResolver.findPersonalByUm(um);
+                    if (user == null) return PageVo.<PayloadListVO, PayloadListVO>of(
+                            new Page<>(query.getPageIndex(), query.getPageSize()), item -> item);
                     return PageVo.of(doQuery(query, user.getAppId()), item -> {
                         item.setAppId(null);
                         item.setUm(user.getPersonUm());

@@ -73,16 +73,23 @@ public class AuditLogController {
     }
 
     @GetMapping("/personal/query")
-    public Mono<Result<PageVo<AuditLogVO>>> personalQuery(@RequestParam("um") String um, AuditQueryBO query) {
+    public Mono<Result<PageVo<AuditLogVO>>> personalQuery(@RequestParam(value = "um", required = false) String um,
+                                                          AuditQueryBO query) {
         PageSupport.validate(query, "个人审计日志");
         return Mono.fromCallable(() -> {
-                    var user = appScopeResolver.requirePersonalByUm(um);
-                    var page = selectPage(query, auditQueryService.personalFilters(query, user.getAppId()));
+                    IPage<AuditLogEntity> page = auditQueryService.personalFilters(query, um)
+                            .map(filters -> selectPage(query, filters))
+                            .orElseGet(() -> new Page<>(query.getPageIndex(), query.getPageSize()));
+                    var users = appScopeResolver.personalUsersByAppId(
+                            page.getRecords().stream().map(AuditLogEntity::getAppId).toList());
                     return PageVo.of(page, e -> {
                         AuditLogVO vo = AuditLogVO.of(e);
                         vo.setAppId(null);
-                        vo.setUm(user.getPersonUm());
-                        vo.setPersonName(user.getAppName());
+                        var user = users.get(e.getAppId());
+                        if (user != null) {
+                            vo.setUm(user.getPersonUm());
+                            vo.setPersonName(user.getAppName());
+                        }
                         return vo;
                     });
                 })

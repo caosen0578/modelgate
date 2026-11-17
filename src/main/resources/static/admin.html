@@ -497,7 +497,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
                  而排查时手上通常直接就有 appId / 应用编码。两个控件同时提交同一个参数会互相打架，
                  所以这里把下拉做成"选了就回填输入框"，输入框是唯一的提交来源。 -->
             <select id="auditScope" aria-label="审计接入范围" onchange="switchAuditScope()"><option value="app">接入应用</option><option value="personal">接入用户</option></select>
-            <input type="text" id="auditUm" aria-label="审计 UM" placeholder="输入 UM 搜索" list="auditUmOptions"
+            <input type="text" id="auditUm" aria-label="审计 UM" placeholder="全部用户 / 输入 UM 搜索" list="auditUmOptions"
                    maxlength="64" autocomplete="off" oninput="suggestAuditRecordUsers()" hidden/>
             <datalist id="auditUmOptions"></datalist>
             <select id="auditApp" style="width:140px" onchange="pickAuditApp(this.value)"><option value="">全部系统</option></select>
@@ -2452,7 +2452,10 @@ async function suggestPersonalRecordUsers(scene){
   if(!keyword || input.hidden) return;
   try{
     const params=new URLSearchParams({keyword});
-    const response=await fetch(apiUrl('/'+scene+'/personal/users?'+params),{headers:hdrs()});
+    const menuCode=scene==='audit'?'c90023000':'c90023500';
+    const response=await fetch('/backend/api/user/user/master/um-options?'+params,{
+      headers:{'Authorization':menuCode,'Sys-Source':'96008'}
+    });
     const result=await response.json();
     if(input.hidden || input.value.trim()!==keyword || !isOk(result)) return;
     for(const {um,name} of result.data || []){
@@ -4814,7 +4817,6 @@ async function deleteAccessRule(id){
 async function loadStats(filters, personal, version){
   for(const id of ['statTotal','statTokens','statLatency','statSuccess']) $(id).textContent='-';
   $('statRange').textContent=filters.startTime && filters.endTime ? fmtTime(filters.startTime)+' 至 '+fmtTime(filters.endTime) : '';
-  if(personal && !filters.um) return;
   try{
     const params = new URLSearchParams(Object.entries(filters).filter(([,value])=>value!==''));
     const path=personal?'/stats/personal/usage':'/stats/usage';
@@ -4873,11 +4875,6 @@ async function loadAudit(resetPage = true){
     return;
   }
   loadStats(filters,personal,version);
-  if(personal && !filters.um){
-    renderAudit([]);
-    $('auditPager').textContent='';
-    return;
-  }
   try{
     const qs=pageQuery('audit',filters);
     const path=personal?'/audit/personal/query':'/audit/query';

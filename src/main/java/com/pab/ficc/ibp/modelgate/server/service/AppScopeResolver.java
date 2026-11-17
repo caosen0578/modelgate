@@ -16,6 +16,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * 把管理面查询里的「appId + 应用编码」两个条件，翻译成审计/报文表上可执行的过滤条件。
@@ -48,11 +50,28 @@ public class AppScopeResolver {
 
     public AppInfoEntity requirePersonalByUm(String um) {
         String normalized = AppSubject.normalizeUm(um);
-        AppInfoEntity user = appMapper.selectOne(new LambdaQueryWrapper<AppInfoEntity>()
-                .eq(AppInfoEntity::getSubjectType, AppSubject.PERSONAL)
-                .eq(AppInfoEntity::getPersonUm, normalized));
+        AppInfoEntity user = lookupPersonal(normalized);
         if (user == null) throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "未开通个人接入: " + normalized);
         return user;
+    }
+
+    public AppInfoEntity findPersonalByUm(String um) {
+        return lookupPersonal(AppSubject.normalizeUm(um));
+    }
+
+    private AppInfoEntity lookupPersonal(String um) {
+        return appMapper.selectOne(new LambdaQueryWrapper<AppInfoEntity>()
+                .eq(AppInfoEntity::getSubjectType, AppSubject.PERSONAL)
+                .eq(AppInfoEntity::getPersonUm, um));
+    }
+
+    public Map<String, AppInfoEntity> personalUsersByAppId(List<String> appIds) {
+        if (appIds.isEmpty()) return Map.of();
+        return appMapper.selectList(new LambdaQueryWrapper<AppInfoEntity>()
+                        .select(AppInfoEntity::getAppId, AppInfoEntity::getPersonUm, AppInfoEntity::getAppName)
+                        .eq(AppInfoEntity::getSubjectType, AppSubject.PERSONAL)
+                        .in(AppInfoEntity::getAppId, appIds.stream().distinct().toList()))
+                .stream().collect(Collectors.toMap(AppInfoEntity::getAppId, Function.identity()));
     }
 
     public List<PersonalAccessViews.UserOption> findPersonalUsers(String keyword) {

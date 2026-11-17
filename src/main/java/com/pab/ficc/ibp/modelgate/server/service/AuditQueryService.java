@@ -9,6 +9,8 @@ import com.pab.ficc.ibp.modelgate.server.mapper.AuditLogMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.Optional;
 
 @Service
@@ -27,9 +29,16 @@ public class AuditQueryService {
                 .eq(hasText(query.getServiceId()), AuditLogEntity::getServiceId, query.getServiceId()));
     }
 
-    public LambdaQueryWrapper<AuditLogEntity> personalFilters(AuditQueryBO query, String personalAppId) {
-        return commonFilters(query).eq(AuditLogEntity::getAppId, personalAppId)
-                .eq(AuditLogEntity::getTrafficType, "model");
+    public Optional<LambdaQueryWrapper<AuditLogEntity>> personalFilters(AuditQueryBO query, String um) {
+        if (!hasText(um)) {
+            LocalDate today = LocalDate.now();
+            if (query.getStartTime() == null) query.setStartTime(today.minusDays(30).atStartOfDay());
+            if (query.getEndTime() == null) query.setEndTime(today.atTime(LocalTime.MAX));
+        }
+        var filters = commonFilters(query).eq(AuditLogEntity::getTrafficType, "model");
+        if (!hasText(um)) return Optional.of(filters.apply(AuditLogMapper.PERSONAL_AUDIT_SCOPE));
+        var user = appScopeResolver.findPersonalByUm(um);
+        return user == null ? Optional.empty() : Optional.of(filters.eq(AuditLogEntity::getAppId, user.getAppId()));
     }
 
     private LambdaQueryWrapper<AuditLogEntity> commonFilters(AuditQueryBO q) {

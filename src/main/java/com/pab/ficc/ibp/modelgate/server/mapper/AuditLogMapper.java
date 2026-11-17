@@ -20,6 +20,8 @@ public interface AuditLogMapper extends BaseMapper<AuditLogEntity> {
     /** 仅排除已知个人，保留无 appId 的拒绝记录和已删除系统的历史。 */
     String SYSTEM_AUDIT_SCOPE = "NOT EXISTS (SELECT 1 FROM mg_app p WHERE p.app_id = mg_audit_log.app_id "
             + "AND p.subject_type = 'PERSONAL')";
+    String PERSONAL_AUDIT_SCOPE = "EXISTS (SELECT 1 FROM mg_app p WHERE p.app_id = mg_audit_log.app_id "
+            + "AND p.subject_type = 'PERSONAL' AND p.is_del = '0')";
 
     default boolean batchInsert(List<AuditLogEntity> list) {
         if (list == null || list.isEmpty()) return true;
