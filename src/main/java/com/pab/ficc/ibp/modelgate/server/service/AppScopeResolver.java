@@ -164,6 +164,12 @@ public class AppScopeResolver {
         return appIds.size() == 1 ? AppScope.eq(appIds.get(0)) : AppScope.in(appIds);
     }
 
+    public AppScope resolvePersonal(String um) {
+        if (!notBlank(um)) return AppScope.none();
+        AppInfoEntity user = findPersonalByUm(um);
+        return user == null ? AppScope.nothing() : AppScope.eq(user.getAppId());
+    }
+
     /**
      * 批量反查 appId → 应用编码，供审计/报文列表展示「应用编码」列。
      *

@@ -580,7 +580,7 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
           <div class="toolbar-left" style="flex-wrap:wrap;gap:8px">
             <!-- 与审计页同一套逻辑：下拉只负责回填 appId 输入框，输入框才是提交来源。理由见审计页注释。 -->
             <select id="pl_scope" aria-label="报文接入范围" onchange="switchPayloadScope()"><option value="app">接入应用</option><option value="personal">接入用户</option></select>
-            <input type="text" id="pl_um" aria-label="报文 UM" placeholder="输入 UM 搜索" list="payloadUmOptions"
+            <input type="text" id="pl_um" aria-label="报文 UM" placeholder="全部用户 / 输入 UM 搜索" list="payloadUmOptions"
                    maxlength="64" autocomplete="off" oninput="suggestPayloadRecordUsers()" hidden/>
             <datalist id="payloadUmOptions"></datalist>
             <select id="pl_app" style="width:150px" onchange="pickPayloadApp(this.value)"><option value="">全部系统</option></select>
@@ -5099,11 +5099,6 @@ async function loadPayload(resetPage = true){
   const tbody = $('payloadTbody');
   const personal=$('pl_scope').value==='personal';
   const um=$('pl_um').value.trim();
-  if(personal && !um){
-    tbody.innerHTML='<tr class="empty-row"><td colspan="13">请输入 UM 后查询</td></tr>';
-    $('payloadPager').textContent='';
-    return;
-  }
   // 前置拦截：条件不合法就不发请求，直接给出可点击的补救路径
   const kw = $('pl_keyword').value.trim();
   if(kw && !payloadNarrowed()){ renderPayloadNeedNarrow(kw); return; }

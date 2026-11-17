@@ -31,6 +31,8 @@ public interface RequestPayloadMapper extends BaseMapper<RequestPayloadEntity> {
     int QUERY_TIMEOUT_SECONDS = 30;
     String APPLICATION_PAYLOAD_SCOPE = "NOT EXISTS (SELECT 1 FROM mg_app p WHERE p.app_id = mg_request_payload.app_id "
             + "AND p.subject_type = 'PERSONAL')";
+    String PERSONAL_PAYLOAD_SCOPE = "EXISTS (SELECT 1 FROM mg_app p WHERE p.app_id = mg_request_payload.app_id "
+            + "AND p.subject_type = 'PERSONAL' AND p.is_del = '0')";
     String AUDIT_MATCH = "WHERE a.trace_id = mg_request_payload.trace_id AND a.app_id = mg_request_payload.app_id ";
 
     /** 批量插入，与 {@code AuditLogMapper.batchInsert} 同一套写法（每 1000 条一批）。 */

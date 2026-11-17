@@ -425,6 +425,15 @@ class PersonalAccessIntegrationTest {
         client().get().uri("/modelgate/payload/personal/query?um=" + a + "&traceId=" + trace)
                 .exchange().expectStatus().isOk().expectBody()
                 .jsonPath("$.data.items[0].um").isEqualTo(a).jsonPath("$.data.items[0].appId").doesNotExist();
+        client().get().uri("/modelgate/payload/personal/query?pageIndex=1&pageSize=1")
+                .exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.total").isEqualTo(1)
+                .jsonPath("$.data.items[0].traceId").isEqualTo(trace)
+                .jsonPath("$.data.items[0].um").isEqualTo(a)
+                .jsonPath("$.data.items[0].personName").isEqualTo(seed.path("personA").path("name").asText())
+                .jsonPath("$.data.items[0].appId").doesNotExist();
+        client().get().uri("/modelgate/payload/personal/query?requestKeyword=录制测试")
+                .exchange().expectStatus().isBadRequest();
         client().get().uri("/modelgate/payload/personal/detail?um=" + a + "&id=" + payloadId)
                 .exchange().expectStatus().isOk().expectHeader().valueEquals("Cache-Control", "no-store").expectBody()
                 .jsonPath("$.data.requestPath").isEqualTo(CHAT)

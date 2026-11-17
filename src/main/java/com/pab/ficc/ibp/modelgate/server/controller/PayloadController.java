@@ -100,7 +100,10 @@ public class PayloadController {
         PayloadQueryBO q = query != null ? query : new PayloadQueryBO();
         // 校验放在 Mono 外：参数错误应当立刻返回，不必占用 boundedElastic 线程
         validate(q);
-        return Mono.fromCallable(() -> toPageVo(doQuery(q, null)))
+        return Mono.fromCallable(() -> {
+                    var scope = appScopeResolver.resolve(q.getAppId(), q.getAppCode());
+                    return toPageVo(doQuery(q, false, scope));
+                })
                 .subscribeOn(AdminScheduler.get())
                 .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .map(Result::success);
@@ -113,18 +116,21 @@ public class PayloadController {
     }
 
     @GetMapping("/personal/query")
-    public Mono<Result<PageVo<PayloadListVO>>> personalQuery(@RequestParam("um") String um, PayloadQueryBO query,
-                                                              ServerHttpResponse response) {
+    public Mono<Result<PageVo<PayloadListVO>>> personalQuery(@RequestParam(value = "um", required = false) String um,
+                                                             PayloadQueryBO query, ServerHttpResponse response) {
         validate(query);
         response.getHeaders().setCacheControl(CacheControl.noStore());
         return Mono.fromCallable(() -> {
-                    var user = appScopeResolver.findPersonalByUm(um);
-                    if (user == null) return PageVo.<PayloadListVO, PayloadListVO>of(
-                            new Page<>(query.getPageIndex(), query.getPageSize()), item -> item);
-                    return PageVo.of(doQuery(query, user.getAppId()), item -> {
+                    var page = doQuery(query, true, appScopeResolver.resolvePersonal(um));
+                    var users = appScopeResolver.personalUsersByAppId(
+                            page.getRecords().stream().map(PayloadListVO::getAppId).toList());
+                    return PageVo.of(page, item -> {
+                        var user = users.get(item.getAppId());
                         item.setAppId(null);
-                        item.setUm(user.getPersonUm());
-                        item.setPersonName(user.getAppName());
+                        if (user != null) {
+                            item.setUm(user.getPersonUm());
+                            item.setPersonName(user.getAppName());
+                        }
                         return item;
                     });
                 }).subscribeOn(AdminScheduler.get()).timeout(AdminScheduler.REQUEST_TIMEOUT).map(Result::success);
@@ -428,7 +434,7 @@ public class PayloadController {
      * 同一毫秒可写入多条，只按 create_time 排会在翻页时出现重复行/漏行，
      * 必须补一个唯一列做次级排序。
      */
-    private IPage<PayloadListVO> doQuery(PayloadQueryBO q, String personalAppId) {
+    private IPage<PayloadListVO> doQuery(PayloadQueryBO q, boolean personal, AppScopeResolver.AppScope scope) {
         String modelId      = q.getModelId();
         String traceId      = q.getTraceId();
         String finishReason = q.getFinishReason();
@@ -437,20 +443,14 @@ public class PayloadController {
         String requestKeyword = q.getRequestKeyword();
         String headerKeyword = q.getHeaderKeyword();
 
-        // appId + 应用编码 → 报文表上可执行的条件。报文表没有 app_code 列，
-        // 由 AppScopeResolver 先在小表 mg_app 解析，理由见该类注释。
-        boolean personal = personalAppId != null;
-        AppScopeResolver.AppScope scope = personal ? new AppScopeResolver.AppScope(false, personalAppId, null)
-                : appScopeResolver.resolve(q.getAppId(), q.getAppCode());
         if (scope.matchNothing()) {
-            // 条件注定命中不了任何行。⚠️ 必须直接返回空页：漏掉这一分支等于"不加 app 过滤"，
-            // 会把全部系统的报文当成该应用编码的报文返回——报文里是用户原始 prompt，
-            // 这种越界展示比查不到严重得多。
+            // 未匹配的应用或 UM 必须返回空页，避免退化成全量查询。
             return new Page<>(q.getPageIndex(), q.getPageSize());
         }
 
         LambdaQueryWrapper<RequestPayloadEntity> w = new LambdaQueryWrapper<RequestPayloadEntity>()
                 .apply(!personal, RequestPayloadMapper.APPLICATION_PAYLOAD_SCOPE)
+                .apply(personal && scope.eqAppId() == null, RequestPayloadMapper.PERSONAL_PAYLOAD_SCOPE)
                 .eq(scope.eqAppId() != null,  RequestPayloadEntity::getAppId,          scope.eqAppId())
                 .in(scope.inAppIds() != null, RequestPayloadEntity::getAppId,          scope.inAppIds())
                 .eq(notBlank(modelId),      RequestPayloadEntity::getModelId,        modelId)
