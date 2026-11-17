@@ -179,6 +179,9 @@ textarea{resize:vertical;min-height:80px;font-family:monospace}
 .rule-tag button{background:none;border:none;cursor:pointer;color:#94a3b8;font-size:14px;line-height:1;padding:0}
 .rule-tag button:hover{color:#ef4444}
 .rule-add-row{display:flex;gap:8px;margin-top:12px;align-items:center;flex-wrap:wrap}
+.record-time-range{display:inline-flex;flex-wrap:wrap;align-items:center;gap:8px}
+.record-time-range input{width:185px}
+.record-time-range [hidden]{display:none}
 .source-rule-list{min-height:60px;background:#f8fafc;border-radius:8px;padding:10px;overflow-wrap:anywhere}
 
 code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-family:monospace}
@@ -494,7 +497,9 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
                  而排查时手上通常直接就有 appId / 应用编码。两个控件同时提交同一个参数会互相打架，
                  所以这里把下拉做成"选了就回填输入框"，输入框是唯一的提交来源。 -->
             <select id="auditScope" aria-label="审计接入范围" onchange="switchAuditScope()"><option value="app">接入应用</option><option value="personal">接入用户</option></select>
-            <input id="auditUm" aria-label="审计 UM" placeholder="输入完整 UM" hidden/>
+            <input type="text" id="auditUm" aria-label="审计 UM" placeholder="输入 UM 搜索" list="auditUmOptions"
+                   maxlength="64" autocomplete="off" oninput="suggestAuditRecordUsers()" hidden/>
+            <datalist id="auditUmOptions"></datalist>
             <select id="auditApp" style="width:140px" onchange="pickAuditApp(this.value)"><option value="">全部系统</option></select>
             <input type="text" id="auditAppId" placeholder="appId（精确）" style="width:150px"
                    oninput="syncAuditAppSelect()" title="接入应用 appId，精确匹配"/>
@@ -519,11 +524,16 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
               <option value="500">500 错误</option>
             </select>
             <input type="text" id="auditTrace" placeholder="TraceID" style="width:160px"/>
-            <select id="auditPeriod" aria-label="审计快捷时间范围" onchange="setAuditPeriod(this.value);loadAudit()">
-              <option value="">自定义</option><option value="week">本周</option><option value="month">本月</option><option value="quarter">本季度</option>
-            </select>
-            <input type="datetime-local" step="1" id="auditStart" aria-label="审计开始时间" onchange="$('auditPeriod').value=''"/>
-            <input type="datetime-local" step="1" id="auditEnd" aria-label="审计结束时间" onchange="$('auditPeriod').value=''"/>
+            <div class="record-time-range" aria-label="审计时间范围">
+              <select id="auditPeriod" aria-label="审计快捷时间范围" onchange="setRecordPeriod('audit',this.value);loadAudit()">
+                <option value="">自定义</option><option value="week">本周</option><option value="month">本月</option><option value="quarter">本季度</option>
+              </select>
+              <input type="datetime-local" step="1" id="auditStart" aria-label="审计开始时间" onchange="setRecordPeriod('audit','')"/>
+              <span>至</span>
+              <input type="datetime-local" step="1" id="auditEnd" aria-label="审计结束时间" onchange="setRecordPeriod('audit','')"/>
+              <button id="auditPrev" class="btn btn-neutral btn-sm" type="button" onclick="stepRecordPeriod('audit',-1);loadAudit()" hidden>上一周期</button>
+              <button id="auditNext" class="btn btn-neutral btn-sm" type="button" onclick="stepRecordPeriod('audit',1);loadAudit()" hidden>下一周期</button>
+            </div>
           </div>
           <button class="btn btn-primary" data-api="GET /modelgate/audit/query" onclick="loadAudit()">查询</button>
         </div>
@@ -570,7 +580,9 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
           <div class="toolbar-left" style="flex-wrap:wrap;gap:8px">
             <!-- 与审计页同一套逻辑：下拉只负责回填 appId 输入框，输入框才是提交来源。理由见审计页注释。 -->
             <select id="pl_scope" aria-label="报文接入范围" onchange="switchPayloadScope()"><option value="app">接入应用</option><option value="personal">接入用户</option></select>
-            <input id="pl_um" aria-label="报文 UM" placeholder="输入完整 UM" hidden/>
+            <input type="text" id="pl_um" aria-label="报文 UM" placeholder="输入 UM 搜索" list="payloadUmOptions"
+                   maxlength="64" autocomplete="off" oninput="suggestPayloadRecordUsers()" hidden/>
+            <datalist id="payloadUmOptions"></datalist>
             <select id="pl_app" style="width:150px" onchange="pickPayloadApp(this.value)"><option value="">全部系统</option></select>
             <input type="text" id="pl_appId" placeholder="appId（精确）" style="width:150px"
                    oninput="syncPayloadAppSelect()" title="接入应用 appId，精确匹配"/>
@@ -616,10 +628,16 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
         </div>
         <div class="toolbar" style="border-top:1px dashed #e2e8f0;padding-top:10px">
           <div class="toolbar-left" style="flex-wrap:wrap;gap:8px;align-items:center">
-            <span style="font-size:12px;color:#64748b">时间范围</span>
-            <input type="datetime-local" id="pl_start" style="width:200px"/>
-            <span style="font-size:12px;color:#94a3b8">至</span>
-            <input type="datetime-local" id="pl_end" style="width:200px"/>
+            <div class="record-time-range" aria-label="报文时间范围">
+              <select id="payloadPeriod" aria-label="报文快捷时间范围" onchange="setRecordPeriod('payload',this.value);loadPayload()">
+                <option value="">自定义</option><option value="week">本周</option><option value="month">本月</option><option value="quarter">本季度</option>
+              </select>
+              <input type="datetime-local" step="1" id="pl_start" aria-label="报文开始时间" onchange="setRecordPeriod('payload','')"/>
+              <span>至</span>
+              <input type="datetime-local" step="1" id="pl_end" aria-label="报文结束时间" onchange="setRecordPeriod('payload','')"/>
+              <button id="payloadPrev" class="btn btn-neutral btn-sm" type="button" onclick="stepRecordPeriod('payload',-1);loadPayload()" hidden>上一周期</button>
+              <button id="payloadNext" class="btn btn-neutral btn-sm" type="button" onclick="stepRecordPeriod('payload',1);loadPayload()" hidden>下一周期</button>
+            </div>
             <select id="pl_keyword_scope" style="width:120px" onchange="updatePayloadKeywordUi()">
               <option value="request">请求报文</option>
               <option value="headers">请求头</option>
@@ -2379,6 +2397,74 @@ async function fetchSelectableModels(){
 
 function fmt(v){ return v == null ? '不限' : (v===0?'不限':v.toLocaleString()); }
 function fmtTime(t){ if(!t) return '-'; try{ return new Date(t).toLocaleString('zh-CN',{hour12:false}); }catch(e){return t;} }
+
+const recordRanges={
+  audit:{start:'auditStart',end:'auditEnd',um:'auditUm',offset:0},
+  payload:{start:'pl_start',end:'pl_end',um:'pl_um',offset:0}
+};
+const recordPeriodLabels={week:'周',month:'月',quarter:'季度'};
+
+function fillRecordRange(scene,start,end){
+  const local=date=>new Date(date.getTime()-date.getTimezoneOffset()*60000).toISOString().slice(0,19);
+  const controls=recordRanges[scene];
+  $(controls.start).value=local(start);
+  $(controls.end).value=local(end);
+}
+
+function setRecordPeriod(scene,period,offset=0){
+  const controls=recordRanges[scene];
+  const picker=$(scene+'Period');
+  picker.value=period;
+  controls.offset=offset;
+  const previous=$(scene+'Prev'), next=$(scene+'Next');
+  previous.hidden=next.hidden=!period;
+  if(!period) return;
+  previous.textContent='上一'+recordPeriodLabels[period];
+  next.textContent='下一'+recordPeriodLabels[period];
+  next.disabled=offset===0;
+  const now=new Date();
+  const year=now.getFullYear(), month=now.getMonth();
+  let start,end;
+  if(period==='week'){
+    const monday=now.getDate()-(now.getDay()+6)%7+offset*7;
+    start=new Date(year,month,monday);
+    end=new Date(year,month,monday+7);
+  }else{
+    const size=period==='quarter'?3:1;
+    const firstMonth=Math.floor(month/size)*size+offset*size;
+    start=new Date(year,firstMonth,1);
+    end=new Date(year,firstMonth+size,1);
+  }
+  fillRecordRange(scene,start,offset===0?now:new Date(end.getTime()-1000));
+}
+
+function stepRecordPeriod(scene,delta){
+  const period=$(scene+'Period').value;
+  const offset=recordRanges[scene].offset+delta;
+  if(period && offset<=0) setRecordPeriod(scene,period,offset);
+}
+
+async function suggestPersonalRecordUsers(scene){
+  const input=$(recordRanges[scene].um);
+  const list=$(scene+'UmOptions');
+  const keyword=input.value.trim();
+  list.replaceChildren();
+  if(!keyword || input.hidden) return;
+  try{
+    const params=new URLSearchParams({keyword});
+    const response=await fetch(apiUrl('/'+scene+'/personal/users?'+params),{headers:hdrs()});
+    const result=await response.json();
+    if(input.hidden || input.value.trim()!==keyword || !isOk(result)) return;
+    for(const {um,name} of result.data || []){
+      const option=new Option();
+      option.value=um;
+      option.label=um+'（'+name+'）';
+      list.append(option);
+    }
+  }catch(e){ /* 保留完整 UM 手工查询。 */ }
+}
+const suggestAuditRecordUsers=debounce(()=>suggestPersonalRecordUsers('audit'));
+const suggestPayloadRecordUsers=debounce(()=>suggestPersonalRecordUsers('payload'));
 
 function toast(msg, type='success'){
   const el = $('toast');
@@ -4743,18 +4829,6 @@ async function loadStats(filters, personal, version){
   }catch(e){ console.warn('[ModelGate] 审计统计查询异常',e); }
 }
 
-function setAuditPeriod(period){
-  const end=new Date();
-  const year=end.getFullYear(), month=end.getMonth(), day=end.getDate();
-  const start=period==='week'?new Date(year,month,day-(end.getDay()+6)%7)
-    :period==='month'?new Date(year,month,1)
-    :period==='quarter'?new Date(year,Math.floor(month/3)*3,1):new Date(year,month,day-30);
-  const local=date=>new Date(date.getTime()-date.getTimezoneOffset()*60000).toISOString().slice(0,19);
-  $('auditPeriod').value=period;
-  $('auditStart').value=local(start);
-  $('auditEnd').value=local(end);
-}
-
 function switchAuditScope(reload=true){
   const personal=$('auditScope').value==='personal';
   for(const id of ['auditApp','auditAppId','auditAppCode','auditTraffic','auditServiceId']) $(id).hidden=personal;
@@ -4967,17 +5041,11 @@ function payloadNarrowed(){
   return ms >= 0 && ms <= 24*3600*1000;
 }
 
-/** Date → datetime-local 控件要的 "YYYY-MM-DDTHH:mm"（本地时区，不能用 toISOString，那是 UTC） */
-function toLocalInput(d){
-  const p = n => String(n).padStart(2,'0');
-  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
-}
-
 /** 一键补上最近 24 小时，然后重查 */
 function payloadUseLast24h(){
   const now = new Date();
-  $('pl_start').value = toLocalInput(new Date(now.getTime() - 24*3600*1000));
-  $('pl_end').value   = toLocalInput(now);
+  setRecordPeriod('payload','');
+  fillRecordRange('payload',new Date(now.getTime()-24*3600*1000),now);
   loadPayload();
 }
 
@@ -5113,6 +5181,7 @@ function resetPayloadFilters(reload = true){
   ['pl_app','pl_appId','pl_appCode','pl_model','pl_trace','pl_stream','pl_status','pl_finish','pl_truncated',
    'pl_start','pl_end','pl_keyword','pl_um','pl_traffic','pl_serviceId'].forEach(id => { const el = $(id); if(el) el.value = ''; });
   $('pl_keyword_scope').value = 'request';
+  setRecordPeriod('payload','');
   updatePayloadKeywordUi();
   if(reload) loadPayload();
 }
@@ -5534,7 +5603,7 @@ function payloadToAudit(traceId, um='', recordTime=''){
   $('auditUm').value=um;
   const day=recordTime.slice(0,10);
   if(day){
-    $('auditPeriod').value='';
+    setRecordPeriod('audit','');
     $('auditStart').value=day+'T00:00:00';
     $('auditEnd').value=day+'T23:59:59';
   }
@@ -7466,7 +7535,8 @@ document.querySelectorAll('.modal-backdrop').forEach(el=>{
 window.onload = () => {
   loadModels();
   loadApps();
-  setAuditPeriod('');
+  const now=new Date();
+  fillRecordRange('audit',new Date(now.getFullYear(),now.getMonth(),now.getDate()-30),now);
 };
 </script>
 </body>

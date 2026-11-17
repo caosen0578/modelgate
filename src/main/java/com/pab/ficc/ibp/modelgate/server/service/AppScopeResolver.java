@@ -1,10 +1,12 @@
 package com.pab.ficc.ibp.modelgate.server.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.pab.ficc.ibp.modelgate.server.common.BusinessException;
 import com.pab.ficc.ibp.modelgate.server.common.AppSubject;
 import com.pab.ficc.ibp.modelgate.server.common.ErrorCode;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.AppInfoEntity;
+import com.pab.ficc.ibp.modelgate.server.domain.vo.PersonalAccessViews;
 import com.pab.ficc.ibp.modelgate.server.mapper.AppMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -12,6 +14,7 @@ import org.springframework.stereotype.Service;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -50,6 +53,18 @@ public class AppScopeResolver {
                 .eq(AppInfoEntity::getPersonUm, normalized));
         if (user == null) throw new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "未开通个人接入: " + normalized);
         return user;
+    }
+
+    public List<PersonalAccessViews.UserOption> findPersonalUsers(String keyword) {
+        String fragment = keyword.strip().toUpperCase(Locale.ROOT);
+        if (!fragment.matches("[A-Z0-9._-]{1,64}")) return List.of();
+        return appMapper.selectPage(new Page<>(1, 20, false), new LambdaQueryWrapper<AppInfoEntity>()
+                        .select(AppInfoEntity::getPersonUm, AppInfoEntity::getAppName)
+                        .eq(AppInfoEntity::getSubjectType, AppSubject.PERSONAL)
+                        .apply("person_um LIKE {0} ESCAPE '!'", "%" + fragment.replace("_", "!_") + "%")
+                        .orderByAsc(AppInfoEntity::getPersonUm)).getRecords().stream()
+                .map(user -> new PersonalAccessViews.UserOption(user.getPersonUm(), user.getAppName()))
+                .toList();
     }
 
     /**

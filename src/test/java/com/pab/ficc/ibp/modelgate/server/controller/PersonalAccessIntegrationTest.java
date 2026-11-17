@@ -441,6 +441,16 @@ class PersonalAccessIntegrationTest {
 
         String range = "&startTime=" + LocalDate.now().minusDays(1) + "T00:00:00&endTime="
                 + LocalDate.now().plusDays(1) + "T00:00:00";
+        for (String path : List.of("/modelgate/audit/personal/users", "/modelgate/payload/personal/users")) {
+            client().get().uri(path + "?keyword=teacher_a")
+                    .exchange().expectStatus().isOk().expectBody()
+                    .jsonPath("$.data.length()").isEqualTo(1)
+                    .jsonPath("$.data[0].um").isEqualTo(a)
+                    .jsonPath("$.data[0].name").isEqualTo(seed.path("personA").path("name").asText())
+                    .jsonPath("$.data[0].appId").doesNotExist();
+            client().get().uri(path + "?keyword=%25").exchange().expectStatus().isOk().expectBody()
+                    .jsonPath("$.data.length()").isEqualTo(0);
+        }
         client().get().uri("/modelgate/audit/personal/query?um=" + a + "&traceId=" + trace + range)
                 .exchange().expectStatus().isOk().expectBody().jsonPath("$.data.items[0].um").isEqualTo(a);
         client().get().uri("/modelgate/stats/personal/usage?um=" + a + "&traceId=" + trace + range)

@@ -12,6 +12,8 @@ import java.util.List;
 public final class PersonalAccessViews {
     private PersonalAccessViews() {}
 
+    public record UserOption(String um, String name) {}
+
     public record Meta(boolean enabled) {}
 
     public record Profile(String um, String name, String remark, boolean enabled,

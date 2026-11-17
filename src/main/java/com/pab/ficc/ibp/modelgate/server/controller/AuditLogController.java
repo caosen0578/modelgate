@@ -11,6 +11,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.pab.ficc.ibp.modelgate.server.domain.bo.AuditQueryBO;
 import com.pab.ficc.ibp.modelgate.server.domain.entity.AuditLogEntity;
 import com.pab.ficc.ibp.modelgate.server.domain.vo.AuditLogVO;
+import com.pab.ficc.ibp.modelgate.server.domain.vo.PersonalAccessViews;
 import com.pab.ficc.ibp.modelgate.server.mapper.AuditLogMapper;
 import com.pab.ficc.ibp.modelgate.server.service.AppScopeResolver;
 import com.pab.ficc.ibp.modelgate.server.service.AuditQueryService;
@@ -24,6 +25,7 @@ import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
 
 import java.util.Map;
+import java.util.List;
 
 /**
  * 审计日志查询接口
@@ -62,6 +64,12 @@ public class AuditLogController {
                 .subscribeOn(AdminScheduler.get())
                 .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .map(Result::success);
+    }
+
+    @GetMapping("/personal/users")
+    public Mono<Result<List<PersonalAccessViews.UserOption>>> personalUsers(@RequestParam("keyword") String keyword) {
+        return Mono.fromCallable(() -> appScopeResolver.findPersonalUsers(keyword))
+                .subscribeOn(AdminScheduler.get()).timeout(AdminScheduler.REQUEST_TIMEOUT).map(Result::success);
     }
 
     @GetMapping("/personal/query")

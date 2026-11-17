@@ -20,6 +20,7 @@ import com.pab.ficc.ibp.modelgate.server.domain.entity.ServiceEntity;
 import com.pab.ficc.ibp.modelgate.server.domain.vo.ConnectivityTestVO;
 import com.pab.ficc.ibp.modelgate.server.domain.vo.PayloadDetailVO;
 import com.pab.ficc.ibp.modelgate.server.domain.vo.PayloadListVO;
+import com.pab.ficc.ibp.modelgate.server.domain.vo.PersonalAccessViews;
 import com.pab.ficc.ibp.modelgate.server.mapper.RequestPayloadMapper;
 import com.pab.ficc.ibp.modelgate.server.service.AppScopeResolver;
 import com.pab.ficc.ibp.modelgate.server.service.ModelConnectivityService;
@@ -103,6 +104,12 @@ public class PayloadController {
                 .subscribeOn(AdminScheduler.get())
                 .timeout(AdminScheduler.REQUEST_TIMEOUT)
                 .map(Result::success);
+    }
+
+    @GetMapping("/personal/users")
+    public Mono<Result<List<PersonalAccessViews.UserOption>>> personalUsers(@RequestParam("keyword") String keyword) {
+        return Mono.fromCallable(() -> appScopeResolver.findPersonalUsers(keyword))
+                .subscribeOn(AdminScheduler.get()).timeout(AdminScheduler.REQUEST_TIMEOUT).map(Result::success);
     }
 
     @GetMapping("/personal/query")
