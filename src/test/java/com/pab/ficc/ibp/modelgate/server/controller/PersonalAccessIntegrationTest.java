@@ -489,6 +489,31 @@ class PersonalAccessIntegrationTest {
                 .exchange().expectStatus().isOk().expectBody().jsonPath("$.data.total").isEqualTo(0);
         client().get().uri("/modelgate/payload/personal/query?um=UNKNOWN_UM")
                 .exchange().expectStatus().isOk().expectBody().jsonPath("$.data.total").isEqualTo(0);
+
+        List<String> selectableModels = List.of("mgqa-filter-a", "mgqa-filter-b", "mgqa-filter-excluded");
+        for (String appId : List.of(system, aId)) {
+            for (String modelId : selectableModels) {
+                String fixtureTrace = "mgqa-filter-" + UUID.randomUUID();
+                jdbc.update("INSERT INTO mg_audit_log (trace_id, app_id, model_id, input_tokens) VALUES (?, ?, ?, ?)",
+                        fixtureTrace, appId, modelId, 7);
+                jdbc.update("INSERT INTO mg_request_payload (trace_id, app_id, model_id) VALUES (?, ?, ?)",
+                        fixtureTrace, appId, modelId);
+            }
+        }
+        String modelFilter = "?modelIds=mgqa-filter-a&modelIds=mgqa-filter-b";
+        for (String path : List.of("/modelgate/audit/query", "/modelgate/audit/personal/query",
+                "/modelgate/payload/query", "/modelgate/payload/personal/query")) {
+            JsonNode filtered = json(client().get().uri(path + modelFilter).exchange().expectStatus().isOk());
+            assertEquals(2, filtered.path("total").asInt());
+            assertEquals("mgqa-filter-b", filtered.path("items").get(0).path("modelId").asText());
+            assertEquals("mgqa-filter-a", filtered.path("items").get(1).path("modelId").asText());
+        }
+        for (String path : List.of("/modelgate/stats/usage", "/modelgate/stats/personal/usage")) {
+            client().get().uri(path + modelFilter).exchange().expectStatus().isOk().expectBody()
+                    .jsonPath("$.data.totalRequests").isEqualTo(2).jsonPath("$.data.totalInputTokens").isEqualTo(14);
+        }
+        client().get().uri("/modelgate/audit/query?modelId=mgqa-filter-a")
+                .exchange().expectStatus().isOk().expectBody().jsonPath("$.data.total").isEqualTo(1);
     }
 
     private WebTestClient client() {

@@ -34,6 +34,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.CacheControl;
+import org.springframework.util.CollectionUtils;
 import org.springframework.http.server.reactive.ServerHttpResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -454,6 +455,7 @@ public class PayloadController {
                 .eq(scope.eqAppId() != null,  RequestPayloadEntity::getAppId,          scope.eqAppId())
                 .in(scope.inAppIds() != null, RequestPayloadEntity::getAppId,          scope.inAppIds())
                 .eq(notBlank(modelId),      RequestPayloadEntity::getModelId,        modelId)
+                .in(!CollectionUtils.isEmpty(q.getModelIds()), RequestPayloadEntity::getModelId, q.getModelIds())
                 .eq(notBlank(finishReason), RequestPayloadEntity::getFinishReason,   finishReason)
                 .eq(notBlank(truncated),    RequestPayloadEntity::getTruncated,      truncated)
                 // 流量类型与服务编码：等值匹配，为空不过滤（两类流量都返回）

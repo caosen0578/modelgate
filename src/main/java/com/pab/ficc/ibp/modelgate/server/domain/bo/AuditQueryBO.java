@@ -6,6 +6,7 @@ import lombok.EqualsAndHashCode;
 import org.springframework.format.annotation.DateTimeFormat;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * 审计日志查询入参：行内分页字段（pageIndex / pageSize）+ 原有四个过滤条件。
@@ -31,6 +32,9 @@ public class AuditQueryBO extends BaseBo {
 
     /** 模型 ID，为空不过滤。 */
     private String modelId;
+
+    /** 可重复传入的模型 ID，匹配其中任一模型。 */
+    private List<String> modelIds;
 
     /** HTTP 状态码，null 不过滤。 */
     private Integer status;

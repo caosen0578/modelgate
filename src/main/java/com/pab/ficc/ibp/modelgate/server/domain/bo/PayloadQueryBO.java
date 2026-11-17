@@ -6,6 +6,7 @@ import lombok.EqualsAndHashCode;
 import org.springframework.format.annotation.DateTimeFormat;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * 报文记录查询入参：行内分页字段（pageIndex / pageSize）+ 检索条件。
@@ -38,6 +39,9 @@ public class PayloadQueryBO extends BaseBo {
 
     /** 模型 ID，为空不过滤。 */
     private String modelId;
+
+    /** 可重复传入的模型 ID，匹配其中任一模型。 */
+    private List<String> modelIds;
 
     /**
      * 链路追踪 ID，为空不过滤。与审计页共用同一个 traceId，可互相跳转。

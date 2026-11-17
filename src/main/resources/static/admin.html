@@ -182,6 +182,10 @@ textarea{resize:vertical;min-height:80px;font-family:monospace}
 .record-time-range{display:inline-flex;flex-wrap:wrap;align-items:center;gap:8px}
 .record-time-range input{width:185px}
 .record-time-range [hidden]{display:none}
+.model-filter{position:relative;min-width:140px}
+.model-filter summary{cursor:pointer;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;background:#fff}
+.model-filter-options{position:absolute;z-index:5;min-width:100%;max-width:320px;max-height:240px;overflow:auto;border:1px solid #e5e7eb;border-radius:6px;background:#fff;padding:6px;box-shadow:0 4px 12px rgba(15,23,42,.12)}
+.model-filter-options label{display:flex;align-items:center;gap:6px;padding:4px 6px;cursor:pointer;overflow-wrap:anywhere}
 .source-rule-list{min-height:60px;background:#f8fafc;border-radius:8px;padding:10px;overflow-wrap:anywhere}
 
 code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-family:monospace}
@@ -505,7 +509,9 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
                    oninput="syncAuditAppSelect()" title="接入应用 appId，精确匹配"/>
             <input type="text" id="auditAppCode" placeholder="应用编码（精确）" style="width:140px"
                    title="mg_app.app_code，精确匹配。一个编码可能对应多个应用，会一并查出；与 appId 同时填写按「与」处理"/>
-            <select id="auditModel" style="width:140px"><option value="">全部模型</option></select>
+            <details class="model-filter" id="auditModel" onchange="updateRecordModelLabel(this)">
+              <summary aria-label="审计模型多选">全部模型</summary><div class="model-filter-options"></div>
+            </details>
             <!-- 流量类型：审计与报文表自 2026-08-27 起同时承载 /v1/** 与 /svc/** 两类流量。
                  默认「全部」而不是只看模型——默认藏起一半会让人误以为服务调用没进审计。 -->
             <select id="auditTraffic" style="width:120px">
@@ -588,7 +594,9 @@ code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:12px;font-fa
                    oninput="syncPayloadAppSelect()" title="接入应用 appId，精确匹配"/>
             <input type="text" id="pl_appCode" placeholder="应用编码（精确）" style="width:140px"
                    title="mg_app.app_code，精确匹配。一个编码可能对应多个应用，会一并查出；与 appId 同时填写按「与」处理"/>
-            <select id="pl_model" style="width:150px"><option value="">全部模型</option></select>
+            <details class="model-filter" id="pl_model" onchange="updateRecordModelLabel(this)">
+              <summary aria-label="报文模型多选">全部模型</summary><div class="model-filter-options"></div>
+            </details>
             <!-- 流量类型：审计与报文表自 2026-08-27 起同时承载 /v1/** 与 /svc/** 两类流量。
                  默认「全部」而不是只看模型——默认藏起一半会让人误以为服务调用没进审计。 -->
             <select id="pl_traffic" style="width:120px">
@@ -2360,14 +2368,42 @@ function renderPager(key, containerId, reloadFn){
     </div>`;
 }
 
+function appendQueryFilters(p, extra){
+  Object.entries(extra||{}).forEach(([k,v])=>{
+    if(Array.isArray(v)) v.forEach(item=>p.append(k,item));
+    else if(v !== undefined && v !== null && String(v).trim() !== '') p.set(k, String(v).trim());
+  });
+  return p;
+}
+
 /** 拼分页与过滤查询串，空值不带上去（后端按 null 判断是否参与过滤） */
 function pageQuery(key, extra){
   const st = pageState[key];
-  const p = new URLSearchParams({pageIndex: st.pageIndex, pageSize: st.pageSize});
-  Object.entries(extra||{}).forEach(([k,v])=>{
-    if(v !== undefined && v !== null && String(v).trim() !== '') p.set(k, String(v).trim());
-  });
-  return p.toString();
+  return appendQueryFilters(new URLSearchParams({pageIndex: st.pageIndex, pageSize: st.pageSize}),extra).toString();
+}
+
+function recordModelParams(id){
+  const selected=Array.from($(id).querySelectorAll('input:checked'),input=>input.value);
+  return selected.length===1?{modelId:selected[0]}:{modelIds:selected};
+}
+
+function updateRecordModelLabel(filter){
+  const count=filter.querySelectorAll('input:checked').length;
+  filter.querySelector('summary').textContent=count?'已选 '+count+' 个模型':'全部模型';
+}
+
+function fillRecordModels(id,models){
+  const filter=$(id);
+  filter.querySelector('.model-filter-options').innerHTML=models.map(m=>
+    `<label><input type="checkbox" value="${escapeHtml(m.modelId)}">${escapeHtml(m.modelName)} (${escapeHtml(m.modelId)})</label>`
+  ).join('');
+}
+
+function resetRecordModels(id){
+  const filter=$(id);
+  filter.querySelectorAll('input:checked').forEach(input=>input.checked=false);
+  filter.open=false;
+  updateRecordModelLabel(filter);
 }
 
 /** 输入框防抖：每敲一个字就打一次后端查询会打爆接口 */
@@ -4818,7 +4854,7 @@ async function loadStats(filters, personal, version){
   for(const id of ['statTotal','statTokens','statLatency','statSuccess']) $(id).textContent='-';
   $('statRange').textContent=filters.startTime && filters.endTime ? fmtTime(filters.startTime)+' 至 '+fmtTime(filters.endTime) : '';
   try{
-    const params = new URLSearchParams(Object.entries(filters).filter(([,value])=>value!==''));
+    const params = appendQueryFilters(new URLSearchParams(),filters);
     const path=personal?'/stats/personal/usage':'/stats/usage';
     const r=await fetch(apiUrl(path+'?'+params), {headers:hdrs()});
     const j=await r.json();
@@ -4861,7 +4897,7 @@ async function loadAudit(resetPage = true){
   const version=++auditRequestVersion;
   const personal=$('auditScope').value==='personal';
   const filters={
-    modelId:$('auditModel').value,
+    ...recordModelParams('auditModel'),
     status:$('auditStatus').value,
     traceId:$('auditTrace').value.trim(),
     startTime:$('auditStart').value,
@@ -4915,8 +4951,7 @@ async function fillAuditFilters(){
       fetch(apiUrl('/apps/page?pageIndex=1&pageSize=200'), {headers:hdrs()}).then(r=>r.json()),
     ]);
     const apps = isOk(appsResp) ? (appsResp.data?.items || []) : [];
-    $('auditModel').innerHTML = '<option value="">全部模型</option>'
-      + models.map(m=>`<option value="${escapeHtml(m.modelId)}">${escapeHtml(m.modelName)} (${escapeHtml(m.modelId)})</option>`).join('');
+    fillRecordModels('auditModel',models);
     $('auditApp').innerHTML = '<option value="">全部系统</option>'
       + apps.map(a=>`<option value="${escapeHtml(a.appId)}">${escapeHtml(a.appName)} (${escapeHtml(a.appId)})</option>`).join('');
     _auditFiltersFilled = true;
@@ -5115,7 +5150,7 @@ async function loadPayload(resetPage = true){
       um:             personal?um:'',
       appId:          personal?'':$('pl_appId').value.trim(),
       appCode:        personal?'':$('pl_appCode').value.trim(),
-      modelId:        $('pl_model').value,
+      ...recordModelParams('pl_model'),
       trafficType:    personal?'':$('pl_traffic').value,
       serviceId:      personal?'':$('pl_serviceId').value.trim(),
       traceId:        $('pl_trace').value,
@@ -5170,7 +5205,8 @@ function payloadSize(n){ pageState.payload.pageSize = parseInt(n)||20; loadPaylo
 
 /** 清空全部筛选条件。reload=false 时只清不查（供 payloadOfTrace 先清后填再查）。 */
 function resetPayloadFilters(reload = true){
-  ['pl_app','pl_appId','pl_appCode','pl_model','pl_trace','pl_stream','pl_status','pl_finish','pl_truncated',
+  resetRecordModels('pl_model');
+  ['pl_app','pl_appId','pl_appCode','pl_trace','pl_stream','pl_status','pl_finish','pl_truncated',
    'pl_start','pl_end','pl_keyword','pl_um','pl_traffic','pl_serviceId'].forEach(id => { const el = $(id); if(el) el.value = ''; });
   $('pl_keyword_scope').value = 'request';
   setRecordPeriod('payload','');
@@ -5188,8 +5224,7 @@ async function fillPayloadFilters(){
       fetch(apiUrl('/apps/page?pageIndex=1&pageSize=200'), {headers:hdrs()}).then(r=>r.json()),
     ]);
     const apps = isOk(appsResp) ? (appsResp.data?.items || []) : [];
-    $('pl_model').innerHTML = '<option value="">全部模型</option>'
-      + models.map(m=>`<option value="${escapeHtml(m.modelId)}">${escapeHtml(m.modelName)} (${escapeHtml(m.modelId)})</option>`).join('');
+    fillRecordModels('pl_model',models);
     $('pl_app').innerHTML = '<option value="">全部系统</option>'
       + apps.map(a=>`<option value="${escapeHtml(a.appId)}">${escapeHtml(a.appName)} (${escapeHtml(a.appId)})</option>`).join('');
     _payloadFiltersFilled = true;
@@ -5588,7 +5623,7 @@ function payloadToAudit(traceId, um='', recordTime=''){
   // 按 traceId 精确定位这一条，其余筛选必须全清——漏清 appId/应用编码会与 traceId 取交集，
   // 结果是"点了跳转却什么都没有"，而用户并不知道是被上一次的筛选条件挡掉的
   $('auditApp').value = ''; $('auditAppId').value = ''; $('auditAppCode').value = '';
-  $('auditModel').value = ''; $('auditStatus').value = '';
+  resetRecordModels('auditModel'); $('auditStatus').value = '';
   $('auditTraffic').value = ''; $('auditServiceId').value = '';
   $('auditTrace').value = traceId || '';
   $('auditScope').value=um?'personal':'app';

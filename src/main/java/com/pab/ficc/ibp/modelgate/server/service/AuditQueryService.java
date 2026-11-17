@@ -8,6 +8,7 @@ import com.pab.ficc.ibp.modelgate.server.domain.entity.AuditLogEntity;
 import com.pab.ficc.ibp.modelgate.server.mapper.AuditLogMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.util.CollectionUtils;
 
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -47,6 +48,7 @@ public class AuditQueryService {
         }
         return new LambdaQueryWrapper<AuditLogEntity>()
                 .eq(hasText(q.getModelId()), AuditLogEntity::getModelId, q.getModelId())
+                .in(!CollectionUtils.isEmpty(q.getModelIds()), AuditLogEntity::getModelId, q.getModelIds())
                 .eq(q.getStatus() != null, AuditLogEntity::getHttpStatus, q.getStatus())
                 .eq(hasText(q.getTraceId()), AuditLogEntity::getTraceId, q.getTraceId())
                 .ge(q.getStartTime() != null, AuditLogEntity::getCreateTime, q.getStartTime())
