@@ -73,11 +73,12 @@ public interface UrlConstant {
     String MG_STATS       = "/stats";
     String MG_AUDIT       = "/audit";
     String MG_PAYLOAD     = "/payload";
+    String MG_EVALUATION  = "/evaluation";
 
     /** 明确列举内部资源；绝不能用空 BASE + '/'，否则全部业务路径会被免鉴权。 */
     java.util.List<String> MANAGE_PATHS = java.util.List.of(MG_MODELS, MG_SERVICES,
         MG_SERVICE_AUTH, MG_APPS, MG_CREDENTIALS, MG_AUTH, MG_ACCESS, MG_CONFIG,
-        MG_STATS, MG_AUDIT, MG_PAYLOAD, MG_PERSONAL_ACCESS);
+        MG_STATS, MG_AUDIT, MG_PAYLOAD, MG_PERSONAL_ACCESS, MG_EVALUATION);
 
     // ===== 通用子路径（method-level）=====
     //

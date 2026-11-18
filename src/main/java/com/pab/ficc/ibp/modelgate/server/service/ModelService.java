@@ -3,6 +3,7 @@ package com.pab.ficc.ibp.modelgate.server.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.pab.ficc.ibp.modelgate.server.adapter.ProviderModelConfig;
 import com.pab.ficc.ibp.modelgate.server.cache.GatewayCacheManager;
 import com.pab.ficc.ibp.modelgate.server.common.BusinessException;
 import com.pab.ficc.ibp.modelgate.server.common.ErrorCode;
@@ -18,6 +19,7 @@ import com.pab.ficc.ibp.modelgate.server.mapper.ModelMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -25,6 +27,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -446,13 +449,30 @@ public class ModelService {
     }
 
     public ModelCredentialEntity getCredentialDecrypted(String modelId) {
-        return cacheManager.getModelCredential(modelId, () -> {
-            ModelCredentialEntity cred = credentialMapper.selectOne(
-                    new LambdaQueryWrapper<ModelCredentialEntity>().eq(ModelCredentialEntity::getModelId, modelId));
-            if (cred != null && cred.getSecretKey() != null) {
-                cred.setSecretKey(cryptoService.decrypt(cred.getSecretKey()));
+        return cacheManager.getModelCredential(modelId, () -> loadCredentialDecrypted(modelId)).orElse(null);
+    }
+
+    /** 评测在同一事务快照内读连接配置和密钥，避免凭证轮换与上游变更交叉。 */
+    @Transactional(transactionManager = "tdsqlTransactionManager", readOnly = true,
+            isolation = Isolation.REPEATABLE_READ)
+    public ModelCredentialEntity getCredentialForSnapshot(ModelInstanceEntity snapshot) {
+        var current = findByModelId(snapshot.getModelId());
+        if (!Boolean.TRUE.equals(current.getEnabled())) {
+            throw new BusinessException(ErrorCode.INVALID_PARAMETER, "目标模型已停用");
+        }
+        if (!Objects.equals(current.getId(), snapshot.getId())
+                || !ProviderModelConfig.from(current).equals(ProviderModelConfig.from(snapshot))) {
+            throw new BusinessException(ErrorCode.INVALID_PARAMETER, "目标模型的连接配置已变更，请复制任务后重新执行");
+        }
+        return loadCredentialDecrypted(snapshot.getModelId()).orElse(null);
+    }
+
+    private Optional<ModelCredentialEntity> loadCredentialDecrypted(String modelId) {
+        return getCredential(modelId).map(credential -> {
+            if (credential.getSecretKey() != null) {
+                credential.setSecretKey(cryptoService.decrypt(credential.getSecretKey()));
             }
-            return Optional.ofNullable(cred);
-        }).orElse(null);
+            return credential;
+        });
     }
 }

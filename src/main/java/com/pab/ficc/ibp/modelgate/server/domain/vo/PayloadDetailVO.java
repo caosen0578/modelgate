@@ -55,4 +55,5 @@ public class PayloadDetailVO {
      * 详见 {@link PayloadListVO#getAuditMatchCount()}。
      */
     private Integer       auditMatchCount;
+    private Integer       latencyMs;
 }

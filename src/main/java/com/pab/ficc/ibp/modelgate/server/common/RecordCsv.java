@@ -22,6 +22,8 @@ public final class RecordCsv {
 
     private RecordCsv() {}
 
+    public static String row(Object... values) { return cells(values); }
+
     public static String audit(AuditLogVO row) {
         return cells(row.getCreateTime(), row.getTraceId(), row.getAppId(), row.getAppCode(), row.getUm(),
                 row.getPersonName(), row.getTrafficType(), row.getModelId(), row.getServiceId(), row.getClientIp(),
@@ -40,9 +42,9 @@ public final class RecordCsv {
                 row.getRequestPreview(), row.getResponsePreview());
     }
 
-    public static <T> ResponseEntity<Flux<byte[]>> response(String filename, String header,
-            Function<Long, List<T>> fetch, Function<T, Long> id, Function<T, String> render) {
-        Flux<byte[]> body = Flux.<byte[], Long>generate(() -> null, (before, sink) -> {
+    public static <T, C> ResponseEntity<Flux<byte[]>> response(String filename, String header,
+            Function<C, List<T>> fetch, Function<T, C> id, Function<T, String> render) {
+        Flux<byte[]> body = Flux.<byte[], C>generate(() -> null, (before, sink) -> {
             List<T> batch = fetch.apply(before);
             if (batch.isEmpty()) {
                 sink.complete();

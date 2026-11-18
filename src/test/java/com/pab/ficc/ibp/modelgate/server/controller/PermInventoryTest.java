@@ -45,7 +45,7 @@ public class PermInventoryTest {
             AccessRuleController.class, AppController.class, AuditLogController.class,
             CredentialController.class, GatewayConfigController.class, ModelAuthController.class,
             ModelController.class, ProviderAdapterController.class, PayloadController.class, ServiceAuthController.class,
-            ServiceController.class, UsageStatsController.class, PersonalAccessController.class,
+            ServiceController.class, UsageStatsController.class, PersonalAccessController.class, EvaluationController.class,
     };
 
     private static int pass;

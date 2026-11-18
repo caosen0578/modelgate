@@ -150,6 +150,8 @@ public interface RequestPayloadMapper extends BaseMapper<RequestPayloadEntity> {
     @Options(timeout = QUERY_TIMEOUT_SECONDS)
     @Select("<script>SELECT id, trace_id, app_id, traffic_type, model_id, service_id, is_stream, request_method, request_path, request_headers, request_body, response_raw, " +
             "       response_text, finish_reason, upstream_status, truncated, create_time, " +
+            "       (SELECT a.latency_ms FROM mg_audit_log a " + AUDIT_MATCH +
+            "         ORDER BY a.id LIMIT 1) AS latency_ms, " +
             "       (SELECT a.input_tokens  FROM mg_audit_log a " +
             AUDIT_MATCH +
             "         ORDER BY a.id LIMIT 1) AS input_tokens, " +

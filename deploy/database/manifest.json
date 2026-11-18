@@ -14,7 +14,11 @@
     "mg_audit_log",
     "mg_service",
     "mg_service_credential",
-    "mg_app_service_auth"
+    "mg_app_service_auth",
+    "mg_eval_dataset",
+    "mg_eval_case",
+    "mg_eval_task",
+    "mg_eval_result"
   ],
   "fullInstall": [
     "sql/modelgate_schema.sql"
@@ -41,7 +45,8 @@
     "sql/upgrade_20261007_provider_adapter_v2.sql",
     "sql/upgrade_20261112_personal_access.sql",
     "sql/upgrade_20261117_codebuddy_usage_identity.sql",
-    "sql/repair_20261117_codebuddy_usage_identity.sql"
+    "sql/repair_20261117_codebuddy_usage_identity.sql",
+    "sql/upgrade_20261117_model_evaluation.sql"
   ],
   "readOnlyExternal": null,
   "sourceRoot": "src/main/java",
