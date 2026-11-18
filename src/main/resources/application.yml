@@ -10,7 +10,7 @@ server:
   # main 读取环境变量 PORT_NO；非空时直接设置监听端口，不改写 server.port 配置。
   # PORT_NO 未设置/空白时沿用正常配置（内网由 Apollo 提供，本地使用下面的值）。
   # PORT_NO 必须为 1~65535 的整数；非法值会阻止启动，避免监听到与平台不一致的端口。
-  port: 10811
+  port: 8080
   # 优雅停机：收到 SIGTERM 后先停止接收新连接，等在途请求处理完再关闭。
   # 对本网关尤其重要——LLM 请求正常就要跑 30~180 秒，直接切断等于让调用方白等一场，
   # 而且上游可能已经产生了计费。配合 /modelgate/actuator/detection/shutdown 的摘流量动作使用：
@@ -300,7 +300,7 @@ modelgate:
     max-concurrency: 4
   personal-access:
     # 个人接入默认关闭。完成数据库增量和管理权限配置后可启用。
-    enabled: false
+    enabled: true
     # 逗号分隔的 SLB / Ingress 对端 IP 或 CIDR。仅这些代理可转发 X-Forwarded-For。
     trusted-proxies: "${MODELGATE_PERSONAL_ACCESS_TRUSTED_PROXIES:}"
 
