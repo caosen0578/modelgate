@@ -46,7 +46,8 @@
     "sql/upgrade_20261112_personal_access.sql",
     "sql/upgrade_20261117_codebuddy_usage_identity.sql",
     "sql/repair_20261117_codebuddy_usage_identity.sql",
-    "sql/upgrade_20261117_model_evaluation.sql"
+    "sql/upgrade_20261117_model_evaluation.sql",
+    "sql/upgrade_20261118_evaluation_samples.sql"
   ],
   "readOnlyExternal": null,
   "sourceRoot": "src/main/java",

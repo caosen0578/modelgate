@@ -63,6 +63,10 @@ class EvaluationIntegrationTest {
         var cases = store.rows("SELECT * FROM mg_eval_case WHERE dataset_id=? ORDER BY ordinal_no", dataset);
         assertEquals(2, cases.size());
         assertFalse(String.valueOf(cases.get(0).get("snapshotJson")).contains("secret-must-not-copy"));
+        client().get().uri(BASE + "/dataset?id=" + dataset).exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.cases[0].referenceText").isEqualTo("before")
+                .jsonPath("$.data.cases[0].traceId").isEqualTo(trace)
+                .jsonPath("$.data.cases[0].payloadId").isEqualTo(ids.get(0).intValue());
         jdbc.update("DELETE FROM mg_request_payload WHERE model_id=?", model);
         client().get().uri(BASE + "/sample?id=" + cases.get(0).get("id")).exchange().expectStatus().isOk()
                 .expectBody().jsonPath("$.data.snapshotJson.responseText").isEqualTo("before");
@@ -128,6 +132,58 @@ class EvaluationIntegrationTest {
             });
         }
         client().post().uri(BASE + "/delete-dataset?id=" + dataset).exchange().expectStatus().isBadRequest();
+        client().post().uri(BASE + "/delete-task?id=" + task).exchange().expectStatus().isOk();
+        client().post().uri(BASE + "/delete-dataset?id=" + revision).exchange().expectStatus().isOk();
+        client().post().uri(BASE + "/delete-dataset?id=" + dataset).exchange().expectStatus().isOk();
+        jdbc.update("DELETE FROM mg_model WHERE model_id=?", model);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void importsAndRevisionsKeepDifficultyAndRunWithoutBusinessAudit() throws Exception {
+        var jdbc = new JdbcTemplate(source);
+        long auditCount = store.count("SELECT COUNT(*) FROM mg_audit_log");
+        long payloadCount = store.count("SELECT COUNT(*) FROM mg_request_payload");
+        long datasetCount = store.count("SELECT COUNT(*) FROM mg_eval_dataset");
+        var item = Map.of("title", "自建基础问答", "prompt", "fixture", "referenceText", "expected", "difficulty", "EASY");
+        client().post().uri(BASE + "/import-dataset").bodyValue(Map.of("name", "无效导入",
+                "cases", List.of(item, Map.of("prompt", "other", "difficulty", "INVALID"))))
+                .exchange().expectStatus().isBadRequest();
+        assertEquals(datasetCount, store.count("SELECT COUNT(*) FROM mg_eval_dataset"));
+        String dataset = value(client().post().uri(BASE + "/import-dataset")
+                .bodyValue(Map.of("name", "自建样本", "cases", List.of(item))).exchange().expectStatus().isOk());
+        var original = store.one("SELECT * FROM mg_eval_case WHERE dataset_id=?", dataset);
+        assertNull(original.get("payloadId"));
+        assertEquals("EASY", original.get("difficulty"));
+        assertEquals("expected", original.get("referenceText"));
+        String revision = value(client().post().uri(BASE + "/revise-dataset").bodyValue(Map.of("datasetId", dataset,
+                "cases", List.of(Map.of("caseId", original.get("id"), "referenceText", "", "difficulty", "HARD"))))
+                .exchange().expectStatus().isOk());
+        client().get().uri(BASE + "/dataset?id=" + revision).exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.version").isEqualTo(2).jsonPath("$.data.name").isEqualTo("自建样本")
+                .jsonPath("$.data.cases[0].referenceText").isEqualTo("")
+                .jsonPath("$.data.cases[0].difficulty").isEqualTo("HARD");
+        assertEquals("EASY", store.one("SELECT difficulty FROM mg_eval_case WHERE dataset_id=?", dataset).get("difficulty"));
+        String model = "eval-import-" + UUID.randomUUID().toString().substring(0, 8);
+        jdbc.update("INSERT INTO mg_model(model_id,model_name,provider,upstream_url) VALUES(?,?,?,?)",
+                model, "评测导入模型", "openai", "http://127.0.0.1:" + upstream.port());
+        String task = value(client().post().uri(BASE + "/create-task").bodyValue(Map.of("name", "自建样本 v2 评测",
+                "datasetId", revision, "modelId", model)).exchange().expectStatus().isOk());
+        try (var worker = new EvaluationWorker(store, runner, 1, true)) {
+            worker.tick();
+            assertTimeoutPreemptively(Duration.ofSeconds(10), () -> {
+                while (!"COMPLETED".equals(store.one("SELECT status FROM mg_eval_task WHERE id=?", task).get("status")))
+                    Thread.sleep(30);
+            });
+        }
+        client().get().uri(BASE + "/results?taskId=" + task).exchange().expectStatus().isOk().expectBody()
+                .jsonPath("$.data.items[0].difficulty").isEqualTo("HARD")
+                .jsonPath("$.data.items[0].status").isEqualTo("SUCCESS")
+                .jsonPath("$.data.items[0].inputTokens").isEqualTo(12);
+        client().get().uri(BASE + "/export?taskId=" + task).exchange().expectStatus().isOk()
+                .expectBody(String.class).value(csv -> assertTrue(csv.contains("HARD")));
+        assertEquals(auditCount, store.count("SELECT COUNT(*) FROM mg_audit_log"));
+        assertEquals(payloadCount, store.count("SELECT COUNT(*) FROM mg_request_payload"));
         client().post().uri(BASE + "/delete-task?id=" + task).exchange().expectStatus().isOk();
         client().post().uri(BASE + "/delete-dataset?id=" + revision).exchange().expectStatus().isOk();
         client().post().uri(BASE + "/delete-dataset?id=" + dataset).exchange().expectStatus().isOk();

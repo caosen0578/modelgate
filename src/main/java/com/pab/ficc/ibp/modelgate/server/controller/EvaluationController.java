@@ -14,6 +14,9 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.http.server.reactive.ServerHttpResponse;
+import org.springframework.core.io.buffer.DataBuffer;
+import org.springframework.core.io.buffer.DataBufferUtils;
+import org.springframework.core.io.buffer.DataBufferLimitException;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -76,6 +79,17 @@ public class EvaluationController {
     @PostMapping("/revise-dataset")
     public Mono<Result<String>> reviseDataset(@RequestBody EvaluationService.RevisionInput input) {
         return read(() -> service.revise(input));
+    }
+
+    @PostMapping("/import-dataset")
+    public Mono<Result<String>> importDataset(@RequestBody Flux<DataBuffer> input) {
+        return DataBufferUtils.join(input, 16 * 1024 * 1024).flatMap(buffer -> {
+            byte[] bytes = new byte[buffer.readableByteCount()];
+            try { buffer.read(bytes); } finally { DataBufferUtils.release(buffer); }
+            return read(() -> service.importDataset(store.read(new String(bytes, StandardCharsets.UTF_8),
+                    EvaluationService.ImportInput.class)));
+        }).switchIfEmpty(Mono.error(EvaluationStore.invalid("请选择非空样本文件")))
+                .onErrorMap(DataBufferLimitException.class, error -> EvaluationStore.invalid("导入内容不能超过 16 MB"));
     }
 
     @PostMapping("/delete-dataset")
@@ -161,14 +175,14 @@ public class EvaluationController {
                         .headers(h -> h.setContentDisposition(ContentDisposition.attachment().filename("evaluation.jsonl").build()))
                         .body(lines);
             }
-            return RecordCsv.response("evaluation.csv", "样本,次数,状态,判定,评分,耗时毫秒,输入 Token,输出 Token,Token 来源,完整,评语",
+            return RecordCsv.response("evaluation.csv", "样本,标题,难度,次数,状态,判定,评分,耗时毫秒,输入 Token,输出 Token,Token 来源,完整,评语",
                     before -> store.rows("SELECT r.id,r.attempt,r.status,r.verdict,r.score,r.note,r.latency_ms,"
-                                    + "r.input_tokens,r.output_tokens,r.token_source,r.response_complete,c.ordinal_no "
+                                    + "r.input_tokens,r.output_tokens,r.token_source,r.response_complete,c.ordinal_no,c.title,c.difficulty "
                                     + "FROM mg_eval_result r JOIN mg_eval_case c ON c.id=r.case_id WHERE r.task_id=? AND "
                                     + EvaluationStore.LATEST + " AND (? IS NULL OR r.id<?) ORDER BY r.id DESC LIMIT 10",
                             taskId, before == null ? null : String.valueOf(before), before == null ? null : String.valueOf(before)),
                     row -> String.valueOf(row.get("id")),
-                    row -> RecordCsv.row(row.get("ordinalNo"), row.get("attempt"), row.get("status"), row.get("verdict"),
+                    row -> RecordCsv.row(row.get("ordinalNo"), row.get("title"), row.get("difficulty"), row.get("attempt"), row.get("status"), row.get("verdict"),
                             row.get("score"), row.get("latencyMs"), row.get("inputTokens"),
                             row.get("outputTokens"), row.get("tokenSource"), row.get("responseComplete"), row.get("note")));
         }).subscribeOn(AdminScheduler.get()).timeout(AdminScheduler.REQUEST_TIMEOUT);

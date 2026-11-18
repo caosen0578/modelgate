@@ -25,7 +25,9 @@ import static com.pab.ficc.ibp.modelgate.server.service.evaluation.EvaluationSto
 @Service
 public class EvaluationService {
     public record DatasetInput(String name, List<Long> payloadIds, boolean personal) {}
-    public record ReferenceInput(String caseId, String referenceText) {}
+    public record ReferenceInput(String caseId, String referenceText, String difficulty) {}
+    public record ImportCase(String title, String prompt, ObjectNode request, String referenceText, String difficulty) {}
+    public record ImportInput(String name, List<ImportCase> cases) {}
     public record RevisionInput(String datasetId, List<ReferenceInput> cases) {}
     public record TaskInput(String name, String datasetId, String modelId, ObjectNode overrides,
                             Integer concurrency, Integer timeoutSeconds) {}
@@ -65,12 +67,24 @@ public class EvaluationService {
 
     public Map<String, Object> dataset(String id) {
         var result = store.one("SELECT * FROM mg_eval_dataset WHERE id=?", id);
-        result.put("cases", store.rows("SELECT id,payload_id,ordinal_no,reference_text FROM mg_eval_case WHERE dataset_id=? ORDER BY ordinal_no", id));
+        var samples = store.rows("SELECT * FROM mg_eval_case WHERE dataset_id=? ORDER BY ordinal_no", id);
+        for (var sample : samples) {
+            var snapshot = store.read(sample.remove("snapshotJson"), PayloadDetailVO.class);
+            sample.put("traceId", snapshot.getTraceId());
+            sample.put("modelId", snapshot.getModelId());
+            sample.put("um", snapshot.getUm());
+            sample.put("appId", snapshot.getAppId());
+            sample.put("sourceTime", snapshot.getCreateTime());
+            if (sample.get("referenceText") == null) sample.put("referenceText", baselineAnswer(snapshot));
+        }
+        result.put("cases", samples);
         return result;
     }
 
     public Map<String, Object> caseDetail(String id) {
         var row = store.one("SELECT * FROM mg_eval_case WHERE id=?", id);
+        if (row.get("referenceText") == null)
+            row.put("referenceText", baselineAnswer(store.read(row.get("snapshotJson"), PayloadDetailVO.class)));
         store.decode(row, "snapshotJson");
         return row;
     }
@@ -108,8 +122,8 @@ public class EvaluationService {
                     id, id, name, operators.currentOperatorUm());
             for (int i = 0; i < samples.size(); i++) {
                 var sample = samples.get(i);
-                store.update("INSERT INTO mg_eval_case(id,dataset_id,payload_id,ordinal_no,snapshot_json) VALUES(?,?,?,?,?)",
-                        EvaluationStore.id(), id, sample.getId(), i + 1, store.json(sample));
+                store.update("INSERT INTO mg_eval_case(id,dataset_id,payload_id,ordinal_no,snapshot_json,reference_text) VALUES(?,?,?,?,?,?)",
+                        EvaluationStore.id(), id, sample.getId(), i + 1, store.json(sample), baselineAnswer(sample));
             }
             return id;
         });
@@ -123,23 +137,93 @@ public class EvaluationService {
                     : store.one("SELECT * FROM mg_eval_dataset WHERE id=? FOR UPDATE", input.datasetId());
             int version = (int) store.count("SELECT MAX(version) FROM mg_eval_dataset WHERE root_id=?", root) + 1;
             var samples = store.rows("SELECT * FROM mg_eval_case WHERE dataset_id=? ORDER BY ordinal_no", input.datasetId());
-            Map<String, String> references = new LinkedHashMap<>();
+            Map<String, ReferenceInput> references = new LinkedHashMap<>();
             for (var reference : input.cases() == null ? List.<ReferenceInput>of() : input.cases()) {
                 if (samples.stream().noneMatch(row -> row.get("id").equals(reference.caseId()))) throw invalid("参考答案包含其他评测集样本");
                 if (reference.referenceText() != null && reference.referenceText().length() > maxSampleBytes) throw invalid("参考答案过长");
-                references.put(reference.caseId(), reference.referenceText());
+                difficulty(reference.difficulty());
+                if (references.put(reference.caseId(), reference) != null) throw invalid("同一样本不能重复提交");
             }
             String id = EvaluationStore.id();
             store.update("INSERT INTO mg_eval_dataset(id,root_id,name,version,created_by) VALUES(?,?,?,?,?)",
                     id, root, prior.get("name"), version, operators.currentOperatorUm());
             for (var sample : samples) {
                 String caseId = String.valueOf(sample.get("id"));
-                Object reference = references.containsKey(caseId) ? references.get(caseId) : sample.get("referenceText");
-                store.update("INSERT INTO mg_eval_case(id,dataset_id,payload_id,ordinal_no,snapshot_json,reference_text) VALUES(?,?,?,?,?,?)",
-                        EvaluationStore.id(), id, sample.get("payloadId"), sample.get("ordinalNo"), sample.get("snapshotJson"), reference);
+                var change = references.get(caseId);
+                Object reference = change == null ? sample.get("referenceText") : change.referenceText();
+                String level = change == null || change.difficulty() == null
+                        ? String.valueOf(sample.get("difficulty")) : difficulty(change.difficulty());
+                store.update("INSERT INTO mg_eval_case(id,dataset_id,payload_id,ordinal_no,snapshot_json,reference_text,difficulty,title) VALUES(?,?,?,?,?,?,?,?)",
+                        EvaluationStore.id(), id, sample.get("payloadId"), sample.get("ordinalNo"), sample.get("snapshotJson"),
+                        reference, level, sample.get("title"));
             }
             return id;
         });
+    }
+
+    public String importDataset(ImportInput input) {
+        String datasetName = name(input.name());
+        if (input.cases() == null || input.cases().isEmpty() || input.cases().size() > maxCases)
+            throw invalid("请选择 1–" + maxCases + " 条样本");
+        var snapshots = new ArrayList<String>();
+        long totalBytes = 0;
+        for (int index = 0; index < input.cases().size(); index++) {
+            try {
+                var item = input.cases().get(index);
+                if (item == null) throw invalid("样本不能为空");
+                if (item.title() != null && item.title().length() > 128) throw invalid("标题不能超过 128 字");
+                difficulty(item.difficulty());
+                if (item.referenceText() != null && item.referenceText().length() > maxSampleBytes) throw invalid("参考答案过长");
+                if (item.request() != null && item.prompt() != null && !item.prompt().isBlank())
+                    throw invalid("问题与完整请求请只填写一项");
+                var request = item.request() == null ? mapper.createObjectNode() : item.request().deepCopy();
+                if (item.request() == null && item.prompt() != null && !item.prompt().isBlank()) {
+                    request.putArray("messages").addObject().put("role", "user").put("content", item.prompt());
+                }
+                var messages = request.path("messages");
+                if (!messages.isArray() || messages.isEmpty()) throw invalid("请填写问题或非空 messages 数组");
+                for (var message : messages) {
+                    if (!message.isObject() || !Set.of("system", "developer", "user", "assistant", "tool")
+                            .contains(message.path("role").asText())) throw invalid("messages 包含无效的消息角色");
+                }
+                var snapshot = new PayloadDetailVO();
+                snapshot.setTrafficType("model");
+                snapshot.setRequestMethod("POST");
+                snapshot.setRequestPath("/v1/chat/completions");
+                snapshot.setRequestBody(store.json(request));
+                String json = store.json(snapshot);
+                long bytes = json.getBytes(StandardCharsets.UTF_8).length
+                        + (item.referenceText() == null ? 0 : item.referenceText().getBytes(StandardCharsets.UTF_8).length);
+                if (bytes > maxSampleBytes) throw invalid("样本超过配置的大小上限");
+                totalBytes += bytes;
+                if (totalBytes > maxDatasetBytes) throw invalid("评测集超过配置的总大小上限");
+                snapshots.add(json);
+            } catch (com.pab.ficc.ibp.modelgate.server.common.BusinessException error) {
+                throw invalid("第 " + (index + 1) + " 条样本：" + error.getMessage());
+            }
+        }
+        return store.atomic(() -> {
+            String id = EvaluationStore.id();
+            store.update("INSERT INTO mg_eval_dataset(id,root_id,name,version,created_by) VALUES(?,?,?,1,?)",
+                    id, id, datasetName, operators.currentOperatorUm());
+            for (int index = 0; index < snapshots.size(); index++) {
+                var item = input.cases().get(index);
+                store.update("INSERT INTO mg_eval_case(id,dataset_id,payload_id,ordinal_no,snapshot_json,reference_text,difficulty,title)"
+                                + " VALUES(?,?,NULL,?,?,?,?,?)", EvaluationStore.id(), id, index + 1, snapshots.get(index),
+                        item.referenceText(), difficulty(item.difficulty()), item.title());
+            }
+            return id;
+        });
+    }
+
+    private static String difficulty(String value) {
+        if (value == null || value.isBlank()) return "UNRATED";
+        if (!Set.of("UNRATED", "EASY", "MEDIUM", "HARD").contains(value)) throw invalid("难度须为 UNRATED、EASY、MEDIUM 或 HARD");
+        return value;
+    }
+
+    private static String baselineAnswer(PayloadDetailVO snapshot) {
+        return snapshot.getResponseText() == null ? snapshot.getResponseRaw() : snapshot.getResponseText();
     }
 
     public void deleteDataset(String id) {
@@ -211,7 +295,7 @@ public class EvaluationService {
         store.one("SELECT id FROM mg_eval_task WHERE id=?", taskId);
         String where = " FROM mg_eval_result r JOIN mg_eval_case c ON c.id=r.case_id WHERE r.task_id=? AND "
                 + EvaluationStore.LATEST + " AND (?='' OR r.status=?) AND (?='' OR r.verdict=?)";
-        return store.page("SELECT r.id,r.case_id,c.payload_id,c.ordinal_no,r.attempt,r.status,r.verdict,r.score,r.note,"
+        return store.page("SELECT r.id,r.case_id,c.payload_id,c.ordinal_no,c.difficulty,c.title,r.attempt,r.status,r.verdict,r.score,r.note,"
                         + "r.started_time,r.finished_time,r.http_status,r.latency_ms,r.input_tokens,r.output_tokens,r.token_source,r.response_complete"
                         + where + " ORDER BY c.ordinal_no",
                 "SELECT COUNT(*)" + where, page, size, taskId, status, status, verdict, verdict);

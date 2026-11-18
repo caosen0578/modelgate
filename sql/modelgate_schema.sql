@@ -392,10 +392,12 @@ CREATE TABLE IF NOT EXISTS mg_eval_dataset (
 CREATE TABLE IF NOT EXISTS mg_eval_case (
     id VARCHAR(32) NOT NULL,
     dataset_id VARCHAR(32) NOT NULL,
-    payload_id BIGINT NOT NULL,
+    payload_id BIGINT DEFAULT NULL,
     ordinal_no INT NOT NULL,
     snapshot_json LONGTEXT NOT NULL,
     reference_text LONGTEXT,
+    difficulty VARCHAR(16) NOT NULL DEFAULT 'UNRATED',
+    title VARCHAR(128) DEFAULT NULL,
     PRIMARY KEY (id),
     UNIQUE KEY uk_eval_case_payload (dataset_id, payload_id),
     KEY idx_eval_case_dataset (dataset_id, ordinal_no)
