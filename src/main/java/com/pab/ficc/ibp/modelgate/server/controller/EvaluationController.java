@@ -5,7 +5,9 @@ import com.pab.ficc.ibp.modelgate.server.common.RecordCsv;
 import com.pab.ficc.ibp.modelgate.server.constant.UrlConstant;
 import com.pab.ficc.ibp.modelgate.server.domain.Result;
 import com.pab.ficc.ibp.modelgate.server.service.evaluation.EvaluationService;
+import com.pab.ficc.ibp.modelgate.server.service.evaluation.EvaluationExcel;
 import com.pab.ficc.ibp.modelgate.server.service.evaluation.EvaluationStore;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.MediaType;
@@ -34,9 +36,10 @@ import java.util.function.Supplier;
 public class EvaluationController {
     private final EvaluationService service;
     private final EvaluationStore store;
+    private final EvaluationExcel excel;
 
-    public EvaluationController(EvaluationService service, EvaluationStore store) {
-        this.service = service; this.store = store;
+    public EvaluationController(EvaluationService service, EvaluationStore store, EvaluationExcel excel) {
+        this.service = service; this.store = store; this.excel = excel;
     }
 
     @ModelAttribute
@@ -90,6 +93,26 @@ public class EvaluationController {
                     EvaluationService.ImportInput.class)));
         }).switchIfEmpty(Mono.error(EvaluationStore.invalid("请选择非空样本文件")))
                 .onErrorMap(DataBufferLimitException.class, error -> EvaluationStore.invalid("导入内容不能超过 16 MB"));
+    }
+
+    @GetMapping("/sample-template")
+    public Mono<ResponseEntity<byte[]>> sampleTemplate() {
+        return Mono.fromCallable(() -> ResponseEntity.ok().cacheControl(CacheControl.noStore())
+                .contentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .headers(h -> h.setContentDisposition(ContentDisposition.attachment()
+                        .filename("evaluation-samples.xlsx").build()))
+                .body(new ClassPathResource("templates/evaluation-samples.xlsx").getContentAsByteArray()))
+                .subscribeOn(AdminScheduler.get()).timeout(AdminScheduler.REQUEST_TIMEOUT);
+    }
+
+    @PostMapping("/preview-excel")
+    public Mono<Result<List<EvaluationService.ImportCase>>> previewExcel(@RequestBody Flux<DataBuffer> input) {
+        return DataBufferUtils.join(input, 16 * 1024 * 1024).flatMap(buffer -> {
+            byte[] bytes = new byte[buffer.readableByteCount()];
+            try { buffer.read(bytes); } finally { DataBufferUtils.release(buffer); }
+            return read(() -> excel.preview(bytes));
+        }).switchIfEmpty(Mono.error(EvaluationStore.invalid("请选择非空的 .xlsx 文件")))
+                .onErrorMap(DataBufferLimitException.class, error -> EvaluationStore.invalid("Excel 文件不能超过 16 MB"));
     }
 
     @PostMapping("/delete-dataset")

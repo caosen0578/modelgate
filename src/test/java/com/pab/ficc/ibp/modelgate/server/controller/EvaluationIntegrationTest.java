@@ -30,7 +30,8 @@ import static org.junit.jupiter.api.Assertions.*;
 @SpringBootTest(classes = PersonalAccessIntegrationTest.Config.class,
         webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = "spring.config.location=classpath:/personal-access/sandbox.properties")
-@Import({EvaluationController.class, EvaluationStore.class, EvaluationService.class, EvaluationRunner.class})
+@Import({EvaluationController.class, EvaluationStore.class, EvaluationService.class, EvaluationRunner.class,
+        com.pab.ficc.ibp.modelgate.server.service.evaluation.EvaluationExcel.class})
 class EvaluationIntegrationTest {
     private static final String BASE = "/modelgate/evaluation";
     @LocalServerPort int port;
@@ -219,6 +220,72 @@ class EvaluationIntegrationTest {
             upstreamStream.disposeNow();
             jdbc.update("DELETE FROM mg_model WHERE model_id=?", modelId);
         }
+    }
+
+    @Test
+    void excelTemplatePreviewAndImportPreserveBusinessColumnsAndReportLocations() throws Exception {
+        byte[] template = client().get().uri(BASE + "/sample-template").exchange().expectStatus().isOk()
+                .expectHeader().contentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                .expectBody(byte[].class).returnResult().getResponseBody();
+        assertNotNull(template);
+        long before = store.count("SELECT COUNT(*) FROM mg_eval_dataset");
+        client().post().uri(BASE + "/preview-excel").contentType(org.springframework.http.MediaType.APPLICATION_OCTET_STREAM)
+                .bodyValue(template).exchange().expectStatus().isBadRequest().expectBody()
+                .jsonPath("$.resultMessage").value(org.hamcrest.Matchers.containsString("没有可导入的数据"));
+        byte[] valid;
+        try (var workbook = new org.apache.poi.xssf.usermodel.XSSFWorkbook(new java.io.ByteArrayInputStream(template))) {
+            var sheet = workbook.getSheet("评测样本");
+            assertEquals(1, sheet.getPaneInformation().getHorizontalSplitPosition());
+            assertFalse(sheet.getDataValidations().isEmpty());
+            var row = sheet.createRow(1);
+            String[] values = {"金额校验", "00123 的含义是什么？\n请分点说明。", "保留前导零\n第二行", "中等", "你是业务助手。"};
+            for (int col = 0; col < values.length; col++) row.createCell(col).setCellValue(values[col]);
+            // 空白行和模板说明页均不作为样本。
+            sheet.createRow(3).createCell(1).setCellValue("第二个问题");
+            try (var output = new java.io.ByteArrayOutputStream()) {
+                workbook.write(output); valid = output.toByteArray();
+            }
+        }
+        var response = client().post().uri(BASE + "/preview-excel")
+                .contentType(org.springframework.http.MediaType.APPLICATION_OCTET_STREAM).bodyValue(valid)
+                .exchange().expectStatus().isOk().expectBody().returnResult().getResponseBody();
+        var cases = mapper.readTree(response).path("data");
+        assertEquals(2, cases.size());
+        assertEquals("MEDIUM", cases.get(0).path("difficulty").asText());
+        assertEquals("UNRATED", cases.get(1).path("difficulty").asText());
+        assertEquals("保留前导零\n第二行", cases.get(0).path("referenceText").asText());
+        assertEquals("system", cases.get(0).path("request").path("messages").get(0).path("role").asText());
+        assertEquals("00123 的含义是什么？\n请分点说明。",
+                cases.get(0).path("request").path("messages").get(1).path("content").asText());
+        assertEquals(before, store.count("SELECT COUNT(*) FROM mg_eval_dataset"));
+        String id = value(client().post().uri(BASE + "/import-dataset")
+                .bodyValue(Map.of("name", "Excel 业务样本", "cases", cases)).exchange().expectStatus().isOk());
+        var saved = store.rows("SELECT payload_id,difficulty,reference_text FROM mg_eval_case WHERE dataset_id=? ORDER BY ordinal_no", id);
+        assertEquals(2, saved.size());
+        assertNull(saved.get(0).get("payloadId"));
+        assertEquals("MEDIUM", saved.get(0).get("difficulty"));
+        try (var workbook = new org.apache.poi.xssf.usermodel.XSSFWorkbook(new java.io.ByteArrayInputStream(valid))) {
+            var cell = workbook.getSheet("评测样本").getRow(1).getCell(1);
+            cell.setCellFormula("1+1");
+            try (var output = new java.io.ByteArrayOutputStream()) {
+                workbook.write(output);
+                client().post().uri(BASE + "/preview-excel").contentType(org.springframework.http.MediaType.APPLICATION_OCTET_STREAM)
+                        .bodyValue(output.toByteArray()).exchange().expectStatus().isBadRequest().expectBody()
+                        .jsonPath("$.resultMessage").value(org.hamcrest.Matchers.containsString("第 2 行第 2 列"));
+            }
+            cell.setBlank();
+            try (var output = new java.io.ByteArrayOutputStream()) {
+                workbook.write(output);
+                client().post().uri(BASE + "/preview-excel").contentType(org.springframework.http.MediaType.APPLICATION_OCTET_STREAM)
+                        .bodyValue(output.toByteArray()).exchange().expectStatus().isBadRequest().expectBody()
+                        .jsonPath("$.resultMessage").value(org.hamcrest.Matchers.containsString("第 2 行：问题不能为空"));
+            }
+        }
+        client().post().uri(BASE + "/preview-excel").contentType(org.springframework.http.MediaType.APPLICATION_OCTET_STREAM)
+                .bodyValue("not-an-xlsx".getBytes(java.nio.charset.StandardCharsets.UTF_8))
+                .exchange().expectStatus().isBadRequest();
+        assertEquals(before + 1, store.count("SELECT COUNT(*) FROM mg_eval_dataset"));
+        client().post().uri(BASE + "/delete-dataset?id=" + id).exchange().expectStatus().isOk();
     }
 
     private WebTestClient client() {
