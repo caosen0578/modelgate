@@ -19,5 +19,7 @@ public final class UsageReportViews {
     public record Model(String modelId, Amount usage) {}
     public record Breakdown(String modelId, String source, Amount usage) {}
     public record User(String um, Amount usage, List<Breakdown> models) {}
-    public record Report<T>(List<T> items, int total, Amount totals, boolean codeBuddyMappingConfigured) {}
+    public record UnassignedReason(String reason, long requests, long tokens) {}
+    public record Report<T>(List<T> items, int total, Amount totals, boolean codeBuddyMappingConfigured,
+                            long unassignedRequests, long unassignedTokens, List<UnassignedReason> unassignedReasons) {}
 }

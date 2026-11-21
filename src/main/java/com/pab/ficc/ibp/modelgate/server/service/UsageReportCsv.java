@@ -24,7 +24,7 @@ final class UsageReportCsv {
     static byte[] users(List<User> rows, boolean detail) {
         var csv = new StringBuilder(detail ? "\uFEFFUM,模型 ID,来源" : "\uFEFFUM").append(METRICS);
         for (User row : rows) {
-            String um = text(row.um() == null ? "未归属" : row.um());
+            String um = text(row.um());
             if (detail) {
                 row.models().forEach(model -> {
                     csv.append(um).append(',').append(text(model.modelId())).append(',')

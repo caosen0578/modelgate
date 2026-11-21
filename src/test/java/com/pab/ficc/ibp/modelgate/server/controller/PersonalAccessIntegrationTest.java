@@ -529,11 +529,14 @@ class PersonalAccessIntegrationTest {
                 .jsonPath("$.data.totals.estimatedTokens").isEqualTo(3);
         client().get().uri("/modelgate/stats/user-usage?modelId=mgqa-filter-a&pageSize=1")
                 .exchange().expectStatus().isOk().expectHeader().valueEquals("Cache-Control", "no-store").expectBody()
-                .jsonPath("$.data.total").isEqualTo(2)
+                .jsonPath("$.data.total").isEqualTo(1)
                 .jsonPath("$.data.items[0].um").isEqualTo(a)
                 .jsonPath("$.data.items[0].usage.totalTokens").isEqualTo(18)
                 .jsonPath("$.data.items[0].models.length()").isEqualTo(2)
-                .jsonPath("$.data.totals.totalTokens").isEqualTo(21);
+                .jsonPath("$.data.totals.totalTokens").isEqualTo(18)
+                .jsonPath("$.data.unassignedRequests").isEqualTo(1)
+                .jsonPath("$.data.unassignedTokens").isEqualTo(3)
+                .jsonPath("$.data.unassignedReasons[0].reason").isEqualTo("MISSING_UUID");
         client().get().uri("/modelgate/stats/user-usage?modelId=mgqa-filter-a&source=codebuddy&um=" + a)
                 .exchange().expectStatus().isOk().expectBody()
                 .jsonPath("$.data.total").isEqualTo(1).jsonPath("$.data.totals.totalTokens").isEqualTo(11);
@@ -551,7 +554,7 @@ class PersonalAccessIntegrationTest {
                 .exchange().expectStatus().isOk().expectHeader().valueEquals("Cache-Control", "no-store")
                 .expectBody(String.class).value(csv -> {
                     assertTrue(csv.contains("\"" + a + "\",2,18,0,18,11,0,1"));
-                    assertTrue(csv.contains("\"未归属\",1,0,3,3,0,3,0"));
+                    assertFalse(csv.contains("未归属"));
                 });
         client().get().uri("/modelgate/stats/user-usage?modelId=mgqa-filter-a&format=csv&detail=true&source=codebuddy&um=" + a)
                 .exchange().expectStatus().isOk().expectBody(String.class).value(csv -> {
@@ -594,6 +597,55 @@ class PersonalAccessIntegrationTest {
                 .exchange().expectStatus().isBadRequest();
         client().get().uri("/modelgate/audit/personal/query?format=csv&um=UNKNOWN_UM")
                 .exchange().expectStatus().isOk().expectBody(String.class).value(csv -> assertEquals(2, csv.split("\r\n", -1).length));
+    }
+
+    @Test
+    void capturesCodeBuddyIdentityFromGatewayRequestInAuditAndPayload() throws Exception {
+        String app = "95731";
+        String model = "mgqa-codebuddy-header";
+        String uuid = UUID.randomUUID().toString();
+        var jdbc = new JdbcTemplate(dataSource);
+        jdbc.update("INSERT INTO mg_model (model_id, model_name, provider, upstream_url) VALUES (?, ?, 'openai', ?)",
+                model, "CodeBuddy 归属测试", "http://127.0.0.1:" + upstream.port());
+        jdbc.update("INSERT INTO mg_app (app_id, system_name, app_name, sys_code, app_code, owner) VALUES (?, ?, ?, ?, ?, ?)",
+                app, "MGQA", "CodeBuddy 测试", "MGQA", model, "test");
+        try {
+            jdbc.update("INSERT INTO mg_app_model_auth (app_id, model_id, payload_log_enabled) VALUES (?, ?, 1)", app, model);
+            String key = json(client().post().uri("/modelgate/credentials/create")
+                    .bodyValue(Map.of("appId", app, "credName", "归属测试", "credType", "api_key"))
+                    .exchange().expectStatus().isOk()).path("apiKey").asText();
+            var response = client().post().uri(CHAT).headers(headers -> headers.setBearerAuth(key))
+                    .header("X-Codebuddy-User-Id", uuid.toUpperCase(java.util.Locale.ROOT))
+                    .bodyValue(Map.of("model", model, "messages", List.of(Map.of("role", "user", "content", "归属测试"))))
+                    .exchange().expectStatus().isOk().expectBody().jsonPath("$.usage.total_tokens").isEqualTo(20).returnResult();
+            String trace = response.getResponseHeaders().getFirst("X-Trace-Id");
+            assertNotNull(trace);
+            assertTimeoutPreemptively(Duration.ofSeconds(5), () -> {
+                while (jdbc.queryForObject("SELECT COUNT(*) FROM mg_request_payload WHERE trace_id=?", Integer.class, trace) == 0
+                        || jdbc.queryForObject("SELECT COUNT(*) FROM mg_audit_log WHERE trace_id=?", Integer.class, trace) == 0) {
+                    audit.flush();
+                    payload.flush();
+                    Thread.sleep(50);
+                }
+            });
+            assertEquals(uuid, jdbc.queryForObject("SELECT codebuddy_user_id FROM mg_audit_log WHERE trace_id=? AND app_id=?",
+                    String.class, trace, app));
+            String rawHeaders = jdbc.queryForObject("SELECT request_headers FROM mg_request_payload WHERE trace_id=?", String.class, trace);
+            var headerFields = mapper.readTree(rawHeaders).fields();
+            String recorded = null;
+            while (headerFields.hasNext()) {
+                var field = headerFields.next();
+                if (field.getKey().equalsIgnoreCase("X-Codebuddy-User-Id")) recorded = field.getValue().asText();
+            }
+            assertEquals(uuid.toUpperCase(java.util.Locale.ROOT), recorded);
+        } finally {
+            jdbc.update("DELETE FROM mg_request_payload WHERE model_id=?", model);
+            jdbc.update("DELETE FROM mg_audit_log WHERE model_id=?", model);
+            jdbc.update("DELETE FROM mg_app_model_auth WHERE app_id=? AND model_id=?", app, model);
+            jdbc.update("DELETE FROM mg_app_credential WHERE app_id=?", app);
+            jdbc.update("DELETE FROM mg_app WHERE app_id=?", app);
+            jdbc.update("DELETE FROM mg_model WHERE model_id=?", model);
+        }
     }
 
     private WebTestClient client() {
