@@ -4898,7 +4898,10 @@ async function exportRecordList(scene,button){
     const blobUrl=URL.createObjectURL(await response.blob());
     const link=document.createElement('a');
     link.href=blobUrl;
-    link.download=(scene==='audit'?'审计日志':'报文记录')+'.csv';
+    const now = new Date(), pad = n => String(n).padStart(2, '0');
+    const date = [now.getFullYear(), pad(now.getMonth() + 1), pad(now.getDate())].join('-');
+    const time = [now.getHours(), now.getMinutes(), now.getSeconds()].map(pad).join('-');
+    link.download = (scene === 'audit' ? '审计日志' : '报文记录') + '_' + date + '_' + time + '.csv';
     document.body.append(link);
     link.click();
     link.remove();
