@@ -45,7 +45,7 @@ public class AccessRuleController {
     public Mono<Result<AccessRuleVO>> add(@RequestBody @Valid AddRuleRequestBO req) {
         return Mono.fromCallable(() -> {
                     appService.rejectPersonalAppId(req.getAppId());
-                    return AccessRuleVO.of(accessRuleService.add(req.getAppId(), req.toEntity()));
+                    return AccessRuleVO.of(accessRuleService.add(req.getAppId(), req.toEntity(), false));
                 })
                 .subscribeOn(Schedulers.boundedElastic())
                 .map(Result::success);
@@ -58,7 +58,7 @@ public class AccessRuleController {
             @Parameter(description = "规则 ID") @RequestParam("id") Long id) {
         return Mono.fromRunnable(() -> {
                     appService.rejectPersonalAppId(appId);
-                    accessRuleService.delete(appId, id);
+                    accessRuleService.delete(appId, id, false);
                 })
                 .subscribeOn(Schedulers.boundedElastic())
                 .then(Mono.just(Result.<Void>success(null)));

@@ -288,12 +288,12 @@ public class PersonalAccessService {
             throw new BusinessException(ErrorCode.INVALID_PARAMETER, e.getMessage());
         }
         rule.setRemark(request.remark());
-        return PersonalAccessViews.SourceRule.of(accessRuleService.add(appId, rule));
+        return PersonalAccessViews.SourceRule.of(accessRuleService.add(appId, rule, true));
     }
 
     public void deleteSourceRule(String um, Long id) {
         requireEnabled();
-        accessRuleService.delete(findPerson(um).getAppId(), id);
+        accessRuleService.delete(findPerson(um).getAppId(), id, true);
     }
 
     public PersonalAccessViews.Usage usage(String um, LocalDate start, LocalDate end) {

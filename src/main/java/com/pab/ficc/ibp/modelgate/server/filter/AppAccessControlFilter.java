@@ -84,7 +84,7 @@ public class AppAccessControlFilter implements GlobalFilter, Ordered {
         String clientIp = personal ? getPersonalClientIp(exchange.getRequest()) : getClientIp(exchange.getRequest());
         String clientDomain = getClientDomain(exchange.getRequest());
 
-        return Mono.fromCallable(() -> accessRuleService.listByAppIdCached(appId))
+        return Mono.fromCallable(() -> accessRuleService.listByAppIdCached(appId, personal))
                 .subscribeOn(Schedulers.boundedElastic())
                 .flatMap(rules -> {
                     if (rules.isEmpty()) {

@@ -28,15 +28,15 @@ public class AccessRuleService {
                         .orderByDesc(AccessRuleEntity::getCreateTime));
     }
 
-    public List<AccessRuleEntity> listByAppIdCached(String appId) {
-        return cacheManager.getAccessRules(appId, () -> listByAppId(appId));
+    public List<AccessRuleEntity> listByAppIdCached(String appId, boolean personal) {
+        return cacheManager.getAccessRules(appId, personal, () -> listByAppId(appId));
     }
 
-    public AccessRuleEntity add(String appId, AccessRuleEntity rule) {
+    public AccessRuleEntity add(String appId, AccessRuleEntity rule, boolean personal) {
         rule.setAppId(appId);
         // create_time 等基础字段由 AuditFieldMetaObjectHandler 自动填充，不得手动 set（05 §10）
         accessRuleMapper.insert(rule);
-        cacheManager.evictAccessRuleCache(appId);
+        evictRules(appId, personal);
         // 来源白名单属安全配置，增删必须留痕：规则为空 = 不限制来源，
         // 误删最后一条会让该系统对全网开放，事后要能查到是谁在什么时候删的
         log.info("[AccessRule] 新增访问规则: appId={}, ruleId={}, type={}, value={}",
@@ -44,12 +44,12 @@ public class AccessRuleService {
         return rule;
     }
 
-    public void delete(String appId, Long ruleId) {
+    public void delete(String appId, Long ruleId, boolean personal) {
         AccessRuleEntity rule = Optional.ofNullable(accessRuleMapper.selectById(ruleId))
                 .filter(r -> r.getAppId().equals(appId))
                 .orElseThrow(() -> new BusinessException(ErrorCode.RESOURCE_NOT_FOUND, "ruleId: " + ruleId));
         accessRuleMapper.deleteById(ruleId);
-        cacheManager.evictAccessRuleCache(appId);
+        evictRules(appId, personal);
         long remaining = accessRuleMapper.selectCount(
                 new LambdaQueryWrapper<AccessRuleEntity>().eq(AccessRuleEntity::getAppId, appId));
         log.info("[AccessRule] 删除访问规则: appId={}, ruleId={}, type={}, value={}, 剩余规则={} 条",
@@ -59,5 +59,10 @@ public class AccessRuleService {
             // 不是普通的删除操作，必须 WARN 提醒
             log.warn("[AccessRule] appId={} 已无任何访问规则，来源限制失效，该系统将接受任意来源的调用", appId);
         }
+    }
+
+    private void evictRules(String appId, boolean personal) {
+        if (personal) cacheManager.evictPersonalAccessRuleCache(appId);
+        else cacheManager.evictAccessRuleCache(appId);
     }
 }

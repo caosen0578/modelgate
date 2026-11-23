@@ -30,7 +30,7 @@ import java.util.function.Supplier;
  *
  * <p><b>真实读取路径：</b>凭证、授权、访问规则、模型和接入系统信息均为
  * {@code Caffeine L1 → MySQL}。类中虽保留凭证 Redis set/get 辅助方法，但当前没有业务调用，
- * 因而既不是有效 L2，也不存在 Redis 通知；模型授权通过 Redis 版本标记协调本地缓存。
+ * 因而并非有效 L2。模型授权和个人访问规则通过 Redis 版本标记协调本地缓存。
  *
  * <p><b>各缓存说明：</b>
  * <ul>
@@ -39,7 +39,7 @@ import java.util.function.Supplier;
  *       写操作后必须主动失效，否则禁用凭证要等 60s 才生效。</li>
  *   <li><b>模型授权（ModelAuth）</b>：按 appId 聚合缓存 60s，活跃 app 每实例每秒最多检查一次 Redis 版本。
  *       版本变化时合并同 appId 的并发回源并重新加载授权。</li>
- *   <li><b>访问规则（AccessRuleEntity）</b>：L1 60s TTL，不存 Redis（数据量小，变更少）。</li>
+ *   <li><b>访问规则（AccessRuleEntity）</b>：L1 60s TTL，个人访问规则检查共享版本。</li>
  *   <li><b>模型配置（ModelInstanceEntity）</b>：L1 30s TTL，不存 Redis。
  *       30s 内上游地址修改自动生效，对路由实时性要求高但 Redis 收益低。</li>
  *   <li><b>接入系统信息（AppInfoEntity）</b>：L1 60s TTL，不存 Redis（2026-08-18 压测优化新增，
@@ -55,7 +55,7 @@ import java.util.function.Supplier;
  * L1 miss 会调用 DB loader，并由 Caffeine 按 key 合并并发回源。
  *
  * <p><b>主动失效：</b>写操作（增删改启禁）后调用对应 {@code evict*} 方法，当前实例立即生效。
- * 其他实例的模型授权按共享版本收敛，其余缓存依靠各 L1 的 30/60 秒 TTL。
+ * 其他实例的模型授权和个人访问规则按共享版本收敛，其余缓存依靠各 L1 的 30/60 秒 TTL。
  */
 @Slf4j
 @Component
@@ -66,9 +66,9 @@ public class GatewayCacheManager {
 
     /** 凭证在 Redis 中保留 30 天，与凭证本身的生命周期匹配 */
     private static final int CREDENTIAL_REDIS_TTL_SECONDS = 30 * 24 * 3600;
-    private static final int MODEL_AUTH_TTL_SECONDS = 60;
+    private static final int RULE_TTL_SECONDS = 60;
     // 共享标记至少覆盖旧快照的存活期。过期后无需在 Redis 常驻每个 appId。
-    private static final int MODEL_AUTH_REVISION_TTL_SECONDS = 2 * MODEL_AUTH_TTL_SECONDS;
+    private static final int RULE_REVISION_TTL_SECONDS = 2 * RULE_TTL_SECONDS;
 
     // ===== L1 Caffeine 本地缓存 =====
 
@@ -83,21 +83,8 @@ public class GatewayCacheManager {
             .build();
 
     /** 模型授权缓存：key = appId，value = 该 App 的所有模型授权列表 */
-    private final Cache<String, ModelAuthSnapshot> modelAuthCache = Caffeine.newBuilder()
-            .expireAfterWrite(MODEL_AUTH_TTL_SECONDS, TimeUnit.SECONDS)
-            .maximumSize(5_000)
-            .build();
-
-    private final Cache<String, Optional<String>> modelAuthRevisions = Caffeine.newBuilder()
-            .expireAfterWrite(1, TimeUnit.SECONDS)
-            .maximumSize(5_000)
-            .build();
-
-    private record ModelAuthSnapshot(List<AppModelAuthEntity> rules, String revision) {
-        boolean isCurrent(Optional<String> observedRevision) {
-            return observedRevision.isEmpty() || Objects.equals(revision, observedRevision.get());
-        }
-    }
+    private final VersionedRules<AppModelAuthEntity> modelAuthCache = new VersionedRules<>("mg:auth:revision:");
+    private final VersionedRules<AccessRuleEntity> personalAccessRules = new VersionedRules<>("mg:personal-access:revision:");
 
     /** 访问规则缓存：key = appId，value = 该 App 的所有访问规则列表 */
     private final Cache<String, List<AccessRuleEntity>> accessRuleCache = Caffeine.newBuilder()
@@ -199,59 +186,89 @@ public class GatewayCacheManager {
      * 按 appId 获取当前授权，版本改变或快照过期时从数据库重新加载。
      */
     public List<AppModelAuthEntity> getModelAuths(String appId, Supplier<List<AppModelAuthEntity>> dbLoader) {
-        Optional<String> revision = modelAuthRevisions.get(appId, this::readModelAuthRevision);
-        ModelAuthSnapshot snapshot = modelAuthCache.getIfPresent(appId);
-        if (snapshot != null && snapshot.isCurrent(revision)) return snapshot.rules();
-        return modelAuthCache.asMap().compute(appId, (id, cached) -> {
-            if (cached != null && cached.isCurrent(revision)) return cached;
-            return new ModelAuthSnapshot(dbLoader.get(), revision.orElse(null));
-        }).rules();
+        return modelAuthCache.get(appId, dbLoader);
     }
 
     /** 授权增删改后失效本地快照，并在提交后写入其他实例可观察的版本。 */
     public void evictModelAuthCache(String appId) {
-        if (TransactionSynchronizationManager.isActualTransactionActive()
-                && TransactionSynchronizationManager.isSynchronizationActive()) {
-            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                @Override
-                public void afterCommit() {
-                    advanceModelAuthRevision(appId);
-                }
-            });
-        } else {
-            advanceModelAuthRevision(appId);
+        modelAuthCache.invalidateAfterCommit(appId);
+    }
+
+    private record RuleSnapshot<T>(List<T> rules, String revision) {
+        boolean isCurrent(Optional<String> observedRevision) {
+            return observedRevision.isEmpty() || Objects.equals(revision, observedRevision.get());
         }
     }
 
-    private void advanceModelAuthRevision(String appId) {
-        try {
-            cacheProvider.setex(modelAuthRevisionKey(appId), MODEL_AUTH_REVISION_TTL_SECONDS, UUID.randomUUID().toString());
-        } catch (Exception ex) {
-            log.warn("[Cache] 发布模型授权版本失败，其他实例将按本地 TTL 更新: appId={}: {}", appId, ex.getMessage());
-        } finally {
-            modelAuthRevisions.invalidate(appId);
-            modelAuthCache.invalidate(appId);
-        }
-    }
+    private final class VersionedRules<T> {
+        private final String keyPrefix;
+        private final Cache<String, RuleSnapshot<T>> snapshots = Caffeine.newBuilder()
+                .expireAfterWrite(RULE_TTL_SECONDS, TimeUnit.SECONDS)
+                .maximumSize(5_000)
+                .build();
+        private final Cache<String, Optional<String>> revisions = Caffeine.newBuilder()
+                .expireAfterWrite(1, TimeUnit.SECONDS)
+                .maximumSize(5_000)
+                .build();
 
-    private Optional<String> readModelAuthRevision(String appId) {
-        try {
-            return Optional.of(Objects.toString(cacheProvider.get(modelAuthRevisionKey(appId)), ""));
-        } catch (Exception ex) {
-            log.debug("[Cache] 读取模型授权版本失败: appId={}: {}", appId, ex.getMessage());
-            return Optional.empty();
+        private VersionedRules(String keyPrefix) {
+            this.keyPrefix = keyPrefix;
         }
-    }
 
-    private static String modelAuthRevisionKey(String appId) {
-        return "mg:auth:revision:" + appId;
+        private List<T> get(String appId, Supplier<List<T>> dbLoader) {
+            Optional<String> revision = revisions.get(appId, this::readRevision);
+            RuleSnapshot<T> snapshot = snapshots.getIfPresent(appId);
+            if (snapshot != null && snapshot.isCurrent(revision)) return snapshot.rules();
+            return snapshots.asMap().compute(appId, (id, cached) -> {
+                if (cached != null && cached.isCurrent(revision)) return cached;
+                return new RuleSnapshot<>(dbLoader.get(), revision.orElse(null));
+            }).rules();
+        }
+
+        private Optional<String> readRevision(String appId) {
+            try {
+                return Optional.of(Objects.toString(cacheProvider.get(keyPrefix + appId), ""));
+            } catch (Exception ex) {
+                log.debug("[Cache] 读取共享规则版本失败: key={}: {}", keyPrefix + appId, ex.getMessage());
+                return Optional.empty();
+            }
+        }
+
+        private void invalidateAfterCommit(String appId) {
+            if (TransactionSynchronizationManager.isActualTransactionActive()
+                    && TransactionSynchronizationManager.isSynchronizationActive()) {
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        advanceRevision(appId);
+                    }
+                });
+            } else {
+                advanceRevision(appId);
+            }
+        }
+
+        private void advanceRevision(String appId) {
+            try {
+                cacheProvider.setex(keyPrefix + appId, RULE_REVISION_TTL_SECONDS, UUID.randomUUID().toString());
+            } catch (Exception ex) {
+                log.warn("[Cache] 发布共享规则版本失败，其他实例将按本地 TTL 更新: key={}: {}", keyPrefix + appId, ex.getMessage());
+            } finally {
+                revisions.invalidate(appId);
+                snapshots.invalidate(appId);
+            }
+        }
     }
 
     // ===== 访问规则缓存（仅 L1，不存 Redis） =====
 
     /** 原子加载，理由同 {@link #getCredential}。 */
-    public List<AccessRuleEntity> getAccessRules(String appId, Supplier<List<AccessRuleEntity>> dbLoader) {
-        return accessRuleCache.get(appId, k -> dbLoader.get());
+    public List<AccessRuleEntity> getAccessRules(String appId, boolean personal, Supplier<List<AccessRuleEntity>> dbLoader) {
+        return personal ? personalAccessRules.get(appId, dbLoader) : accessRuleCache.get(appId, k -> dbLoader.get());
+    }
+
+    public void evictPersonalAccessRuleCache(String appId) {
+        personalAccessRules.invalidateAfterCommit(appId);
     }
 
     public void evictAccessRuleCache(String appId) {
