@@ -152,6 +152,52 @@ class PersonalAccessIntegrationTest {
     }
 
     @Test
+    void sortsUsageBeforePaginationAndSummaryExport() {
+        String first = "MGQA_USAGE_SORT_A";
+        String second = "MGQA_USAGE_SORT_B";
+        String larger = "mgqa-sort-larger";
+        String smaller = "mgqa-sort-smaller";
+        String trace = UUID.randomUUID().toString();
+        var jdbc = new JdbcTemplate(dataSource);
+        try {
+            for (String um : List.of(first, second)) {
+                jdbc.update("""
+                        INSERT INTO mg_app (app_id, subject_type, person_um, system_name, app_name, sys_code, app_code, owner)
+                        VALUES (?, 'PERSONAL', ?, 'QA', 'QA', 'QA', ?, 'QA')
+                        """, "P_" + um, um, um);
+            }
+            jdbc.update("""
+                    INSERT INTO mg_audit_log (trace_id, app_id, model_id, input_tokens, token_source)
+                    VALUES (?, ?, ?, 28, 'usage'), (?, ?, ?, 14, 'usage'), (?, ?, ?, 7, 'usage')
+                    """, trace, "P_" + first, larger, trace, "P_" + second, larger, trace, "P_" + second, smaller);
+
+            String models = "/modelgate/stats/model-usage?modelIds=" + larger + "&modelIds=" + smaller
+                    + "&sortBy=totalTokens&pageSize=1";
+            client().get().uri(models + "&sortOrder=ascending")
+                    .exchange().expectStatus().isOk().expectBody()
+                    .jsonPath("$.data.items[0].modelId").isEqualTo(smaller)
+                    .jsonPath("$.data.totals.totalTokens").isEqualTo(49);
+            client().get().uri(models + "&sortOrder=descending")
+                    .exchange().expectStatus().isOk().expectBody().jsonPath("$.data.items[0].modelId").isEqualTo(larger);
+            client().get().uri(models + "&sortOrder=ascending&pageIndex=2")
+                    .exchange().expectStatus().isOk().expectBody().jsonPath("$.data.items[0].modelId").isEqualTo(larger);
+            client().get().uri(models + "&sortOrder=ascending&format=csv")
+                    .exchange().expectStatus().isOk().expectBody(String.class).value(csv ->
+                            assertTrue(csv.lines().skip(1).findFirst().orElseThrow().startsWith("\"" + smaller + "\",")));
+            client().get().uri(models + "&sortOrder=invalid").exchange().expectStatus().isBadRequest();
+
+            String users = "/modelgate/stats/user-usage?modelId=" + larger + "&sortBy=totalTokens&pageSize=1";
+            client().get().uri(users + "&sortOrder=ascending")
+                    .exchange().expectStatus().isOk().expectBody().jsonPath("$.data.items[0].um").isEqualTo(second);
+            client().get().uri(users + "&sortOrder=descending")
+                    .exchange().expectStatus().isOk().expectBody().jsonPath("$.data.items[0].um").isEqualTo(first);
+        } finally {
+            jdbc.update("DELETE FROM mg_audit_log WHERE trace_id = ?", trace);
+            jdbc.update("DELETE FROM mg_app WHERE person_um IN (?, ?)", first, second);
+        }
+    }
+
+    @Test
     void recordsRealUsageByUmWithoutChangingSystemUsage() throws Exception {
         JsonNode seed;
         try (var input = new ClassPathResource("personal-access/scenario.json").getInputStream()) {

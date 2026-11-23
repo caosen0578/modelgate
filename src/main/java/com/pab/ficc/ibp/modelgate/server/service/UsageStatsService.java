@@ -24,6 +24,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Function;
+import java.util.function.ToLongFunction;
 
 @Service
 @RequiredArgsConstructor
@@ -31,6 +33,15 @@ public class UsageStatsService {
     private static final Amount ZERO = new Amount(0, 0, 0, 0, 0, 0);
     private static final String PERSONAL_KEY = "personal-key";
     private static final String CODEBUDDY = "codebuddy";
+    private static final Map<String, ToLongFunction<Amount>> USAGE_SORT_FIELDS = Map.of(
+            "requests", Amount::requests,
+            "inputTokens", Amount::inputTokens,
+            "outputTokens", Amount::outputTokens,
+            "totalTokens", Amount::getTotalTokens,
+            "upstreamTokens", Amount::upstreamTokens,
+            "estimatedTokens", Amount::estimatedTokens,
+            "missingTokenRequests", Amount::missingTokenRequests
+    );
     private final UsageStatsMapper mapper;
     private final CodeBuddyUsageIdentity identities;
 
@@ -58,15 +69,16 @@ public class UsageStatsService {
 
     private List<Model> modelRows(UsageQueryBO query) {
         validateDates(query);
+        var order = usageOrder(query, "modelId", Model::modelId, Model::usage);
         return mapper.modelUsage(query).stream()
                 .map(row -> new Model(row.modelId(), row.amount()))
-                .sorted(Comparator.<Model>comparingLong(row -> row.usage().getTotalTokens()).reversed()
-                        .thenComparing(Model::modelId))
+                .sorted(order)
                 .toList();
     }
 
     private UserRows userRows(UsageQueryBO query) {
         validateDates(query);
+        var order = usageOrder(query, "um", User::um, User::usage);
         String selectedUm = query.getUm() == null || query.getUm().isBlank() ? null : AppSubject.normalizeUm(query.getUm());
         if (query.getSource() != null && !query.getSource().isBlank()
                 && !Set.of(PERSONAL_KEY, CODEBUDDY).contains(query.getSource())) {
@@ -96,8 +108,7 @@ public class UsageStatsService {
         }
 
         var rows = users.entrySet().stream().map(entry -> user(entry.getKey(), entry.getValue()))
-                .sorted(Comparator.<User>comparingLong(row -> row.usage().getTotalTokens()).reversed()
-                        .thenComparing(User::um))
+                .sorted(order)
                 .toList();
         var reasons = unassigned.entrySet().stream()
                 .map(entry -> new UnassignedReason(entry.getKey(), entry.getValue().requests(),
@@ -105,6 +116,27 @@ public class UsageStatsService {
                 .sorted(Comparator.comparingLong(UnassignedReason::requests).reversed().thenComparing(UnassignedReason::reason))
                 .toList();
         return new UserRows(rows, reasons);
+    }
+
+    private static <T> Comparator<T> usageOrder(UsageQueryBO query, String idField, Function<T, String> id,
+                                                 Function<T, Amount> usage) {
+        String field = query.getSortBy();
+        String direction = query.getSortOrder();
+        if (field == null && direction == null) {
+            field = "totalTokens";
+            direction = "descending";
+        }
+        boolean descending = "descending".equals(direction);
+        if (!descending && !"ascending".equals(direction)) {
+            throw new BusinessException(ErrorCode.INVALID_PARAMETER, "用量排序方向不正确");
+        }
+        Comparator<T> byId = Comparator.comparing(id);
+        if (idField.equals(field)) return descending ? byId.reversed() : byId;
+
+        var metric = field == null ? null : USAGE_SORT_FIELDS.get(field);
+        if (metric == null) throw new BusinessException(ErrorCode.INVALID_PARAMETER, "用量排序字段不正确");
+        Comparator<T> byMetric = Comparator.comparingLong(row -> metric.applyAsLong(usage.apply(row)));
+        return (descending ? byMetric.reversed() : byMetric).thenComparing(byId);
     }
 
     private static User user(String um, Map<BreakdownKey, Amount> groups) {

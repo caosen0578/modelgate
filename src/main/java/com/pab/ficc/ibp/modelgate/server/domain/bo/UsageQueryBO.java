@@ -20,4 +20,6 @@ public class UsageQueryBO extends BaseBo {
     private String appId;
     private String um;
     private String source;
+    private String sortBy;
+    private String sortOrder;
 }
