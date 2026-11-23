@@ -1,6 +1,7 @@
 package com.pab.ficc.ibp.modelgate.server.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.pab.ficc.ibp.modelgate.server.admin.PersonalSourcePolicy;
 import com.pab.ficc.ibp.modelgate.server.cache.GatewayCacheManager;
 import com.pab.ficc.ibp.modelgate.server.common.BusinessException;
 import com.pab.ficc.ibp.modelgate.server.common.ErrorCode;
@@ -29,7 +30,23 @@ public class AccessRuleService {
     }
 
     public List<AccessRuleEntity> listByAppIdCached(String appId, boolean personal) {
-        return cacheManager.getAccessRules(appId, personal, () -> listByAppId(appId));
+        return cacheManager.getAccessRules(appId, personal, () -> personal ? loadPersonalRules(appId) : listByAppId(appId));
+    }
+
+    private List<AccessRuleEntity> loadPersonalRules(String appId) {
+        var rules = listByAppId(appId);
+        for (AccessRuleEntity rule : rules) {
+            String type = rule.getRuleType();
+            if (!"ip".equals(type) && !"cidr".equals(type)) continue;
+            try {
+                rule.setRuleValue(PersonalSourcePolicy.normalizeRule(type, rule.getRuleValue()));
+            } catch (IllegalArgumentException ex) {
+                // 保留规则占位，避免仅有无效 IP 规则时被误判为未配置白名单。
+                rule.setRuleValue(null);
+                log.warn("[AccessRule] 个人来源规则格式无效: appId={}, ruleId={}, type={}", appId, rule.getId(), type);
+            }
+        }
+        return rules;
     }
 
     public AccessRuleEntity add(String appId, AccessRuleEntity rule, boolean personal) {

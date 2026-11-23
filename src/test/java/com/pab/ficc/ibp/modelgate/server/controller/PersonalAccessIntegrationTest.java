@@ -19,6 +19,7 @@ import com.pab.ficc.ibp.modelgate.server.config.TdsqlMybatisPlusConfig;
 import com.pab.ficc.ibp.modelgate.server.crypto.CryptoService;
 import com.pab.ficc.ibp.modelgate.server.cache.GatewayCacheManager;
 import com.pab.ficc.ibp.modelgate.server.filter.*;
+import com.pab.ficc.ibp.modelgate.server.mapper.AccessRuleMapper;
 import com.pab.ficc.ibp.modelgate.server.service.*;
 import com.pab.framework.redis.CacheProvider;
 import org.h2.jdbcx.JdbcDataSource;
@@ -79,6 +80,7 @@ class PersonalAccessIntegrationTest {
     @Autowired CredentialAuthFilter credentialAuthFilter;
     @Autowired PersonalAccessService personalAccessService;
     @Autowired CacheProvider cacheProvider;
+    @Autowired AccessRuleMapper accessRuleMapper;
 
     @Test
     void applicationYamlExposesPersonalAccessSwitch() throws Exception {
@@ -149,6 +151,35 @@ class PersonalAccessIntegrationTest {
         for (String id : appIds) jdbc.update("DELETE FROM mg_app_model_auth WHERE app_id = ?", id);
         jdbc.update("DELETE FROM mg_app WHERE person_um IN (?, ?)", first, second);
         jdbc.update("DELETE FROM mg_model WHERE model_id = ?", model);
+    }
+
+    @Test
+    void loadsExistingPersonalIpRulesWithColdCachesAndNoRedisVersions() {
+        String appId = "P_COLD_RULES";
+        String invalidAppId = "P_COLD_INVALID_RULE";
+        var jdbc = new JdbcTemplate(dataSource);
+        CacheProvider redis = mock(CacheProvider.class);
+        when(redis.get("mg:personal-access:revision:" + invalidAppId)).thenThrow(new IllegalStateException("Redis unavailable"));
+        var service = new AccessRuleService(accessRuleMapper, new GatewayCacheManager(redis));
+        var policy = new PersonalSourcePolicy(new com.pab.ficc.ibp.modelgate.server.admin.IpMatcher(), "");
+        try {
+            jdbc.update("""
+                    INSERT INTO mg_access_rule (app_id, rule_type, rule_value)
+                    VALUES (?, 'ip', ' 127.0.0.1 '), (?, 'ip', '2001:0db8:0:0:0:0:0:1'), (?, 'cidr', '127.0.0.1/99')
+                    """, appId, appId, invalidAppId);
+            var rules = service.listByAppIdCached(appId, true);
+            assertEquals(2, rules.size());
+            assertTrue(policy.allows("127.0.0.1", null, rules));
+            assertTrue(policy.allows("2001:db8::1", null, rules));
+            assertFalse(policy.allows("127.0.0.2", null, rules));
+
+            var invalid = service.listByAppIdCached(invalidAppId, true);
+            assertFalse(invalid.isEmpty());
+            assertFalse(policy.allows("127.0.0.1", null, invalid));
+            verify(redis, never()).setex(anyString(), anyInt(), anyString());
+        } finally {
+            jdbc.update("DELETE FROM mg_access_rule WHERE app_id IN (?, ?)", appId, invalidAppId);
+        }
     }
 
     @Test

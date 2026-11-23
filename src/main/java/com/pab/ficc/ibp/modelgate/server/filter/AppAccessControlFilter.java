@@ -87,11 +87,15 @@ public class AppAccessControlFilter implements GlobalFilter, Ordered {
         return Mono.fromCallable(() -> accessRuleService.listByAppIdCached(appId, personal))
                 .subscribeOn(Schedulers.boundedElastic())
                 .flatMap(rules -> {
-                    if (rules.isEmpty()) {
-                        // 无规则 = 不限制来源。适合 K8s 动态 IP 且不需要来源校验的场景。
-                        return chain.filter(exchange);
+                    // 无规则 = 不限制来源。记录实际匹配结果，便于按请求检查旧规则与代理取址。
+                    boolean allowed = rules.isEmpty() || (personal
+                            ? personalSourcePolicy.allows(clientIp, clientDomain, rules)
+                            : isAllowed(clientIp, clientDomain, rules));
+                    if (personal) {
+                        log.debug("[AccessControl] 个人来源校验: traceId={}, appId={}, clientIp={}, ruleCount={}, allowed={}",
+                                exchange.getAttribute(TraceWebFilter.ATTR_TRACE_ID), appId, clientIp, rules.size(), allowed);
                     }
-                    if (personal ? personalSourcePolicy.allows(clientIp, clientDomain, rules) : isAllowed(clientIp, clientDomain, rules)) {
+                    if (allowed) {
                         return chain.filter(exchange);
                     }
                     log.info("[AccessControl] 拒绝: 来源不在白名单, appId={}, clientIp={}, domain={}", appId, clientIp, clientDomain);

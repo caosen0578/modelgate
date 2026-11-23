@@ -51,7 +51,8 @@ public class PersonalSourcePolicy {
         boolean domainMatches = false;
         for (AccessRuleEntity rule : rules) {
             switch (rule.getRuleType()) {
-                case "ip", "cidr" -> ipMatches |= clientIp != null && ipMatcher.matchesCidr(clientIp, rule.getRuleValue());
+                case "ip", "cidr" -> ipMatches |= clientIp != null && rule.getRuleValue() != null
+                        && ipMatcher.matchesCidr(clientIp, rule.getRuleValue());
                 case "domain" -> {
                     hasDomain = true;
                     domainMatches |= ipMatcher.matchesDomain(clientDomain, rule.getRuleValue());
@@ -67,6 +68,7 @@ public class PersonalSourcePolicy {
     }
 
     public static String normalizeRule(String type, String value) {
+        if (value == null) value = "";
         if ("domain".equals(type) || "domain_wildcard".equals(type)) return normalizeDomain(type, value);
         String[] parts = value.strip().split("/", -1);
         String ip = normalizedIp(parts[0]);
