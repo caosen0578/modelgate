@@ -22,4 +22,5 @@ public class UsageQueryBO extends BaseBo {
     private String source;
     private String sortBy;
     private String sortOrder;
+    private boolean dashboard;
 }

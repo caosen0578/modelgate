@@ -52,6 +52,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.YearMonth;
 import java.util.List;
 import java.util.Map;
@@ -229,7 +230,73 @@ class PersonalAccessIntegrationTest {
     }
 
     @Test
+    void modelDashboardComparesMatchingPeriodsAndRanksOnlySystemApplications() {
+        var jdbc = new JdbcTemplate(dataSource);
+        var model = "mgqa-dashboard";
+        var personal = "P_MGQA_DASHBOARD";
+        var trace = UUID.randomUUID().toString();
+        var date = LocalDateTime.of(2026, 10, 10, 10, 0);
+        var apps = java.util.stream.IntStream.rangeClosed(1, 6).mapToObj(n -> "0008300" + n).toList();
+        try {
+            for (int i = 0; i < apps.size(); i++) {
+                var app = apps.get(i);
+                jdbc.update("""
+                        INSERT INTO mg_app (app_id, system_name, app_name, sys_code, app_code, owner)
+                        VALUES (?, 'QA', 'QA', 'QA', ?, 'QA')
+                        """, app, app);
+                dashboardAudit(jdbc, trace, app, model, date, (i + 1) * 10);
+            }
+            jdbc.update("""
+                    INSERT INTO mg_app (app_id, subject_type, person_um, system_name, app_name, sys_code, app_code, owner)
+                    VALUES (?, 'PERSONAL', 'MGQA_DASHBOARD', 'QA', 'QA', 'QA', ?, 'QA')
+                    """, personal, personal);
+            dashboardAudit(jdbc, trace, personal, model, date, 70);
+            dashboardAudit(jdbc, trace, apps.get(0), model, date.plusDays(1), 20);
+            dashboardAudit(jdbc, trace, apps.get(0), model, date.minusDays(2), 40);
+            dashboardAudit(jdbc, trace, personal, model, date.minusDays(2), 10);
+            dashboardAudit(jdbc, trace, apps.get(0), "mgqa-dashboard-other", date.minusDays(2), 999);
+            jdbc.update("UPDATE mg_audit_log SET token_source = 'estimated' WHERE trace_id = ? AND app_id = ? AND create_time = ?",
+                    trace, personal, date);
+
+            String report = "/modelgate/stats/model-usage?modelId=" + model
+                    + "&startTime=2026-10-10T00:00:00&endTime=2026-10-11T23:59:59";
+            client().get().uri(report).exchange().expectStatus().isOk().expectBody().jsonPath("$.data.dashboard").doesNotExist();
+            client().get().uri(report + "&dashboard=true").exchange().expectStatus().isOk().expectBody()
+                    .jsonPath("$.data.totals.totalTokens").isEqualTo(300)
+                    .jsonPath("$.data.totals.upstreamTokens").isEqualTo(230)
+                    .jsonPath("$.data.totals.estimatedTokens").isEqualTo(70)
+                    .jsonPath("$.data.dashboard.days[0].date").isEqualTo("2026-10-10")
+                    .jsonPath("$.data.dashboard.days[0].tokens").isEqualTo(280)
+                    .jsonPath("$.data.dashboard.days[1].tokens").isEqualTo(20)
+                    .jsonPath("$.data.dashboard.activeApplications").isEqualTo(6)
+                    .jsonPath("$.data.dashboard.applications.length()").isEqualTo(5)
+                    .jsonPath("$.data.dashboard.applications[0].appId").isEqualTo(apps.get(5))
+                    .jsonPath("$.data.dashboard.previous.days[0].date").isEqualTo("2026-10-08")
+                    .jsonPath("$.data.dashboard.previous.tokens").isEqualTo(50)
+                    .jsonPath("$.data.dashboard.previous.activeApplications").isEqualTo(1)
+                    .jsonPath("$.data.dashboard.previous.activeCount").isEqualTo(1);
+            client().get().uri(report + "&dashboard=true&appId=" + apps.get(0))
+                    .exchange().expectStatus().isOk().expectBody()
+                    .jsonPath("$.data.totals.totalTokens").isEqualTo(30)
+                    .jsonPath("$.data.dashboard.activeApplications").isEqualTo(1)
+                    .jsonPath("$.data.dashboard.previous.tokens").isEqualTo(40);
+        } finally {
+            jdbc.update("DELETE FROM mg_audit_log WHERE trace_id = ?", trace);
+            jdbc.update("DELETE FROM mg_app WHERE app_id = ?", personal);
+            for (String app : apps) jdbc.update("DELETE FROM mg_app WHERE app_id = ?", app);
+        }
+    }
+
+    private void dashboardAudit(JdbcTemplate jdbc, String trace, String app, String model, LocalDateTime date, int tokens) {
+        jdbc.update("""
+                INSERT INTO mg_audit_log (trace_id, app_id, model_id, create_time, input_tokens, token_source)
+                VALUES (?, ?, ?, ?, ?, 'usage')
+                """, trace, app, model, date, tokens);
+    }
+
+    @Test
     void recordsRealUsageByUmWithoutChangingSystemUsage() throws Exception {
+        int initialUpstreamCalls = upstreamCalls.get();
         JsonNode seed;
         try (var input = new ClassPathResource("personal-access/scenario.json").getInputStream()) {
             seed = mapper.readTree(input);
@@ -368,7 +435,7 @@ class PersonalAccessIntegrationTest {
                 .expectBody().jsonPath("$.usage.total_tokens").isEqualTo(20);
 
         int reached = upstreamCalls.get();
-        assertEquals(4, reached);
+        assertEquals(4, reached - initialUpstreamCalls);
         client().post().uri(PERSONAL + "/access/add")
                 .bodyValue(Map.of("um", a, "ruleType", "ip", "ruleValue", "198.51.100.10"))
                 .exchange().expectStatus().isOk();

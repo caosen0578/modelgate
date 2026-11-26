@@ -6,7 +6,10 @@ import com.pab.ficc.ibp.modelgate.server.common.ErrorCode;
 import com.pab.ficc.ibp.modelgate.server.common.PageSupport;
 import com.pab.ficc.ibp.modelgate.server.domain.bo.UsageQueryBO;
 import com.pab.ficc.ibp.modelgate.server.domain.vo.UsageReportViews.Amount;
+import com.pab.ficc.ibp.modelgate.server.domain.vo.UsageReportViews.Application;
 import com.pab.ficc.ibp.modelgate.server.domain.vo.UsageReportViews.Breakdown;
+import com.pab.ficc.ibp.modelgate.server.domain.vo.UsageReportViews.Comparison;
+import com.pab.ficc.ibp.modelgate.server.domain.vo.UsageReportViews.Dashboard;
 import com.pab.ficc.ibp.modelgate.server.domain.vo.UsageReportViews.Model;
 import com.pab.ficc.ibp.modelgate.server.domain.vo.UsageReportViews.Report;
 import com.pab.ficc.ibp.modelgate.server.domain.vo.UsageReportViews.UnassignedReason;
@@ -15,8 +18,11 @@ import com.pab.ficc.ibp.modelgate.server.mapper.UsageStatsMapper;
 import com.pab.ficc.ibp.modelgate.server.mapper.UsageStatsMapper.UserTotals;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -45,18 +51,39 @@ public class UsageStatsService {
     private final UsageStatsMapper mapper;
     private final CodeBuddyUsageIdentity identities;
 
+    @Transactional(transactionManager = "tdsqlTransactionManager", readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public Report<Model> modelUsage(UsageQueryBO query) {
         PageSupport.validate(query, "用量统计");
         var rows = modelRows(query);
         var totals = rows.stream().map(Model::usage).reduce(ZERO, Amount::plus);
-        return report(query, rows, totals, List.of());
+        return report(query, rows, totals, List.of(), query.isDashboard() ? modelDashboard(query) : null);
     }
 
     public Report<User> userUsage(UsageQueryBO query) {
         PageSupport.validate(query, "用量统计");
         var usage = userRows(query);
         var totals = usage.users().stream().map(User::usage).reduce(ZERO, Amount::plus);
-        return report(query, usage.users(), totals, usage.unassigned());
+        return report(query, usage.users(), totals, usage.unassigned(), null);
+    }
+
+    private Dashboard modelDashboard(UsageQueryBO query) {
+        var start = query.getStartTime();
+        var end = query.getEndTime();
+        long days = ChronoUnit.DAYS.between(start.toLocalDate(), end.toLocalDate()) + 1;
+        var previousQuery = new UsageQueryBO();
+        previousQuery.setStartTime(start.minusDays(days));
+        previousQuery.setEndTime(end.minusDays(days));
+        previousQuery.setAppId(query.getAppId());
+        previousQuery.setModelId(query.getModelId());
+        previousQuery.setModelIds(query.getModelIds());
+        var previousTotals = mapper.previousTotals(previousQuery);
+        var previous = new Comparison(previousQuery.getStartTime(), previousQuery.getEndTime(), previousTotals.requests(),
+                previousTotals.tokens(), previousTotals.activeCount(), previousTotals.activeApplications(),
+                mapper.dailyUsage(previousQuery, days));
+        var applications = mapper.applicationUsage(query);
+        return new Dashboard(start, end, mapper.dailyUsage(query, days),
+                applications.isEmpty() ? 0 : applications.get(0).activeApplications(),
+                applications.stream().map(app -> new Application(app.appId(), app.tokens())).toList(), previous);
     }
 
     public byte[] exportModelUsage(UsageQueryBO query) {
@@ -147,14 +174,15 @@ public class UsageStatsService {
         return new User(um, models.stream().map(Breakdown::usage).reduce(ZERO, Amount::plus), models);
     }
 
-    private <T> Report<T> report(UsageQueryBO query, List<T> rows, Amount totals, List<UnassignedReason> unassigned) {
+    private <T> Report<T> report(UsageQueryBO query, List<T> rows, Amount totals, List<UnassignedReason> unassigned,
+                                 Dashboard dashboard) {
         long page = query.getPageIndex() - 1;
         long size = query.getPageSize();
         int first = page > rows.size() / size ? rows.size() : (int) (page * size);
         int last = (int) Math.min(rows.size(), first + size);
         return new Report<>(rows.subList(first, last), rows.size(), totals, identities.mappingConfigured(),
                 unassigned.stream().mapToLong(UnassignedReason::requests).sum(),
-                unassigned.stream().mapToLong(UnassignedReason::tokens).sum(), unassigned);
+                unassigned.stream().mapToLong(UnassignedReason::tokens).sum(), unassigned, dashboard);
     }
 
     private static void validateDates(UsageQueryBO query) {

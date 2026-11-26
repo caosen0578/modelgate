@@ -2,6 +2,7 @@ package com.pab.ficc.ibp.modelgate.server.mapper;
 
 import com.pab.ficc.ibp.modelgate.server.domain.bo.UsageQueryBO;
 import com.pab.ficc.ibp.modelgate.server.domain.vo.UsageReportViews.Amount;
+import com.pab.ficc.ibp.modelgate.server.domain.vo.UsageReportViews.Day;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
@@ -26,6 +27,11 @@ public interface UsageStatsMapper {
               <foreach collection="q.modelIds" item="id" open="(" separator="," close=")">#{id}</foreach>
             </if>
             """;
+    String MODEL_FILTERS = FILTERS + """
+            <if test="q.appId != null and q.appId != ''">AND a.app_id = #{q.appId}</if>
+            """;
+    String SYSTEM_APPS = "(SELECT DISTINCT app_id FROM mg_app WHERE subject_type = 'SYSTEM') s ON s.app_id = a.app_id ";
+    String TOTAL_TOKENS = "SUM(COALESCE(a.input_tokens, 0) + COALESCE(a.output_tokens, 0))";
     String CODEBUDDY_APP = """
             <choose>
               <when test="!codeBuddyApps.isEmpty()">
@@ -35,12 +41,48 @@ public interface UsageStatsMapper {
             </choose>
             """;
 
-    @Select("<script>SELECT a.model_id, " + AMOUNTS + " FROM mg_audit_log a " + FILTERS + """
-            <if test="q.appId != null and q.appId != ''">AND a.app_id = #{q.appId}</if>
+    @Select("<script>SELECT a.model_id, " + AMOUNTS + " FROM mg_audit_log a " + MODEL_FILTERS + """
             GROUP BY a.model_id
             </script>
             """)
     List<ModelTotals> modelUsage(@Param("q") UsageQueryBO query);
+
+    @Select("""
+            <script>
+            SELECT DATE(a.create_time) AS usage_date, COUNT(*) AS requests,
+            """ + TOTAL_TOKENS + """
+            AS tokens
+            FROM mg_audit_log a
+            """ + MODEL_FILTERS + """
+            GROUP BY DATE(a.create_time)
+            ORDER BY usage_date LIMIT #{days}
+            </script>
+            """)
+    List<Day> dailyUsage(@Param("q") UsageQueryBO query, @Param("days") long days);
+
+    @Select("""
+            <script>
+            SELECT s.app_id,
+            """ + TOTAL_TOKENS + """
+            AS tokens, COUNT(*) OVER () AS active_applications
+            FROM mg_audit_log a INNER JOIN
+            """ + SYSTEM_APPS + MODEL_FILTERS + """
+            GROUP BY s.app_id
+            ORDER BY tokens DESC, s.app_id
+            LIMIT 5
+            </script>
+            """)
+    List<ApplicationTotals> applicationUsage(@Param("q") UsageQueryBO query);
+
+    @Select("""
+            <script>
+            SELECT COUNT(*) AS requests, COALESCE(
+            """ + TOTAL_TOKENS + """
+            , 0) AS tokens,
+                   COUNT(DISTINCT a.model_id) AS active_count, COUNT(DISTINCT s.app_id) AS active_applications
+            FROM mg_audit_log a LEFT JOIN
+            """ + SYSTEM_APPS + MODEL_FILTERS + "</script>")
+    PreviousTotals previousTotals(@Param("q") UsageQueryBO query);
 
     @Select("<script>SELECT a.model_id, p.person_um, a.codebuddy_user_id, " + AMOUNTS + """
              FROM mg_audit_log a
@@ -60,6 +102,9 @@ public interface UsageStatsMapper {
             </script>
             """)
     List<UserTotals> userUsage(@Param("q") UsageQueryBO query, @Param("codeBuddyApps") Set<String> codeBuddyApps);
+
+    record ApplicationTotals(String appId, long tokens, long activeApplications) {}
+    record PreviousTotals(long requests, long tokens, long activeCount, long activeApplications) {}
 
     record ModelTotals(String modelId, long requests, long inputTokens, long outputTokens,
                        long upstreamTokens, long estimatedTokens, long missingTokenRequests) {
