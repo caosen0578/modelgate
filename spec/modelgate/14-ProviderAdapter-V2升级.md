@@ -59,8 +59,8 @@ responseModes、features、defaultPaths、pathEditable、parameterMapping。不�
 
 模型 Create/Update/Test BO 和 ModelVO 新增 `responseMode`、`configVersion`、`adapterConfig`。
 更新缺省 responseMode 时保留数据库原值，不通过旧页面把已开启的标准化响应重置成原生。
-两套页面：`D:\code\modelgate\src\main\resources\static\admin.html` 与
-`D:\code\static-framework\src\modules\modelgate`。厂商展示标签与 apiSpec 独立。
+两套页面：`C:\code\modelgate\src\main\resources\static\admin.html` 与
+`C:\code\static-framework\src\modules\modelgate`。厂商展示标签与 apiSpec 独立。
 Custom AK/SK 的实际行为是发送 X-Access-Key/X-Secret-Key，不是 HMAC，页面已修正文案。
 timeoutMs 只为管理测试提供参考，没有在业务转发或 ProviderAdapter 中添加超时/重试。
 

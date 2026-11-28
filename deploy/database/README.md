@@ -4,7 +4,7 @@
 
 仅mg_*模型网关表。ModelGate管理接口通过独立SLB入口访问，不因此加入应用网关微服务或权限库。
 
-表清单（12）：`mg_model`、`mg_model_credential`、`mg_app`、`mg_app_credential`、`mg_app_model_auth`、`mg_access_rule`、`mg_gateway_config`、`mg_request_payload`、`mg_audit_log`、`mg_service`、`mg_service_credential`、`mg_app_service_auth`。
+表清单（16）：`mg_model`、`mg_model_credential`、`mg_app`、`mg_app_credential`、`mg_app_model_auth`、`mg_access_rule`、`mg_gateway_config`、`mg_request_payload`、`mg_audit_log`、`mg_service`、`mg_service_credential`、`mg_app_service_auth`、`mg_eval_dataset`、`mg_eval_case`、`mg_eval_task`、`mg_eval_result`。
 
 ## 首次部署：全量
 
@@ -14,7 +14,9 @@
 
 ## 已有库：增量
 
-个人接入上线需先审核 `sql/upgrade_20261112_personal_access.sql`（只扩展 `mg_app`，表数仍为 12），再部署新后端。具体开关、权限与试点步骤见 [17-个人接入与UM用量统计](../../spec/modelgate/17-个人接入与UM用量统计.md)。不要把测试账户或密钥录入生产库。
+个人接入上线需先审核 `sql/upgrade_20261112_personal_access.sql`（扩展 `mg_app`），再部署新后端。具体开关、权限与试点步骤见 [17-个人接入与UM用量统计](../../spec/modelgate/17-个人接入与UM用量统计.md)。不要把测试账户或密钥录入生产库。
+
+评测和用量涉及的存量脚本及跨项目发布顺序见 [20-项目交接与待办](../../spec/modelgate/20-项目交接与待办.md) 的「生产增量发布」。
 
 manifest.json的upgradeCandidates只是候选清单，不是顺序执行队列。逐个阅读脚本前置条件、比较SHOW CREATE TABLE并备份后选择。修复数据、密文格式转换、字段重命名等脚本必须单独审核，不得按文件名全部执行。
 本目录的manifest.json给出本项目唯一执行清单与原始路径，SQL原文件保留在其权威目录，不重复复制多套“全量”。没有自动迁移/自动执行器。申请后的正式库名尚未给出，不预填数据库名或凭据。
@@ -22,7 +24,7 @@ manifest.json的upgradeCandidates只是候选清单，不是顺序执行队列�
 ## 代码与数据源
 
 tdsqlDataSource只连接模型库；配置键为datasource.local.*（当前ModelGate所有环境使用Druid直连）。不要机械套用user项目的Venus profile配置。Mapper与实体都在modelgate.server命名空间。
-三个新库使用不同读写账号；行为采集另申请模型库指定两表的SELECT权限，无模型库DDL/DML权限。公共库不默认并入这三个库。
+各项目数据库使用独立账号。行为服务通过网关库只读账号访问 `mg_audit_log`、`mg_request_payload` 和 `mg_app`，按查询所需授予 SELECT 权限。公共字典库单独管理。
 实际配置由各环境下发；本轮未修改带连接凭据的application-local.yml，也未改现有数据库连接目标。不得仅换库名就宣称完成上线：独立库需搬迁本库历史数据和验收。
 
 ## 检查与发布
